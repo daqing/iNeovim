@@ -22,8 +22,8 @@ enum RPCMessage {
                   case let .uint(msgid) = elements[1] else { return nil }
             self = .response(msgid: msgid, error: elements[2], result: elements[3])
         case 2:
-            guard case let .string(method) = elements[2],
-                  case let .array(params) = elements[3] else { return nil }
+            guard case let .string(method) = elements[1],
+                  case let .array(params) = elements[2] else { return nil }
             self = .notification(method: method, params: params)
         default:
             return nil
