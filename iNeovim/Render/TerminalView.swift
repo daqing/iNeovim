@@ -7,6 +7,9 @@ final class TerminalView: NSView {
     private(set) var metrics: FontMetrics
     private var fonts: FontVariants
     private var snapshot: ScreenSnapshot?
+    private var cursorVisible = true
+    private var blinker = CursorBlinker()
+    private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let resizeController: ResizeController
 
     init(
@@ -53,7 +56,9 @@ final class TerminalView: NSView {
             await Screen.shared.flushHandler = { [weak self] in
                 guard let self else { return }
                 Task { @MainActor in
-                    self.snapshot = await Screen.shared.snapshot()
+                    let snapshot = await Screen.shared.snapshot()
+                    self.updateBlink(previous: self.snapshot, next: snapshot)
+                    self.snapshot = snapshot
                     self.needsDisplay = true
                 }
             }
@@ -99,6 +104,8 @@ final class TerminalView: NSView {
             }
             context.restoreGState()
         }
+
+        drawCursor(dirtyRect, context: context)
     }
 
     private func runRect(_ run: StyledRun, row: Int) -> CGRect {
@@ -202,6 +209,109 @@ final class TerminalView: NSView {
             let phase = 2 * CGFloat.pi * x / period
             path.addLine(to: CGPoint(x: x, y: y + amplitude * cos(phase)))
         }
+    }
+
+    // MARK: - Cursor
+
+    private func cursorCellRect(_ snapshot: ScreenSnapshot) -> CGRect? {
+        guard snapshot.cursor.grid == 1, let grid = snapshot.grid,
+              snapshot.cursor.row >= 0, snapshot.cursor.row < grid.height,
+              snapshot.cursor.col >= 0, snapshot.cursor.col < grid.width else {
+            return nil
+        }
+        return CGRect(
+            x: CGFloat(snapshot.cursor.col) * metrics.cellSize.width,
+            y: CGFloat(snapshot.cursor.row) * metrics.cellSize.height,
+            width: metrics.cellSize.width,
+            height: metrics.cellSize.height
+        )
+    }
+
+    private func drawCursor(_ dirtyRect: NSRect, context: CGContext) {
+        guard cursorVisible, let snapshot, let cellRect = cursorCellRect(snapshot) else { return }
+        let mode = snapshot.cursorModeInfo
+        let colors = resolvedColors(for: cursorCellAttrId(snapshot))
+
+        switch mode?.cursorShape ?? .block {
+        case .block:
+            colors.foreground.setFill()
+            NSBezierPath.fill(cellRect.intersection(dirtyRect))
+            // Redraw the glyph under the block, swapped to the background color.
+            guard let grid = snapshot.grid else { return }
+            let cell = grid[snapshot.cursor.row, snapshot.cursor.col]
+            guard !cell.text.isEmpty else { return }
+            let width = CellRenderer.isDoubleWidth(cell.text) ? 2 : 1
+            let run = StyledRun(
+                text: cell.text,
+                attrId: cell.attrId,
+                startCol: snapshot.cursor.col,
+                endCol: snapshot.cursor.col + width
+            )
+            let swapped = ResolvedColors(
+                foreground: colors.background ?? backgroundColor,
+                background: nil,
+                special: colors.special
+            )
+            context.saveGState()
+            context.translateBy(x: 0, y: bounds.height)
+            context.scaleBy(x: 1, y: -1)
+            drawText(run: run, row: snapshot.cursor.row, colors: swapped, context: context)
+            context.restoreGState()
+        case .horizontal:
+            let percentage = CGFloat(mode?.cellPercentage ?? 20)
+            let height = max(2, (cellRect.height * percentage / 100).rounded())
+            let bar = CGRect(
+                x: cellRect.minX,
+                y: cellRect.maxY - height,
+                width: cellRect.width,
+                height: height
+            )
+            colors.foreground.setFill()
+            NSBezierPath.fill(bar.intersection(dirtyRect))
+        case .vertical:
+            let percentage = CGFloat(mode?.cellPercentage ?? 25)
+            let width = max(1, (cellRect.width * percentage / 100).rounded())
+            let bar = CGRect(
+                x: cellRect.minX,
+                y: cellRect.minY,
+                width: width,
+                height: cellRect.height
+            )
+            colors.foreground.setFill()
+            NSBezierPath.fill(bar.intersection(dirtyRect))
+        }
+    }
+
+    private func cursorCellAttrId(_ snapshot: ScreenSnapshot) -> Int {
+        guard let grid = snapshot.grid,
+              snapshot.cursor.row < grid.height, snapshot.cursor.col < grid.width else {
+            return 0
+        }
+        return grid[snapshot.cursor.row, snapshot.cursor.col].attrId
+    }
+
+    private func updateBlink(previous: ScreenSnapshot?, next: ScreenSnapshot) {
+        guard let mode = next.cursorModeInfo,
+              let blinkOn = mode.blinkOn, blinkOn > 0,
+              let blinkOff = mode.blinkOff, blinkOff > 0 else {
+            blinker.cancel()
+            cursorVisible = true
+            cursorKey = nil
+            return
+        }
+        let key = (next.cursor.row, next.cursor.col, next.modeIndex)
+        guard key != cursorKey || !blinker.isActive else { return }
+        cursorKey = key
+        blinker.restart(wait: mode.blinkWait ?? 0, on: blinkOn, off: blinkOff) { [weak self] visible in
+            guard let self else { return }
+            self.cursorVisible = visible
+            self.invalidateCursorCell()
+        }
+    }
+
+    private func invalidateCursorCell() {
+        guard let snapshot, let cellRect = cursorCellRect(snapshot) else { return }
+        setNeedsDisplay(cellRect)
     }
 
     private var backgroundColor: NSColor {
