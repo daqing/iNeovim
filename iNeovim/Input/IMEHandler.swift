@@ -44,9 +44,9 @@ final class IMEHandler: NSObject {
     }
 
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
-        actualRange?.pointee = markedSelection
+        actualRange?.pointee = NSRange(location: 0, length: markedText.utf16.count)
         guard let view, let window = view.window else { return .zero }
-        let rect = view.preeditAnchorRect()
+        let rect = view.preeditRect(forCharacterRange: range)
         return window.convertToScreen(view.convert(rect, to: nil))
     }
 
