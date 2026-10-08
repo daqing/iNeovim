@@ -2,23 +2,23 @@ import Foundation
 
 /// A Neovim object reference; nvim encodes these as msgpack ext with a
 /// big-endian integer id payload.
-protocol NvimHandle: Hashable, Sendable {
+protocol NvimHandle {
     var rawValue: Int { get }
     init(rawValue: Int)
     static var extType: Int8 { get }
 }
 
-struct Buffer: NvimHandle {
+struct Buffer: NvimHandle, Hashable, Sendable {
     static let extType: Int8 = 0
     let rawValue: Int
 }
 
-struct Window: NvimHandle {
+struct Window: NvimHandle, Hashable, Sendable {
     static let extType: Int8 = 1
     let rawValue: Int
 }
 
-struct Tabpage: NvimHandle {
+struct Tabpage: NvimHandle, Hashable, Sendable {
     static let extType: Int8 = 2
     let rawValue: Int
 }

@@ -108,7 +108,7 @@ struct MsgPackDecoder {
             guard let value = try readValue(at: &index, in: data) else { return nil }
             entries[key] = value
         }
-        return .map(entries)
+        return .map(MsgPackValueMap(entries))
     }
 
     private func readString(count: Int, at index: inout Data.Index, in data: Data) throws -> MsgPackValue? {

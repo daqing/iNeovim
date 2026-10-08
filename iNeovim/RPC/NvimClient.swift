@@ -11,7 +11,7 @@ struct NvimClient {
         try await session.call("nvim_get_api_info")
     }
 
-    func uiAttach(width: Int, height: Int, options: MsgPackValue = .map([:])) async throws {
+    func uiAttach(width: Int, height: Int, options: MsgPackValue = .map(MsgPackValueMap())) async throws {
         _ = try await session.call("nvim_ui_attach", params: [
             .int(Int64(width)), .int(Int64(height)), options,
         ])

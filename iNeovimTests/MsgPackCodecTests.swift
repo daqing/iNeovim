@@ -93,15 +93,15 @@ final class MsgPackCodecTests: XCTestCase {
             .array([.int(1), .string("two"), .bool(true)]),
             to: [0x93, 0xd0, 0x01, 0xa3, 0x74, 0x77, 0x6f, 0xc3]
         )
-        let map16 = MsgPackValue.map(Dictionary(uniqueKeysWithValues: (0..<16).map {
+        let map16 = MsgPackValue.map(MsgPackValueMap(Dictionary(uniqueKeysWithValues: (0..<16).map {
             (MsgPackValue.uint(UInt64($0)), MsgPackValue.bool($0 % 2 == 0))
-        }))
+        })))
         XCTAssertEqual(Data(MsgPackEncoder.encode(map16).prefix(3)), Data([0xde, 0x00, 0x10]))
         try assertRoundTrip(map16)
         let nested = MsgPackValue.array([
             .string("a"),
             .array([.uint(1), .uint(2)]),
-            .map([.string("k"): .nil]),
+            .map(MsgPackValueMap([.string("k"): .nil])),
         ])
         try assertRoundTrip(nested)
     }

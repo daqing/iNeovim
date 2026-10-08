@@ -64,17 +64,17 @@ enum MsgPackEncoder {
                 write(element, to: &data)
             }
         case .map(let map):
-            switch map.count {
+            switch map.entries.count {
             case 0...15:
-                data.append(UInt8(0x80 | map.count))
+                data.append(UInt8(0x80 | map.entries.count))
             case 16...0xffff:
                 data.append(0xde)
-                appendBigEndian(UInt64(map.count), byteCount: 2, to: &data)
+                appendBigEndian(UInt64(map.entries.count), byteCount: 2, to: &data)
             default:
                 data.append(0xdf)
-                appendBigEndian(UInt64(map.count), byteCount: 4, to: &data)
+                appendBigEndian(UInt64(map.entries.count), byteCount: 4, to: &data)
             }
-            for (key, value) in map {
+            for (key, value) in map.entries {
                 write(key, to: &data)
                 write(value, to: &data)
             }

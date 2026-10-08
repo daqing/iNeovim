@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-struct NvimVersion: Comparable, CustomStringConvertible {
+struct NvimVersion: Comparable {
     let major: Int
     let minor: Int
     let patch: Int
@@ -9,7 +9,9 @@ struct NvimVersion: Comparable, CustomStringConvertible {
     static func < (lhs: NvimVersion, rhs: NvimVersion) -> Bool {
         (lhs.major, lhs.minor, lhs.patch) < (rhs.major, rhs.minor, rhs.patch)
     }
+}
 
+nonisolated extension NvimVersion: CustomStringConvertible {
     var description: String { "\(major).\(minor).\(patch)" }
 }
 
