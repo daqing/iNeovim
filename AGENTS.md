@@ -20,7 +20,8 @@ Key facts from `iNeovim.xcodeproj/project.pbxproj`:
   (`SWIFT_APPROACHABLE_CONCURRENCY = YES`), default actor isolation is `MainActor`
   (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`).
 - **Bundle:** display name `iNeovim`, category `public.app-category.developer-tools`,
-  bundle ID `devplaceholder.<unique>.<product>` (placeholder prefix — replace before release).
+  bundle ID `com.mzevo.<product>` (`com.mzevo.iNeovim`, tests `com.mzevo.iNeovimTests`;
+  changed from the template placeholder in T9.4).
 - **Capabilities:** App Sandbox enabled, user-selected files read/write
   (`ENABLE_USER_SELECTED_FILES = readwrite`, widened in T1.6), App Groups registered.
 - **Versioning:** `MARKETING_VERSION = 1.0`, `CURRENT_PROJECT_VERSION = 1` — both live only
@@ -166,8 +167,8 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   (`DEVELOPMENT_TEAM = S39RD89QY9`) — do not hardcode other team IDs or credentials.
 - Never commit secrets (API keys, provisioning credentials, `.env` files); none exist in
   the repo today.
-- The bundle ID prefix `devplaceholder` must be replaced with a real reverse-DNS
-  identifier before any distribution.
+- The bundle ID prefix is the real reverse-DNS identifier `com.mzevo` (T9.4); keep
+  any future App Group identifiers under the same prefix.
 
 ## Deployment / release
 
