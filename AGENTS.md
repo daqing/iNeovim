@@ -63,6 +63,9 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── MouseHandler.swift     press/drag/release → nvim_input_mouse
 │   ├── InputEvent.swift       the unified input event enum
 │   └── InputDispatcher.swift  single-consumer stream into NvimClient
+├── Scroll/               smooth scrolling and animation (Phase 7)
+│   ├── ScrollAccumulator.swift  pixel↔whole-line bookkeeping (pure, testable)
+│   └── ScrollController.swift   scrollWheel events → offsets + wheel requests
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
 iNeovimTests/             XCTest target (synchronized group); codec round-trip and
                           redraw-parsing tests

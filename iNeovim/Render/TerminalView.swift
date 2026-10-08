@@ -14,6 +14,7 @@ final class TerminalView: NSView {
     private let resizeController: ResizeController
     private var keyHandler = KeyInputHandler()
     private let mouseHandler = MouseHandler()
+    private let scrollController = ScrollController()
     let imeHandler = IMEHandler()
     var inputSettings = InputSettings() {
         didSet {
@@ -41,6 +42,12 @@ final class TerminalView: NSView {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         imeHandler.view = self
         mouseHandler.view = self
+        scrollController.view = self
+        // Interim offset sink (T7.1): shift the whole surface; T7.2 moves the
+        // grid into its own layer and drives this with a display link.
+        scrollController.onOffsetChange = { [weak self] offset in
+            self?.layer?.transform = CATransform3DMakeTranslation(0, offset, 0)
+        }
         imeHandler.onMarkedTextChange = { [weak self] in
             self?.invalidatePreeditRegion()
         }
@@ -142,6 +149,10 @@ final class TerminalView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         mouseHandler.mouseUp(event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        scrollController.scrollWheel(with: event)
     }
 
     private func invalidatePreeditRegion() {
