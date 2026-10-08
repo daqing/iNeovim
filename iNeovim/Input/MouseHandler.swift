@@ -57,6 +57,9 @@ final class MouseHandler {
 
     /// nvim mouse modifier string: shift S, control C, option A, command M.
     static func modifierString(for flags: NSEvent.ModifierFlags) -> String {
+        let flags = flags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .function])
         var result = ""
         if flags.contains(.shift) { result += "S" }
         if flags.contains(.control) { result += "C" }

@@ -48,6 +48,11 @@ final class MouseHandlerTests: XCTestCase {
         XCTAssertEqual(MouseHandler.modifierString(for: []), "")
     }
 
+    func testModifierStringIgnoresCapsLock() {
+        let flags: NSEvent.ModifierFlags = [.shift, .capsLock]
+        XCTAssertEqual(MouseHandler.modifierString(for: flags), "S")
+    }
+
     func testModifierStringAll() {
         let flags: NSEvent.ModifierFlags = [.control, .option, .shift, .command]
         XCTAssertEqual(MouseHandler.modifierString(for: flags), "SCAM")
