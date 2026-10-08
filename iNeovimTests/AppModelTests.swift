@@ -36,4 +36,20 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(opened.isEmpty)
         XCTAssertEqual(model.pendingFileCount, 0)
     }
+
+    func testTabCommandsRouteToNeovim() {
+        var commands: [String] = []
+        let model = AppModel(openHandler: { _ in }, commandHandler: { commands.append($0) })
+
+        model.newTab()
+        model.closeTab()
+        model.nextTab()
+        model.previousTab()
+        model.goToTab(3)
+
+        XCTAssertEqual(
+            commands,
+            ["tabnew", "tabclose", "tabnext", "tabprevious", "tabnext 3"]
+        )
+    }
 }

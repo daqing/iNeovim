@@ -122,6 +122,12 @@ mechanism for interactive visual verification.
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is
   keyed by ID — so enabling multigrid later is a switch flip, not a rewrite.
+- **Tabs (T8.2):** tabs are **Neovim tabpages**, not native macOS window tabs.
+  One embedded nvim and one line-grid surface already draw the tabline and
+  own the buffer/window/tab model; native tabs would require a second nvim
+  session or a second view onto a single-consumer redraw stream. Editor
+  commands route to `:tab*` (`EditorCommands`), and `gt`/`gT` keep working
+  through normal key input.
 - **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
   so one wheel event scrolls exactly one line and the visual lead in
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.

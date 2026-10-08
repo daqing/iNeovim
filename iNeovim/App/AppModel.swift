@@ -14,13 +14,18 @@ final class AppModel: ObservableObject {
 
     private let client = NvimClient()
     private let openHandler: @MainActor ([URL]) -> Void
+    private let commandHandler: @MainActor (String) -> Void
     private var pendingFiles: [URL] = []
 
     /// Files opened before startup finished, exposed for tests.
     var pendingFileCount: Int { pendingFiles.count }
 
-    init(openHandler: @escaping @MainActor ([URL]) -> Void = AppModel.openInNeovim) {
+    init(
+        openHandler: @escaping @MainActor ([URL]) -> Void = AppModel.openInNeovim,
+        commandHandler: @escaping @MainActor (String) -> Void = AppModel.commandInNeovim
+    ) {
         self.openHandler = openHandler
+        self.commandHandler = commandHandler
     }
 
     /// Start the embedded Neovim, attach the UI, and begin consuming the
@@ -56,13 +61,36 @@ final class AppModel: ObservableObject {
     /// Send a raw `nvim_command`; failures are logged, not thrown, so menu
     /// actions stay one-liners.
     func command(_ command: String) {
-        Task {
-            do {
-                try await client.command(command)
-            } catch {
-                Log.app.error("nvim_command failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        commandHandler(command)
+    }
+
+    // MARK: - Tabs
+
+    // T8.2 decision: tabs are Neovim tabpages, not native window tabs. One
+    // embedded nvim and one line-grid surface already render the tabline and
+    // own the buffer/window/tab model, so native tabs would need either a
+    // second nvim session or a second view onto a single-consumer redraw
+    // stream. Editor commands below route to `:tab*`, and `gt`/`gT` keep
+    // working through normal key input.
+
+    func newTab() {
+        command("tabnew")
+    }
+
+    func closeTab() {
+        command("tabclose")
+    }
+
+    func nextTab() {
+        command("tabnext")
+    }
+
+    func previousTab() {
+        command("tabprevious")
+    }
+
+    func goToTab(_ index: Int) {
+        command("tabnext \(index)")
     }
 
     /// Send raw key notation to Neovim.
@@ -92,6 +120,18 @@ final class AppModel: ObservableObject {
         let urls = pendingFiles
         pendingFiles = []
         openHandler(urls)
+    }
+
+    /// Default command sink: fire the command at the RPC session.
+    private static func commandInNeovim(_ command: String) {
+        let client = NvimClient()
+        Task {
+            do {
+                try await client.command(command)
+            } catch {
+                Log.app.error("nvim_command failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     /// Default opener: `:edit` each escaped path in Neovim.

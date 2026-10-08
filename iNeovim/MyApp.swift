@@ -7,5 +7,8 @@ import SwiftUI
         WindowGroup {
             ContentView()
         }
+        .commands {
+            EditorCommands()
+        }
     }
 }
