@@ -51,6 +51,13 @@ final class TerminalView: NSView {
         updateContentsScale()
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // Fallback colors follow the system appearance; repaint so cells
+        // drawn with nvim-packed colors keep showing through where set.
+        needsDisplay = true
+    }
+
     private func updateContentsScale() {
         layer?.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
     }
@@ -173,7 +180,7 @@ final class TerminalView: NSView {
             defaultBackground: snapshot?.defaultBackground,
             defaultSpecial: snapshot?.defaultSpecial
         )
-        let foreground = resolved.foreground.flatMap(NSColor.init(packedRGB:)) ?? .textColor
+        let foreground = resolved.foreground.flatMap(NSColor.init(packedRGB:)) ?? fallbackForeground
         return ResolvedColors(
             foreground: foreground,
             background: resolved.background.flatMap(NSColor.init(packedRGB:)),
@@ -357,11 +364,16 @@ final class TerminalView: NSView {
         setNeedsDisplay(cellRect)
     }
 
+    /// Colors for when nvim leaves a default unset (-1): adaptive AppKit
+    /// colors, so the surface follows dark/light mode.
+    private var fallbackForeground: NSColor { .textColor }
+    private var fallbackBackground: NSColor { .textBackgroundColor }
+
     private var backgroundColor: NSColor {
         if let packed = snapshot?.defaultBackground, let color = NSColor(packedRGB: packed) {
             return color
         }
-        return .textBackgroundColor
+        return fallbackBackground
     }
 }
 
