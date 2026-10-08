@@ -8,6 +8,11 @@ actor RPCSession {
     private var decoder = MsgPackDecoder()
     private var nextMsgid: UInt64 = 1
     private var pending: [UInt64: CheckedContinuation<MsgPackValue, Error>] = [:]
+    private var notificationHandlers: [String: [@Sendable ([MsgPackValue]) -> Void]] = [:]
+
+    func addNotificationHandler(for method: String, handler: @escaping @Sendable ([MsgPackValue]) -> Void) {
+        notificationHandlers[method, default: []].append(handler)
+    }
 
     func start() async throws {
         try await process.start()
@@ -78,7 +83,13 @@ actor RPCSession {
                 continuation.resume(throwing: RPCError.remote(error))
             }
         case .notification(let method, let params):
-            Log.rpc.debug("RPC notification \(method, privacy: .public) (\(params.count, privacy: .public) params)")
+            guard let handlers = notificationHandlers[method], !handlers.isEmpty else {
+                Log.rpc.debug("No handlers for RPC notification \(method, privacy: .public)")
+                return
+            }
+            for handler in handlers {
+                handler(params)
+            }
         }
     }
 }
