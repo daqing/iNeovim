@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Interpolates the cursor's position over a short glide instead of jumping

@@ -53,7 +53,7 @@ private func outputCallback(
     now: UnsafePointer<CVTimeStamp>,
     _: UnsafePointer<CVTimeStamp>,
     _: CVOptionFlags,
-    _: UnsafeMutablePointer<CVOptionFlags>?,
+    _: UnsafeMutablePointer<CVOptionFlags>,
     context: UnsafeMutableRawPointer?
 ) -> CVReturn {
     guard let context else { return kCVReturnError }

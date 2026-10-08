@@ -194,6 +194,7 @@ final class ScreenTests: XCTestCase {
         await screen.apply(.gridScroll(grid: 1, top: 0, bot: 2, left: 0, right: 2, rows: -1, cols: 0))
         await screen.apply(.flush)
 
-        XCTAssertEqual(reports, [(rows: 1, cols: 0), (rows: -1, cols: 0)])
+        XCTAssertEqual(reports.map(\.rows), [1, -1])
+        XCTAssertEqual(reports.map(\.cols), [0, 0])
     }
 }
