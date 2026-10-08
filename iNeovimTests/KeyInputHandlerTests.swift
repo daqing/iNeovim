@@ -108,6 +108,34 @@ final class KeyInputHandlerTests: XCTestCase {
         XCTAssertEqual(handler.nvimKey(for: event), "<D-S-k>")
     }
 
+    func testOptionProducesSystemCharacterByDefault() {
+        let event = keyEvent("å", ignoringModifiers: "a", keyCode: 0, modifiers: [.option])
+        XCTAssertNil(handler.nvimKey(for: event))
+    }
+
+    func testOptionAsMetaProducesNotation() {
+        var handler = self.handler
+        handler.optionAsMeta = true
+        let event = keyEvent("å", ignoringModifiers: "a", keyCode: 0, modifiers: [.option])
+        XCTAssertEqual(handler.nvimKey(for: event), "<M-a>")
+    }
+
+    func testOptionWithControlProducesNotation() {
+        // Control + Option combos have no printable system character, so the
+        // notation path applies regardless of the meta setting.
+        var handler = self.handler
+        handler.optionAsMeta = false
+        let event = keyEvent("\u{1}", ignoringModifiers: "a", keyCode: 0, modifiers: [.control, .option])
+        XCTAssertEqual(handler.nvimKey(for: event), "<C-M-a>")
+    }
+
+    func testOptionWithSpecialKeyProducesNotation() {
+        // Named keys have no system-character fallback; Option acts as meta
+        // for them regardless of the setting.
+        let event = keyEvent("\u{f702}", ignoringModifiers: "\u{f702}", keyCode: 123, modifiers: [.option])
+        XCTAssertEqual(handler.nvimKey(for: event), "<M-Left>")
+    }
+
     func testCapsLockIsNotAModifier() {
         let event = keyEvent("\u{1}", ignoringModifiers: "a", keyCode: 0, modifiers: [.control, .capsLock])
         XCTAssertEqual(handler.nvimKey(for: event), "<C-a>")

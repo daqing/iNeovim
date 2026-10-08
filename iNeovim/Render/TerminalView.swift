@@ -15,6 +15,7 @@ final class TerminalView: NSView {
     var inputSettings = InputSettings() {
         didSet {
             keyHandler.passCmdKeys = inputSettings.passCmdKeysThrough
+            keyHandler.optionAsMeta = inputSettings.optionAsMeta
         }
     }
 
