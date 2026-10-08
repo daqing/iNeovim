@@ -12,6 +12,11 @@ final class TerminalView: NSView {
     private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let resizeController: ResizeController
     private let keyHandler = KeyInputHandler()
+    var inputSettings = InputSettings() {
+        didSet {
+            keyHandler.passCmdKeys = inputSettings.passCmdKeysThrough
+        }
+    }
 
     init(
         metrics: FontMetrics = FontMetrics(
@@ -47,6 +52,20 @@ final class TerminalView: NSView {
             // IME composition produces marked text (see IMEHandler).
             interpretKeyEvents([event])
         }
+    }
+
+    /// The view's key-equivalent hook runs before the main menu's during
+    /// responder-chain dispatch, so when Command passthrough is enabled we
+    /// must offer app shortcuts the event first.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown, event.modifierFlags.contains(.command) else { return false }
+        guard inputSettings.passCmdKeysThrough else { return false }
+        if let mainMenu = NSApp.mainMenu, mainMenu.performKeyEquivalent(with: event) {
+            return true
+        }
+        guard let key = keyHandler.nvimKey(for: event) else { return false }
+        sendKeys(key)
+        return true
     }
 
     private func sendKeys(_ keys: String) {

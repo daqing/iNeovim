@@ -94,6 +94,20 @@ final class KeyInputHandlerTests: XCTestCase {
         XCTAssertNil(handler.nvimKey(for: event))
     }
 
+    func testCommandKeyPassesThroughWhenEnabled() {
+        var handler = self.handler
+        handler.passCmdKeys = true
+        let event = keyEvent("k", ignoringModifiers: "k", keyCode: 40, modifiers: [.command])
+        XCTAssertEqual(handler.nvimKey(for: event), "<D-k>")
+    }
+
+    func testCommandShiftKeyPassesThroughWhenEnabled() {
+        var handler = self.handler
+        handler.passCmdKeys = true
+        let event = keyEvent("K", ignoringModifiers: "K", keyCode: 40, modifiers: [.command, .shift])
+        XCTAssertEqual(handler.nvimKey(for: event), "<D-S-k>")
+    }
+
     func testCapsLockIsNotAModifier() {
         let event = keyEvent("\u{1}", ignoringModifiers: "a", keyCode: 0, modifiers: [.control, .capsLock])
         XCTAssertEqual(handler.nvimKey(for: event), "<C-a>")
