@@ -191,8 +191,8 @@ final class KeyInputHandlerTests: XCTestCase {
             context: nil,
             characters: characters,
             charactersIgnoringModifiers: ignoringModifiers,
-            keyCode: keyCode,
-            isARepeat: false
+            isARepeat: false,
+            keyCode: keyCode
         )!
     }
 }

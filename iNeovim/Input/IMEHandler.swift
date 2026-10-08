@@ -40,6 +40,12 @@ final class IMEHandler: NSObject {
         hasMarkedText ? markedSelection : NSRange(location: NSNotFound, length: 0)
     }
 
+    func markedRange() -> NSRange {
+        hasMarkedText
+            ? NSRange(location: 0, length: markedText.utf16.count)
+            : NSRange(location: NSNotFound, length: 0)
+    }
+
     func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
         nil
     }
@@ -116,6 +122,10 @@ extension TerminalView: NSTextInputClient {
         imeHandler.selectedRange()
     }
 
+    func markedRange() -> NSRange {
+        imeHandler.markedRange()
+    }
+
     func hasMarkedText() -> Bool {
         imeHandler.hasMarkedText
     }
@@ -136,7 +146,7 @@ extension TerminalView: NSTextInputClient {
         NSNotFound
     }
 
-    func doCommand(by selector: Selector?) {
+    override func doCommand(by selector: Selector?) {
         imeHandler.doCommand(by: selector)
     }
 }

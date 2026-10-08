@@ -71,8 +71,8 @@ final class MouseHandlerTests: XCTestCase {
             context: nil,
             characters: "a",
             charactersIgnoringModifiers: "a",
-            keyCode: 0,
-            isARepeat: false
+            isARepeat: false,
+            keyCode: 0
         )!
         XCTAssertNil(MouseHandler.buttonName(for: keyEvent))
     }

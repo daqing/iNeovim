@@ -12,7 +12,7 @@ final class TerminalView: NSView {
     private var blinker = CursorBlinker()
     private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let resizeController: ResizeController
-    private let keyHandler = KeyInputHandler()
+    private var keyHandler = KeyInputHandler()
     private let mouseHandler = MouseHandler()
     let imeHandler = IMEHandler()
     var inputSettings = InputSettings() {
@@ -51,7 +51,7 @@ final class TerminalView: NSView {
     }
 
     override var isFlipped: Bool { true }
-    override func acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
         if imeHandler.hasMarkedText {
