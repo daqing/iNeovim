@@ -43,8 +43,12 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── RPCError.swift        RPC error types
 │   ├── RPCSession.swift      Actor: read loop, request matching, notifications
 │   └── NvimClient.swift      Typed convenience API over RPCSession
+├── UI/                   UI-protocol layer: redraw events and grid state (Phase 4)
+│   ├── RedrawEvent.swift     typed `redraw` events + notification parser
+│   └── Highlight.swift       HlAttr highlight model
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
-iNeovimTests/             XCTest target (synchronized group); codec round-trip tests
+iNeovimTests/             XCTest target (synchronized group); codec round-trip and
+                          redraw-parsing tests
 iNeovim.xcodeproj/        iNeovim app + iNeovimTests unit test targets
 ```
 

@@ -33,3 +33,27 @@ enum MsgPackValue {
 // nonisolated generic contexts they are used from.
 nonisolated extension MsgPackValueMap: Hashable {}
 nonisolated extension MsgPackValue: Hashable {}
+
+extension MsgPackValue {
+    /// Numeric payload regardless of whether nvim encoded it as msgpack int or uint.
+    var intValue: Int? {
+        switch self {
+        case .int(let value):
+            Int(value)
+        case .uint(let value):
+            Int(value)
+        default:
+            nil
+        }
+    }
+
+    var boolValue: Bool? {
+        guard case let .bool(value) = self else { return nil }
+        return value
+    }
+
+    var stringValue: String? {
+        guard case let .string(value) = self else { return nil }
+        return value
+    }
+}
