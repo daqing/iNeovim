@@ -106,4 +106,4 @@ iNeovim 嵌入一个 Neovim 实例并实现其 GUI 协议:
 
 ## 许可证
 
-待定
+[MIT](LICENSE) © 2026 David Zhang

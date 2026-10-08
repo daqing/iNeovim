@@ -128,4 +128,4 @@ There is no command-line build script or CI at this time.
 
 ## License
 
-TBD
+[MIT](LICENSE) © 2026 David Zhang
