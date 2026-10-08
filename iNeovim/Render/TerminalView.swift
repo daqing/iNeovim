@@ -11,6 +11,7 @@ final class TerminalView: NSView {
     private var blinker = CursorBlinker()
     private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let resizeController: ResizeController
+    private let keyHandler = KeyInputHandler()
 
     init(
         metrics: FontMetrics = FontMetrics(
@@ -36,7 +37,27 @@ final class TerminalView: NSView {
     }
 
     override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if let key = keyHandler.nvimKey(for: event) {
+            sendKeys(key)
+        } else {
+            // Printable text and dead keys go through the input context so
+            // IME composition produces marked text (see IMEHandler).
+            interpretKeyEvents([event])
+        }
+    }
+
+    private func sendKeys(_ keys: String) {
+        Task {
+            do {
+                try await NvimClient().input(keys)
+            } catch {
+                Log.input.error("nvim_input failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
