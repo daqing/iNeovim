@@ -7,6 +7,23 @@ struct CursorState: Equatable, Sendable {
     var col: Int
 }
 
+/// An immutable copy of the applied UI state for one render pass.
+struct ScreenSnapshot: Equatable, Sendable {
+    var grid: Grid?
+    var highlights: HighlightStore
+    var defaultForeground: Int?
+    var defaultBackground: Int?
+    var defaultSpecial: Int?
+    var cursor: CursorState
+    var modes: [ModeInfo]
+    var modeIndex: Int
+
+    var cursorModeInfo: ModeInfo? {
+        guard modes.indices.contains(modeIndex) else { return nil }
+        return modes[modeIndex]
+    }
+}
+
 /// Applied UI state — grids, highlights, default colors, mode and cursor —
 /// updated from the redraw event stream. The render layer reads snapshots
 /// from here instead of touching raw msgpack or events.
@@ -23,6 +40,10 @@ actor Screen {
     private(set) var modeName: String?
     private(set) var modeIndex = 0
     private var consumeTask: Task<Void, Never>?
+
+    /// Called on the screen's executor after each `flush` batch has been
+    /// applied; the render layer refreshes its snapshot from this.
+    var flushHandler: (@Sendable () -> Void)?
 
     /// The primary (grid 1) content; nil before the first `grid_resize`.
     var primaryGrid: Grid? { grids[1] }
@@ -61,10 +82,24 @@ actor Screen {
         case let .modeInfoSet(infos):
             modes = infos
         case .flush:
-            break
+            flushHandler?()
         case let .unknown(name):
             Log.render.debug("Ignoring unknown redraw event \(name, privacy: .public)")
         }
+    }
+
+    /// An immutable view of the applied state for the next render pass.
+    func snapshot() -> ScreenSnapshot {
+        ScreenSnapshot(
+            grid: grids[1],
+            highlights: highlights,
+            defaultForeground: defaultForeground,
+            defaultBackground: defaultBackground,
+            defaultSpecial: defaultSpecial,
+            cursor: cursor,
+            modes: modes,
+            modeIndex: modeIndex
+        )
     }
 
     /// Consume the redraw event stream, applying events in arrival order.
