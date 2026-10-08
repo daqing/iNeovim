@@ -72,6 +72,7 @@ final class TerminalView: NSView {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layer?.masksToBounds = true
         layer?.addSublayer(contentLayer)
+        registerForDraggedTypes([.fileURL])
         imeHandler.view = self
         mouseHandler.view = self
         scrollController.view = self
@@ -219,6 +220,25 @@ final class TerminalView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         scrollController.scrollWheel(with: event)
+    }
+
+    // Dropping files on the editor opens them as buffers (same path as
+    // "Open With"/Dock drops, which arrive through the app delegate).
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = Self.droppedFileURLs(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        AppModel.shared.open(urls)
+        return true
+    }
+
+    static func droppedFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        return (pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]) ?? []
     }
 
     private func invalidatePreeditRegion() {
