@@ -13,8 +13,9 @@ final class ScrollController {
     private var wheelEndTask: Task<Void, Never>?
     private var gestureActive = false
 
-    /// Visual scroll offset sink, in points (y down).
-    var onOffsetChange: ((CGFloat) -> Void)?
+    /// Visual scroll offset sink, in points (y down); the second argument
+    /// asks for an animated chase (gesture ended) vs. direct application.
+    var onOffsetChange: ((CGFloat, Bool) -> Void)?
 
     func scrollWheel(with event: NSEvent) {
         let lineHeight = view?.metrics.cellSize.height ?? 1
@@ -52,7 +53,7 @@ final class ScrollController {
 
     private func apply(delta: CGFloat, lineHeight: CGFloat) {
         _ = accumulator.addDelta(delta, lineHeight: lineHeight)
-        onOffsetChange?(accumulator.offset)
+        onOffsetChange?(accumulator.offset, false)
     }
 
     private func scheduleWheelEnd() {
@@ -67,6 +68,6 @@ final class ScrollController {
     private func endGesture() {
         gestureActive = false
         accumulator.collapse()
-        onOffsetChange?(accumulator.offset)
+        onOffsetChange?(accumulator.offset, true)
     }
 }

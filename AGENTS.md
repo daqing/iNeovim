@@ -53,7 +53,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── Render/               Core Text + CALayer rendering layer (Phase 5)
 │   ├── FontMetrics.swift     NSFont → cell size/ascent/baseline metrics
 │   ├── CellRenderer.swift    grid rows → styled runs for CTLine shaping
-│   ├── TerminalView.swift    layer-backed NSView drawing the grid
+│   ├── GridContentLayer.swift  cells/cursor/preedit in a scrollable CALayer
+│   ├── TerminalView.swift    layer-backed NSView hosting the content layer
 │   ├── CursorBlinker.swift   cursor blink timing (wait/on/off)
 │   └── NSColor+PackedRGB.swift  0xRRGGBB ↔ NSColor helpers
 ├── Input/                keyboard/mouse translation layer (Phase 6)
@@ -65,7 +66,9 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   └── InputDispatcher.swift  single-consumer stream into NvimClient
 ├── Scroll/               smooth scrolling and animation (Phase 7)
 │   ├── ScrollAccumulator.swift  pixel↔whole-line bookkeeping (pure, testable)
-│   └── ScrollController.swift   scrollWheel events → offsets + wheel requests
+│   ├── ScrollController.swift   scrollWheel events → offsets + wheel requests
+│   ├── ScrollAnimator.swift     CADisplayLink offset chase (settle/glide)
+│   └── DisplayLinkDriver.swift  CADisplayLink → Swift closure trampoline
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
 iNeovimTests/             XCTest target (synchronized group); codec round-trip and
                           redraw-parsing tests
