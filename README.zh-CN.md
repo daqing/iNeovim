@@ -84,13 +84,20 @@ iNeovim 嵌入一个 Neovim 实例并实现其 GUI 协议:
 
 ## 当前状态
 
-早期骨架。仓库目前只有 Xcode 应用模板;Neovim 集成与渲染层正在开发中。
+任务计划的第 1–8 阶段已实现:应用内嵌 `nvim --embed`,用 Core Text + `CALayer`
+渲染 linegrid UI,处理键盘/输入法/鼠标输入,提供平滑滚动与光标动画,并具备原生
+应用外壳(Neovim tabpage、设置窗口、File/Neovim 菜单、由 `set_title` 驱动的窗口
+标题,以及“打开方式”/拖拽打开文件)。测试覆盖编解码、redraw 解析、UI 状态、输入、
+滚动、设置以及内嵌 `:terminal` 的冒烟检查。
+
+第 9 阶段(打磨与发布)尚未开始:暂无应用图标、许可证与打包发布流程。完整计划见
+`docs/TASKS.md`,手动检查见 `docs/VERIFICATION.md`。
 
 ## 环境要求
 
 - macOS 14.6 或更高版本
 - Xcode 26.3 或更高版本
-- Neovim(用于嵌入;版本要求待定)
+- Neovim 0.9 或更高版本(自动查找可执行文件)
 
 ## 构建
 
