@@ -12,6 +12,7 @@ final class TerminalView: NSView {
     private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let resizeController: ResizeController
     private let keyHandler = KeyInputHandler()
+    let imeHandler = IMEHandler()
     var inputSettings = InputSettings() {
         didSet {
             keyHandler.passCmdKeys = inputSettings.passCmdKeysThrough
@@ -36,6 +37,10 @@ final class TerminalView: NSView {
         ))
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        imeHandler.view = self
+        imeHandler.onMarkedTextChange = { [weak self] in
+            self?.invalidatePreeditRegion()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -46,6 +51,12 @@ final class TerminalView: NSView {
     override func acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        if imeHandler.hasMarkedText {
+            // Composition in progress: let the input context route the event
+            // to setMarkedText/insertText/doCommand.
+            interpretKeyEvents([event])
+            return
+        }
         if let key = keyHandler.nvimKey(for: event) {
             sendKeys(key)
         } else {
@@ -69,7 +80,7 @@ final class TerminalView: NSView {
         return true
     }
 
-    private func sendKeys(_ keys: String) {
+    func sendKeys(_ keys: String) {
         Task {
             do {
                 try await NvimClient().input(keys)
@@ -77,6 +88,18 @@ final class TerminalView: NSView {
                 Log.input.error("nvim_input failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+    }
+
+    /// View-space anchor for preedit (marked) text and IME candidate windows:
+    /// the cell the nvim cursor is on. Refined per character range in T6.5.
+    func preeditAnchorRect() -> CGRect {
+        guard let snapshot, let cellRect = cursorCellRect(snapshot) else { return .zero }
+        return cellRect
+    }
+
+    private func invalidatePreeditRegion() {
+        guard let snapshot, let cellRect = cursorCellRect(snapshot) else { return }
+        setNeedsDisplay(cellRect.insetBy(dx: -cellRect.width, dy: 0))
     }
 
     override func viewDidMoveToWindow() {
