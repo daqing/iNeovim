@@ -54,7 +54,7 @@ actor RPCSession {
             Task { await self?.feed(data) }
         }
         Task { [weak self] in
-            for await _ in await NvimProcess.shared.termination {
+            for await _ in NvimProcess.shared.termination {
                 await self?.close(RPCError.connectionClosed)
             }
         }
