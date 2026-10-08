@@ -42,6 +42,10 @@ actor NvimProcess {
         let stderr = Pipe()
         process.executableURL = binary
         process.arguments = ["--embed"]
+        // A GUI launch inherits "/" as the working directory; starting in the
+        // user's home must happen here (not via RPC) so init.lua already sees
+        // the expected `getcwd()` during startup.
+        process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stderr
