@@ -32,6 +32,14 @@ struct NvimClient {
         _ = try await session.call("nvim_command", params: [.string(command)])
     }
 
+    /// Escape a path for use in an Ex command (`:edit <path>`).
+    func fnameescape(_ path: String) async throws -> String {
+        let value = try await session.call("nvim_call_function", params: [
+            .string("fnameescape"), .array([.string(path)]),
+        ])
+        return value.stringValue ?? path
+    }
+
     func callAtomic(_ calls: [MsgPackValue]) async throws -> MsgPackValue {
         try await session.call("nvim_call_atomic", params: [.array(calls)])
     }
