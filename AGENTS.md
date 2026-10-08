@@ -45,7 +45,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   └── NvimClient.swift      Typed convenience API over RPCSession
 ├── UI/                   UI-protocol layer: redraw events and grid state (Phase 4)
 │   ├── RedrawEvent.swift     typed `redraw` events + notification parser
-│   └── Highlight.swift       HlAttr highlight model, resolution, and store
+│   ├── Highlight.swift       HlAttr highlight model, resolution, and store
+│   └── Grid.swift            cell storage with line/scroll/clear/resize ops
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
 iNeovimTests/             XCTest target (synchronized group); codec round-trip and
                           redraw-parsing tests
