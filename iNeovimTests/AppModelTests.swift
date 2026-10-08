@@ -53,6 +53,45 @@ final class AppModelTests: XCTestCase {
         )
     }
 
+    func testUnexpectedTerminationSurfacesCrash() {
+        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        model.markReadyForTesting()
+
+        model.handleTermination(status: 1)
+
+        XCTAssertEqual(model.crash?.status, 1)
+        XCTAssertFalse(model.isReady)
+    }
+
+    func testShutdownSuppressesCrashDialog() {
+        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        model.markReadyForTesting()
+
+        model.beginShutdown()
+        model.handleTermination(status: 0)
+
+        XCTAssertNil(model.crash)
+        XCTAssertTrue(model.isReady)
+    }
+
+    func testDismissCrashClearsIt() {
+        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        model.handleTermination(status: 137)
+        XCTAssertNotNil(model.crash)
+
+        model.dismissCrash()
+        XCTAssertNil(model.crash)
+    }
+
+    func testRestartIsIgnoredAfterShutdown() {
+        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        model.beginShutdown()
+
+        model.restart()
+
+        XCTAssertNil(model.crash)
+    }
+
     func testEditorCommandsRouteToNeovim() {
         var commands: [String] = []
         let model = AppModel(openHandler: { _ in }, commandHandler: { commands.append($0) })

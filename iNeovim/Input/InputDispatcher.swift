@@ -6,6 +6,7 @@ import os
 actor InputDispatcher {
     static let shared = InputDispatcher()
 
+    // Immutable so `send` can yield from any thread without hopping actors.
     private let stream: AsyncStream<InputEvent>
     private let continuation: AsyncStream<InputEvent>.Continuation
     private var isHandedOut = false
@@ -31,6 +32,14 @@ actor InputDispatcher {
         }
         isHandedOut = true
         return stream
+    }
+
+    /// Allow a restarted session to consume the stream again. The stream
+    /// itself is kept (its continuation is nonisolated for `send`).
+    func reset() {
+        isHandedOut = false
+        consumeTask?.cancel()
+        consumeTask = nil
     }
 
     /// Start the single consumer translating events into RPC calls. Later

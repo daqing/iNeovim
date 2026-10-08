@@ -2,6 +2,13 @@ import Combine
 import Foundation
 import os
 
+/// An unexpected exit of the embedded Neovim process, surfaced to the UI so
+/// the user can restart it.
+struct NvimCrash: Identifiable, Equatable, Sendable {
+    let id = UUID()
+    let status: Int32
+}
+
 /// App-wide coordination between the SwiftUI shell and the embedded Neovim
 /// session: owns startup, forwards editor commands, and queues files opened
 /// before the session is ready.
@@ -15,10 +22,18 @@ final class AppModel: ObservableObject {
     /// Window title reported by Neovim through `set_title`.
     @Published private(set) var windowTitle: String?
 
+    /// Last unexpected nvim exit, or nil while the session is healthy.
+    @Published private(set) var crash: NvimCrash?
+
+    /// Reason the last bootstrap attempt failed, or nil after success.
+    @Published private(set) var bootstrapError: String?
+
     private let client = NvimClient()
     private let openHandler: @MainActor ([URL]) -> Void
     private let commandHandler: @MainActor (String) -> Void
     private var pendingFiles: [URL] = []
+    private var terminationTask: Task<Void, Never>?
+    private var isShuttingDown = false
 
     /// Files opened before startup finished, exposed for tests.
     var pendingFileCount: Int { pendingFiles.count }
@@ -36,6 +51,7 @@ final class AppModel: ObservableObject {
     func bootstrap() async {
         guard !isReady else { return }
         do {
+            bootstrapError = nil
             try await RPCSession.shared.start()
             try await RPCSession.shared.handshake()
             try await client.uiAttach(width: 80, height: 24, options: .map(MsgPackValueMap([
@@ -51,9 +67,11 @@ final class AppModel: ObservableObject {
             let stream = await client.makeRedrawEventStream()
             await Screen.shared.startConsuming(stream)
             await InputDispatcher.shared.startConsuming(with: client)
+            startObservingTermination()
             isReady = true
             flushPendingFiles()
         } catch {
+            bootstrapError = error.localizedDescription
             Log.rpc.error("Failed to connect to embedded nvim: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -62,6 +80,56 @@ final class AppModel: ObservableObject {
     func markReadyForTesting() {
         isReady = true
         flushPendingFiles()
+    }
+
+    // MARK: - Crash recovery (T9.1)
+
+    private func startObservingTermination() {
+        terminationTask?.cancel()
+        terminationTask = Task { [weak self] in
+            for await status in NvimProcess.shared.termination {
+                guard let self else { return }
+                self.handleTermination(status: status)
+            }
+        }
+    }
+
+    /// Called when the embedded nvim exits. Intentional shutdown is ignored;
+    /// otherwise the exit is surfaced so the UI can offer a restart.
+    func handleTermination(status: Int32) {
+        guard !isShuttingDown else { return }
+        isReady = false
+        crash = NvimCrash(status: status)
+        Log.app.error("Embedded nvim exited unexpectedly (status \(status, privacy: .public))")
+    }
+
+    /// Mark an intentional shutdown so the exit notification is not surfaced.
+    func beginShutdown() {
+        isShuttingDown = true
+        terminationTask?.cancel()
+        terminationTask = nil
+    }
+
+    func dismissCrash() {
+        crash = nil
+    }
+
+    /// Restart the embedded nvim in place: tear down the streams and session,
+    /// then bootstrap again. Editor state is not preserved (the process died).
+    func restart() {
+        guard !isShuttingDown else { return }
+        crash = nil
+        isReady = false
+        Task { await reloadSession() }
+    }
+
+    private func reloadSession() async {
+        await Screen.shared.stopConsuming()
+        await Screen.shared.resetState()
+        await RedrawEventStream.shared.reset()
+        await InputDispatcher.shared.reset()
+        await RPCSession.shared.reset()
+        await bootstrap()
     }
 
     /// Send a raw `nvim_command`; failures are logged, not thrown, so menu
