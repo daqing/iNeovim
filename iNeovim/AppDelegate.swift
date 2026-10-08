@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     .string("ext_linegrid"): .bool(true),
                 ])))
                 Log.render.info("UI attached 80x24 (ext_linegrid)")
+                // One wheel event scrolls exactly one line so the visual lead
+                // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
+                try await client.command("set mousescroll=ver:1,hor:1")
                 let stream = await client.makeRedrawEventStream()
                 await Screen.shared.startConsuming(stream)
                 await InputDispatcher.shared.startConsuming(with: client)

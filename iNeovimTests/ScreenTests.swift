@@ -152,4 +152,48 @@ final class ScreenTests: XCTestCase {
 
         XCTAssertEqual(flushed?.rect, CellRect(minRow: 0, minCol: 0, maxRow: 3, maxCol: 4))
     }
+
+    func testFlushReportsNetScrollDelta() async {
+        let screen = Screen()
+        var reported: (grid: Int, rows: Int, cols: Int)?
+        await screen.setScrollHandler({ grid, rows, cols in reported = (grid, rows, cols) })
+
+        await screen.apply(.gridResize(grid: 1, width: 4, height: 4))
+        await screen.apply(.gridScroll(grid: 1, top: 0, bot: 4, left: 0, right: 4, rows: 2, cols: 0))
+        await screen.apply(.gridScroll(grid: 1, top: 0, bot: 4, left: 0, right: 4, rows: 1, cols: 0))
+        await screen.apply(.flush)
+
+        XCTAssertEqual(reported?.grid, 1)
+        XCTAssertEqual(reported?.rows, 3)
+        XCTAssertEqual(reported?.cols, 0)
+    }
+
+    func testFlushWithoutScrollReportsNothing() async {
+        let screen = Screen()
+        var scrollCount = 0
+        await screen.setScrollHandler({ _, _, _ in scrollCount += 1 })
+
+        await screen.apply(.gridResize(grid: 1, width: 2, height: 2))
+        await screen.apply(.gridLine(grid: 1, row: 0, colStart: 0, runs: [
+            GridCellRun(text: "x", attrId: 0, count: 1),
+        ]))
+        await screen.apply(.flush)
+
+        XCTAssertEqual(scrollCount, 0)
+    }
+
+    func testScrollDeltaResetsAfterFlush() async {
+        let screen = Screen()
+        var reports: [(rows: Int, cols: Int)] = []
+        await screen.setScrollHandler({ _, rows, cols in reports.append((rows, cols)) })
+
+        await screen.apply(.gridResize(grid: 1, width: 2, height: 2))
+        await screen.apply(.gridScroll(grid: 1, top: 0, bot: 2, left: 0, right: 2, rows: 1, cols: 0))
+        await screen.apply(.flush)
+        await screen.apply(.flush)
+        await screen.apply(.gridScroll(grid: 1, top: 0, bot: 2, left: 0, right: 2, rows: -1, cols: 0))
+        await screen.apply(.flush)
+
+        XCTAssertEqual(reports, [(rows: 1, cols: 0), (rows: -1, cols: 0)])
+    }
 }

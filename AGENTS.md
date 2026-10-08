@@ -120,6 +120,11 @@ mechanism for interactive visual verification.
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is
   keyed by ID — so enabling multigrid later is a switch flip, not a rewrite.
+- **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
+  so one wheel event scrolls exactly one line and the visual lead in
+  `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.
+  Horizontal wheel input is not sent yet (`wheelleft`/`wheelright` require
+  nvim 0.10; the minimum is 0.9) — horizontal deltas are ignored for now.
 
 ## Security considerations
 

@@ -1,26 +1,39 @@
 import AppKit
 
-/// Translates `scrollWheel` events into pixel offsets (and, from T7.3,
-/// whole-line wheel requests for Neovim).
+/// Translates `scrollWheel` events into pixel offsets for the animator plus
+/// whole-line wheel requests for Neovim, then folds the `grid_scroll` events
+/// Neovim answers with back into the offset (see `ScrollAccumulator`).
 ///
 /// Trackpad gestures report `NSEventPhase` directly. Traditional wheel events
 /// carry no phase, so an idle timer synthesizes the "ended" transition and
-/// the gesture is closed once ticks stop arriving — the momentum-like glide
-/// is the animator's decay (T7.2).
+/// the momentum-like glide is the animator's decay.
 final class ScrollController {
+    /// How long after a gesture ends its unconfirmed lead may still be
+    /// claimed by in-flight `grid_scroll` events before snapping back.
+    static let confirmationGrace: Duration = .milliseconds(250)
+
     weak var view: TerminalView?
     private var accumulator = ScrollAccumulator()
     private var wheelEndTask: Task<Void, Never>?
+    private var settleTask: Task<Void, Never>?
     private var gestureActive = false
+    /// Whether incoming `grid_scroll` events are scroll catch-up; background
+    /// redraws (Ctrl-D, insert-mode scrolls) must not move the offset.
+    private var acceptConfirmations = false
+    private var lastPointerLocation: CGPoint = .zero
+    private var lastModifierFlags: NSEvent.ModifierFlags = []
 
     /// Visual scroll offset sink, in points (y down); the second argument
     /// asks for an animated chase (gesture ended) vs. direct application.
     var onOffsetChange: ((CGFloat, Bool) -> Void)?
 
     func scrollWheel(with event: NSEvent) {
-        let lineHeight = view?.metrics.cellSize.height ?? 1
+        guard let view else { return }
+        let lineHeight = view.metrics.cellSize.height
         let rawDelta = event.scrollingDeltaY
         guard rawDelta != 0, rawDelta.isFinite else { return }
+        lastPointerLocation = view.convert(event.locationInWindow, from: nil)
+        lastModifierFlags = event.modifierFlags
 
         if event.hasPreciseScrollingDeltas {
             if event.phase == .began || (event.momentumPhase == .began && !gestureActive) {
@@ -45,15 +58,54 @@ final class ScrollController {
         }
     }
 
+    /// A `grid_scroll` Neovim applied to grid 1 while our scroll was in
+    /// flight; shrinks the visual lead so the content does not jump.
+    func confirmScroll(rows: Int) {
+        guard acceptConfirmations, let view else { return }
+        accumulator.confirmScroll(rows: rows, lineHeight: view.metrics.cellSize.height)
+        onOffsetChange?(accumulator.offset, true)
+    }
+
     private func beginGesture() {
         wheelEndTask?.cancel()
+        settleTask?.cancel()
         gestureActive = true
+        acceptConfirmations = true
         accumulator.beginGesture()
     }
 
     private func apply(delta: CGFloat, lineHeight: CGFloat) {
-        _ = accumulator.addDelta(delta, lineHeight: lineHeight)
+        let requests = accumulator.addDelta(delta, lineHeight: lineHeight)
+        send(requests)
         onOffsetChange?(accumulator.offset, false)
+    }
+
+    private func send(_ requests: [ScrollLineRequest]) {
+        guard let view, !requests.isEmpty else { return }
+        // The pointer cell targets the window Neovim scrolls.
+        let dimensions = view.gridDimensions
+        let (row, col) = MouseHandler.cellLocation(
+            for: lastPointerLocation,
+            cellSize: view.metrics.cellSize,
+            gridWidth: dimensions?.width,
+            gridHeight: dimensions?.height
+        )
+        let modifier = MouseHandler.modifierString(for: lastModifierFlags)
+        for request in requests {
+            let button: String
+            switch request {
+            case .up: button = "wheelup"
+            case .down: button = "wheeldown"
+            }
+            InputDispatcher.shared.send(.mouse(
+                button: button,
+                action: "press",
+                modifier: modifier,
+                grid: 1,
+                row: row,
+                col: col
+            ))
+        }
     }
 
     private func scheduleWheelEnd() {
@@ -67,7 +119,20 @@ final class ScrollController {
 
     private func endGesture() {
         gestureActive = false
-        accumulator.collapse()
         onOffsetChange?(accumulator.offset, true)
+        guard accumulator.offset != 0 else {
+            acceptConfirmations = false
+            return
+        }
+        // Give in-flight wheel round-trips a grace window to claim the lead;
+        // whatever is left afterwards snaps back.
+        settleTask?.cancel()
+        settleTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.confirmationGrace)
+            guard let self, !Task.isCancelled else { return }
+            self.acceptConfirmations = false
+            self.accumulator.collapse()
+            self.onOffsetChange?(self.accumulator.offset, true)
+        }
     }
 }

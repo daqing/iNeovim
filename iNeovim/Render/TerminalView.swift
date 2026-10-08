@@ -231,6 +231,12 @@ final class TerminalView: NSView {
                     self.contentLayer.invalidate(cellRect: cellRect)
                 }
             }
+            await Screen.shared.setScrollHandler { [weak self] grid, rows, _ in
+                guard let self, grid == 1, rows != 0 else { return }
+                Task { @MainActor in
+                    self.scrollController.confirmScroll(rows: rows)
+                }
+            }
         }
     }
 

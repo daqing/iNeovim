@@ -69,6 +69,12 @@ actor Screen {
     /// region in cell coordinates.
     private var flushHandler: (@Sendable (Int, CellRect) -> Void)?
 
+    /// Called on the screen's executor once per `flush` for every grid that
+    /// scrolled since the previous flush, with the net scroll amounts
+    /// (same sign convention as `grid_scroll`).
+    private var scrollHandler: (@Sendable (Int, Int, Int) -> Void)?
+    private var scrollDeltas: [Int: (rows: Int, cols: Int)] = [:]
+
     /// The primary (grid 1) content; nil before the first `grid_resize`.
     var primaryGrid: Grid? { grids[1] }
 
@@ -80,6 +86,10 @@ actor Screen {
 
     func setFlushHandler(_ handler: (@Sendable (Int, CellRect) -> Void)?) {
         flushHandler = handler
+    }
+
+    func setScrollHandler(_ handler: (@Sendable (Int, Int, Int) -> Void)?) {
+        scrollHandler = handler
     }
 
     func apply(_ event: RedrawEvent) {
@@ -96,6 +106,12 @@ actor Screen {
             ))
         case let .gridScroll(grid, top, bot, left, right, rows, cols):
             grids[grid]?.scroll(top: top, bot: bot, left: left, right: right, rows: rows, cols: cols)
+            if rows != 0 || cols != 0 {
+                var delta = scrollDeltas[grid] ?? (rows: 0, cols: 0)
+                delta.rows += rows
+                delta.cols += cols
+                scrollDeltas[grid] = delta
+            }
             markDirty(grid, CellRect(minRow: top, minCol: left, maxRow: bot, maxCol: right))
         case let .gridClear(grid):
             grids[grid]?.clear()
@@ -131,6 +147,10 @@ actor Screen {
                 flushHandler?(grid, rect)
             }
             dirtyRects = [:]
+            for (grid, delta) in scrollDeltas {
+                scrollHandler?(grid, delta.rows, delta.cols)
+            }
+            scrollDeltas = [:]
         case let .unknown(name):
             Log.render.debug("Ignoring unknown redraw event \(name, privacy: .public)")
         }
