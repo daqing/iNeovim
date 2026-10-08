@@ -88,6 +88,8 @@ iNeovimTests/             XCTest target (synchronized group); codec round-trip,
                           redraw-parsing, settings/model, and sandbox integration tests
 Config/Info.plist         Partial Info.plist merged into the generated one
                           (document types); outside the synchronized group
+Config/ExportOptions.plist  developer-id export options (T9.6)
+docs/                     TASKS, VERIFICATION, PERFORMANCE, RELEASE, screenshots/
 iNeovim.xcodeproj/        iNeovim app + iNeovimTests unit test targets
 ```
 
