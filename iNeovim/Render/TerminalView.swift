@@ -49,20 +49,31 @@ final class TerminalView: NSView {
         resizeController.viewDidResize(to: newSize)
     }
 
-    /// Pull a fresh snapshot on every nvim flush; events between flushes are
-    /// coalesced by needsDisplay.
+    /// Pull a fresh snapshot on every nvim flush, then invalidate only the
+    /// cells the flush dirtied.
     private func connectScreen() {
         Task {
-            await Screen.shared.flushHandler = { [weak self] in
-                guard let self else { return }
+            await Screen.shared.flushHandler = { [weak self] grid, cellRect in
+                guard let self, grid == 1 else { return }
                 Task { @MainActor in
                     let snapshot = await Screen.shared.snapshot()
                     self.updateBlink(previous: self.snapshot, next: snapshot)
                     self.snapshot = snapshot
-                    self.needsDisplay = true
+                    self.invalidate(cellRect: cellRect)
                 }
             }
         }
+    }
+
+    private func invalidate(cellRect: CellRect) {
+        let cellWidth = metrics.cellSize.width
+        let cellHeight = metrics.cellSize.height
+        setNeedsDisplay(CGRect(
+            x: CGFloat(cellRect.minCol) * cellWidth,
+            y: CGFloat(cellRect.minRow) * cellHeight,
+            width: CGFloat(cellRect.maxCol - cellRect.minCol) * cellWidth,
+            height: CGFloat(cellRect.maxRow - cellRect.minRow) * cellHeight
+        ))
     }
 
     override func draw(_ dirtyRect: NSRect) {
