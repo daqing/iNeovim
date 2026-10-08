@@ -8,7 +8,9 @@ iNeovim embeds Neovim and renders its UI as a first-class macOS application. The
 goal is not merely to wrap Neovim in a window, but to deliver the best Neovim GUI
 available — one that feels indistinguishable from a native Mac app.
 
-The project is at an early stage. See **Roadmap / Status** below.
+![iNeovim editing a Swift file](docs/screenshots/editor.png)
+
+All nine phases of the task plan are implemented; see **Status** below.
 
 ## Goals
 
@@ -103,29 +105,44 @@ iNeovim embeds a Neovim instance and implements the GUI protocol:
 
 ## Status
 
-Phases 1–8 of the task plan are implemented: the app embeds `nvim --embed`,
+Phases 1–9 of the task plan are implemented. The app embeds `nvim --embed`,
 renders the linegrid UI with Core Text + `CALayer`, handles keyboard/IME/mouse
 input, provides smooth scrolling and cursor animation, and ships a native app
 shell (Neovim tabpages, settings window, File/Neovim menus, window title from
-`set_title`, and Open With / drag-and-drop file opening). The test suite covers
-the codec, redraw parsing, UI state, input, scrolling, settings, and an embedded
-`:terminal` sanity check.
+`set_title`, Open With / drag-and-drop file opening, and crash recovery with
+in-place restart). Phase 9 adds the app icon, the `com.mzevo` bundle identifier,
+the MIT license, performance baselines and Instruments signposts, and a
+documented notarization/release flow.
 
-Phase 9 (polish and release) is still open: no app icon, license, or
-notarization/release pipeline yet. See `docs/TASKS.md` for the full plan and
-`docs/VERIFICATION.md` for manual checks.
+The test suite covers the codec, redraw parsing, UI state, input, scrolling,
+settings, crash recovery, render smoke tests, and an embedded `:terminal`
+sanity check. See `docs/TASKS.md` for the plan, `docs/VERIFICATION.md` for manual
+checks, `docs/PERFORMANCE.md` for profiling, and `docs/RELEASE.md` for shipping.
 
 ## Requirements
 
 - macOS 14.6 or later
-- Xcode 26.3 or later
 - Neovim 0.9 or later (the embedded binary is located automatically)
+- Xcode 26.3 or later (only to build from source)
 
-## Building
+## Install
 
-Open `iNeovim.xcodeproj` in Xcode and build/run the `iNeovim` scheme.
-There is no command-line build script or CI at this time.
+There is no published binary yet; build from source:
+
+1. Install Neovim 0.9 or later, for example `brew install neovim`.
+2. Clone and open the project:
+
+   ```sh
+   git clone https://github.com/daqing/iNeovim.git
+   cd iNeovim
+   open iNeovim.xcodeproj
+   ```
+
+3. Select the `iNeovim` scheme and run (⌘R).
+
+There is no command-line build script or CI at this time. Release builds are
+archived, notarized, and stapled following `docs/RELEASE.md`.
 
 ## License
 
-TBD
+[MIT](LICENSE) © 2026 David Zhang

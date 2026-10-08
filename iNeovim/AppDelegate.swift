@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Log.app.info("Application will terminate")
+        AppModel.shared.beginShutdown()
         Task {
             await Screen.shared.stopConsuming()
             await NvimProcess.shared.terminate()

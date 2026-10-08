@@ -7,7 +7,9 @@
 iNeovim 嵌入 Neovim,并将其 UI 渲染为一流的 macOS 应用。目标不是简单地把
 Neovim 包进一个窗口,而是做出最好的 Neovim GUI——用起来与原生 Mac 应用无异。
 
-项目处于早期阶段,进展见下方 **当前状态**。
+![iNeovim 编辑 Swift 文件](docs/screenshots/editor.png)
+
+任务计划的九个阶段均已完成,详见下方 **当前状态**。
 
 ## 目标
 
@@ -84,26 +86,40 @@ iNeovim 嵌入一个 Neovim 实例并实现其 GUI 协议:
 
 ## 当前状态
 
-任务计划的第 1–8 阶段已实现:应用内嵌 `nvim --embed`,用 Core Text + `CALayer`
+任务计划的第 1–9 阶段已实现。应用内嵌 `nvim --embed`,用 Core Text + `CALayer`
 渲染 linegrid UI,处理键盘/输入法/鼠标输入,提供平滑滚动与光标动画,并具备原生
 应用外壳(Neovim tabpage、设置窗口、File/Neovim 菜单、由 `set_title` 驱动的窗口
-标题,以及“打开方式”/拖拽打开文件)。测试覆盖编解码、redraw 解析、UI 状态、输入、
-滚动、设置以及内嵌 `:terminal` 的冒烟检查。
+标题、打开方式/拖拽打开文件,以及崩溃恢复与原地重启)。第 9 阶段新增应用图标、
+`com.mzevo` bundle ID、MIT 许可证、性能基线与 Instruments signpost,以及文档化的
+公证与发布流程。
 
-第 9 阶段(打磨与发布)尚未开始:暂无应用图标、许可证与打包发布流程。完整计划见
-`docs/TASKS.md`,手动检查见 `docs/VERIFICATION.md`。
+测试覆盖编解码、redraw 解析、UI 状态、输入、滚动、设置、崩溃恢复、渲染冒烟测试
+以及内嵌 `:terminal` 冒烟检查。完整计划见 `docs/TASKS.md`,手动检查见
+`docs/VERIFICATION.md`,性能见 `docs/PERFORMANCE.md`,发布见 `docs/RELEASE.md`。
 
 ## 环境要求
 
 - macOS 14.6 或更高版本
-- Xcode 26.3 或更高版本
 - Neovim 0.9 或更高版本(自动查找可执行文件)
+- Xcode 26.3 或更高版本(仅从源码构建时需要)
 
-## 构建
+## 安装
 
-用 Xcode 打开 `iNeovim.xcodeproj`,构建并运行 `iNeovim` scheme。
-目前没有命令行构建脚本和 CI。
+暂无发布二进制,请从源码构建:
+
+1. 安装 Neovim 0.9 或更高版本,例如 `brew install neovim`。
+2. 克隆并打开工程:
+
+   ```sh
+   git clone https://github.com/daqing/iNeovim.git
+   cd iNeovim
+   open iNeovim.xcodeproj
+   ```
+
+3. 选择 `iNeovim` scheme 并运行(⌘R)。
+
+目前没有命令行构建脚本和 CI。发布构建按 `docs/RELEASE.md` 进行归档、公证并装订。
 
 ## 许可证
 
-待定
+[MIT](LICENSE) © 2026 David Zhang

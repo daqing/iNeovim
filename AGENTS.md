@@ -7,8 +7,9 @@ iNeovim is a native macOS desktop application written in Swift with SwiftUI. It 
 itself (Core Text + `CALayer`), with macOS-native input, smooth scrolling, and an app
 shell. Phases 1–8 of `docs/TASKS.md` are implemented: RPC, UI state, rendering, input,
 scrolling, and the SwiftUI app shell (tabs, settings, menus, window title, file opening).
-Phase 9 (polish and release) is still open — there is no app icon, license, or release
-pipeline yet.
+Phase 9 (polish and release) added crash recovery, performance baselines/signposts, an
+app icon, the `com.mzevo` bundle identifier, the MIT license, and a documented
+archive → notarize release flow (`docs/RELEASE.md`).
 
 Key facts from `iNeovim.xcodeproj/project.pbxproj`:
 
@@ -20,7 +21,8 @@ Key facts from `iNeovim.xcodeproj/project.pbxproj`:
   (`SWIFT_APPROACHABLE_CONCURRENCY = YES`), default actor isolation is `MainActor`
   (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`).
 - **Bundle:** display name `iNeovim`, category `public.app-category.developer-tools`,
-  bundle ID `devplaceholder.<unique>.<product>` (placeholder prefix — replace before release).
+  bundle ID `com.mzevo.<product>` (`com.mzevo.iNeovim`, tests `com.mzevo.iNeovimTests`;
+  changed from the template placeholder in T9.4).
 - **Capabilities:** App Sandbox enabled, user-selected files read/write
   (`ENABLE_USER_SELECTED_FILES = readwrite`, widened in T1.6), App Groups registered.
 - **Versioning:** `MARKETING_VERSION = 1.0`, `CURRENT_PROJECT_VERSION = 1` — both live only
@@ -80,11 +82,14 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── CursorAnimator.swift     cursor glide between cells (~80 ms)
 │   ├── ScrollAnimationSettings.swift  shared durations/thresholds knobs
 │   └── DisplayLinkDriver.swift  CVDisplayLink → Swift closure trampoline
-└── Assets.xcassets/      AccentColor colorset only (no app icon yet)
+└── Assets.xcassets/      AccentColor colorset + AppIcon.appiconset (T9.3)
+Scripts/                  One-off tooling (app-icon generator); not part of the build
 iNeovimTests/             XCTest target (synchronized group); codec round-trip,
                           redraw-parsing, settings/model, and sandbox integration tests
 Config/Info.plist         Partial Info.plist merged into the generated one
                           (document types); outside the synchronized group
+Config/ExportOptions.plist  developer-id export options (T9.6)
+docs/                     TASKS, VERIFICATION, PERFORMANCE, RELEASE, screenshots/
 iNeovim.xcodeproj/        iNeovim app + iNeovimTests unit test targets
 ```
 
@@ -165,10 +170,12 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   (`DEVELOPMENT_TEAM = S39RD89QY9`) — do not hardcode other team IDs or credentials.
 - Never commit secrets (API keys, provisioning credentials, `.env` files); none exist in
   the repo today.
-- The bundle ID prefix `devplaceholder` must be replaced with a real reverse-DNS
-  identifier before any distribution.
+- The bundle ID prefix is the real reverse-DNS identifier `com.mzevo` (T9.4); keep
+  any future App Group identifiers under the same prefix.
 
 ## Deployment / release
 
-No deployment pipeline exists. There is no Fastlane, no CI, no notarization setup, and no
-shared scheme. Releases, when needed, are produced from Xcode's archive flow.
+No automated pipeline or CI exists. Release signing uses automatic signing with team
+`S39RD89QY9`; Release enables the hardened runtime for notarization. The full
+archive → export (`Config/ExportOptions.plist`) → notarize (`notarytool`) → staple flow
+is documented in `docs/RELEASE.md`. The app is MIT-licensed (`LICENSE`).

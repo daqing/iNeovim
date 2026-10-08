@@ -20,7 +20,10 @@ enum CellRenderer {
     /// are absorbed into the preceding run even if nvim assigned them a
     /// different id, so backgrounds and decorations stay continuous across
     /// wide glyphs.
-    static func runs(forRow row: [GridCell]) -> [StyledRun] {
+    ///
+    /// Generic over the row storage so the renderer can pass a zero-copy
+    /// `Grid.rowSlice(_:)` instead of copying the row each frame.
+    static func runs<C: Collection>(forRow row: C) -> [StyledRun] where C.Element == GridCell {
         var runs: [StyledRun] = []
         var continuationCellsRemaining = 0
         for (index, cell) in row.enumerated() {

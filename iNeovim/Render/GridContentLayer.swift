@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import os
 
 /// The scrollable grid surface: owns drawing of the cells, the cursor, and
 /// the IME preedit, so the animator can translate the whole content while
@@ -80,6 +81,8 @@ final class GridContentLayer: CALayer {
     }
 
     override func draw(in context: CGContext) {
+        let signpost = Signpost.render.beginInterval("gridDraw")
+        defer { Signpost.render.endInterval("gridDraw", signpost) }
         guard let snapshot, let grid = snapshot.grid, !grid.isEmpty else { return }
         let cellHeight = metrics.cellSize.height
         let dirtyRect = context.boundingBoxOfClipPath.intersection(bounds)
@@ -89,13 +92,10 @@ final class GridContentLayer: CALayer {
         let lastRow = min(grid.height - 1, Int(floor(dirtyRect.maxY / cellHeight)))
         guard firstRow <= lastRow else { return }
 
+        // Resolve each highlight id once per frame instead of once per run.
+        var colorCache: [Int: ResolvedColors] = [:]
         for row in firstRow...lastRow {
-            var cells = [GridCell]()
-            cells.reserveCapacity(grid.width)
-            for col in 0..<grid.width {
-                cells.append(grid[row, col])
-            }
-            let runs = CellRenderer.runs(forRow: cells)
+            let runs = CellRenderer.runs(forRow: grid.rowSlice(row))
 
             // Background pass, in layer coordinates (y down). Runs without an
             // explicit background stay transparent, letting the view's
@@ -103,7 +103,7 @@ final class GridContentLayer: CALayer {
             for run in runs {
                 let runRect = rect(for: run, row: row)
                 guard runRect.intersects(dirtyRect) else { continue }
-                guard let background = resolvedColors(for: run.attrId).background else { continue }
+                guard let background = color(for: run.attrId, cache: &colorCache).background else { continue }
                 context.setFillColor(background.cgColor)
                 context.fill(snappedToPixels(runRect))
             }
@@ -114,7 +114,12 @@ final class GridContentLayer: CALayer {
             context.scaleBy(x: 1, y: -1)
             for run in runs where !run.text.isEmpty {
                 guard rect(for: run, row: row).intersects(dirtyRect) else { continue }
-                drawText(run: run, row: row, colors: resolvedColors(for: run.attrId), context: context)
+                drawText(
+                    run: run,
+                    row: row,
+                    colors: color(for: run.attrId, cache: &colorCache),
+                    context: context
+                )
             }
             context.restoreGState()
         }
@@ -164,6 +169,13 @@ final class GridContentLayer: CALayer {
         var foreground: NSColor
         var background: NSColor?
         var special: NSColor
+    }
+
+    private func color(for attrId: Int, cache: inout [Int: ResolvedColors]) -> ResolvedColors {
+        if let cached = cache[attrId] { return cached }
+        let resolved = resolvedColors(for: attrId)
+        cache[attrId] = resolved
+        return resolved
     }
 
     private func resolvedColors(for attrId: Int) -> ResolvedColors {

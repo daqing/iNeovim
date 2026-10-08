@@ -7,8 +7,8 @@ import os
 actor RedrawEventStream {
     static let shared = RedrawEventStream()
 
-    private let stream: AsyncStream<RedrawEvent>
-    private let continuation: AsyncStream<RedrawEvent>.Continuation
+    private var stream: AsyncStream<RedrawEvent>
+    private var continuation: AsyncStream<RedrawEvent>.Continuation
     private var isSubscribed = false
     private var isHandedOut = false
 
@@ -37,6 +37,16 @@ actor RedrawEventStream {
         }
         isHandedOut = true
         return stream
+    }
+
+    /// Drop the previous stream, subscription, and consumer hand-out so a
+    /// restarted nvim can re-subscribe and the render layer can re-consume.
+    func reset() {
+        let (stream, continuation) = AsyncStream<RedrawEvent>.makeStream()
+        self.stream = stream
+        self.continuation = continuation
+        isSubscribed = false
+        isHandedOut = false
     }
 
     private func publish(_ events: [RedrawEvent]) {

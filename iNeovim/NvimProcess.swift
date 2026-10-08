@@ -69,8 +69,9 @@ actor NvimProcess {
 
     private func handleTermination(_ process: Process) {
         Log.rpc.info("Embedded nvim exited (status \(process.terminationStatus, privacy: .public))")
+        // The stream stays open: the app can restart nvim after a crash and
+        // observers keep listening across restarts.
         terminationStream.continuation.yield(process.terminationStatus)
-        terminationStream.continuation.finish()
         if self.process === process {
             self.process = nil
         }

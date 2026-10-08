@@ -210,4 +210,22 @@ actor Screen {
         consumeTask?.cancel()
         consumeTask = nil
     }
+
+    /// Clear applied state so a restarted nvim starts from a blank screen.
+    func resetState() {
+        consumeTask?.cancel()
+        consumeTask = nil
+        grids = [:]
+        highlights = HighlightStore()
+        defaultForeground = nil
+        defaultBackground = nil
+        defaultSpecial = nil
+        cursor = CursorState(grid: 1, row: 0, col: 0)
+        modes = []
+        modeName = nil
+        modeIndex = 0
+        title = nil
+        dirtyRects = [:]
+        scrollDeltas = [:]
+    }
 }

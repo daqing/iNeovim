@@ -39,10 +39,22 @@ struct NvimClient {
         ])
     }
 
-    /// Evaluate a VimL expression and return its string value.
+    /// Evaluate a VimL expression and return a string form of its value;
+    /// scalars (used for `exists()`, counts, and flags) are stringified.
     func evaluate(_ expression: String) async throws -> String {
         let value = try await session.call("nvim_eval", params: [.string(expression)])
-        return value.stringValue ?? ""
+        switch value {
+        case let .string(text):
+            return text
+        case let .int(number):
+            return String(number)
+        case let .uint(number):
+            return String(number)
+        case let .bool(flag):
+            return flag ? "1" : "0"
+        default:
+            return ""
+        }
     }
 
     /// Read a register's contents as text (used for the system clipboard).

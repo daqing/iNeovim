@@ -53,11 +53,18 @@ actor RPCSession {
             }
             Task { await self?.feed(data) }
         }
-        Task { [weak self] in
-            for await _ in NvimProcess.shared.termination {
-                await self?.close(RPCError.connectionClosed)
-            }
-        }
+    }
+
+    /// Return the session to a pre-start state so a restarted nvim can be
+    /// handshaken over the same client. Pending calls are failed by `close`
+    /// before `reset` is called (see `AppModel.restart`).
+    func reset() {
+        decoder = MsgPackDecoder()
+        nextMsgid = 1
+        pending.removeAll()
+        notificationHandlers.removeAll()
+        isClosed = false
+        channel = nil
     }
 
     /// Send a request and resume with its result; a non-nil error value from nvim
@@ -94,6 +101,8 @@ actor RPCSession {
     }
 
     func feed(_ data: Data) {
+        let signpost = Signpost.rpc.beginInterval("decode")
+        defer { Signpost.rpc.endInterval("decode", signpost) }
         decoder.feed(data)
         do {
             while let value = try decoder.nextValue() {

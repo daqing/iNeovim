@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Window shell: hosts the AppKit terminal surface and provides a sane
@@ -11,6 +12,19 @@ struct ContentView: View {
             .frame(minWidth: 480, minHeight: 320)
             .background(.background)
             .navigationTitle(model.windowTitle ?? "iNeovim")
+            .alert(
+                "Neovim exited",
+                isPresented: Binding(
+                    get: { model.crash != nil },
+                    set: { if !$0 { model.dismissCrash() } }
+                ),
+                presenting: model.crash
+            ) { _ in
+                Button("Restart") { model.restart() }
+                Button("Quit", role: .destructive) { NSApp.terminate(nil) }
+            } message: { crash in
+                Text("The embedded Neovim process exited unexpectedly (status \(crash.status)).")
+            }
     }
 }
 
