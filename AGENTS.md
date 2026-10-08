@@ -81,9 +81,11 @@ mechanism for interactive visual verification.
 
 ## Security considerations
 
-- App Sandbox is **enabled** with `user-selected-files` access set to **readonly** — any
-  feature that writes to user files (e.g. saving edited buffers) will require widening
-  this entitlement or user-mediated file access; call this out when planning such work.
+- App Sandbox is **enabled** with `user-selected-files` access set to **read/write**
+  (`ENABLE_USER_SELECTED_FILES = readwrite`, widened in T1.6) so edited buffers can be
+  saved. The child `nvim` inherits the sandbox — it can only reach files the app itself
+  may access (user-selected files, the app container) — keep this in mind for features
+  like the embedded terminal or plugin file access.
 - Code signing uses automatic signing with a personal development team
   (`DEVELOPMENT_TEAM = S39RD89QY9`) — do not hardcode other team IDs or credentials.
 - Never commit secrets (API keys, provisioning credentials, `.env` files); none exist in
