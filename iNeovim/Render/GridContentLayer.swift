@@ -43,6 +43,14 @@ final class GridContentLayer: CALayer {
         fatalError("init(coder:) is not supported")
     }
 
+    /// The grid is drawn imperatively and updates its contents/properties every
+    /// flush; Core Animation must not implicitly animate any of them, or typed
+    /// characters cross-fade in and the scroll transform lags. `NSNull` is the
+    /// sentinel that disables the implicit action for every key.
+    override func action(forKey event: String) -> CAAction? {
+        NSNull()
+    }
+
     /// Core Animation copies a layer with this initializer when it animates or
     /// presents it; without it the layer traps.
     override init(layer: Any) {

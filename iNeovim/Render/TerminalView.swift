@@ -7,8 +7,6 @@ import os
 final class TerminalView: NSView {
     private(set) var metrics: FontMetrics
     private var snapshot: ScreenSnapshot?
-    private var blinker = CursorBlinker()
-    private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let contentLayer: GridContentLayer
     private let scrollAnimator = ScrollAnimator()
     private let cursorAnimator = CursorAnimator()
@@ -357,7 +355,6 @@ final class TerminalView: NSView {
                 Task { @MainActor in
                     let snapshot = await Screen.shared.snapshot()
                     let previous = self.snapshot
-                    self.updateBlink(previous: previous, next: snapshot)
                     self.updateCursorGlide(previous: previous, next: snapshot)
                     self.snapshot = snapshot
                     self.contentLayer.update(snapshot: snapshot)
@@ -388,28 +385,6 @@ final class TerminalView: NSView {
         CATransaction.setDisableActions(true)
         layer?.backgroundColor = backgroundColor.cgColor
         CATransaction.commit()
-    }
-
-    private func updateBlink(previous: ScreenSnapshot?, next: ScreenSnapshot) {
-        guard let mode = next.cursorModeInfo,
-              let blinkOn = mode.blinkOn, blinkOn > 0,
-              let blinkOff = mode.blinkOff, blinkOff > 0 else {
-            blinker.cancel()
-            setCursorVisible(true)
-            cursorKey = nil
-            return
-        }
-        let key = (row: next.cursor.row, col: next.cursor.col, modeIndex: next.modeIndex)
-        if let cursorKey, cursorKey == key, blinker.isActive { return }
-        self.cursorKey = key
-        blinker.restart(wait: mode.blinkWait ?? 0, on: blinkOn, off: blinkOff) { [weak self] visible in
-            guard let self else { return }
-            self.setCursorVisible(visible)
-        }
-    }
-
-    private func setCursorVisible(_ visible: Bool) {
-        contentLayer.cursorVisible = visible
     }
 
     /// Slide the cursor to its new cell instead of jumping; runs before the
