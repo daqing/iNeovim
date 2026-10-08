@@ -30,8 +30,22 @@ Key facts from `iNeovim.xcodeproj/project.pbxproj`:
 iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── MyApp.swift           @main entry point: WindowGroup hosting ContentView
 ├── ContentView.swift     Root view ("Hello, world!" + #Preview and #Playground macros)
+├── AppDelegate.swift     NSApplicationDelegate: boots the RPC session + handshake
+├── Logging.swift         os.Logger categories (rpc, render, input, app)
+├── NvimDiscovery.swift   Locates the nvim binary and checks its version
+├── NvimProcess.swift     Actor owning the nvim --embed child process
+├── RPC/                  MessagePack codec and msgpack-RPC layer
+│   ├── MsgPackValue.swift    msgpack value model
+│   ├── MsgPackEncoder.swift  Value → bytes, canonical smallest markers
+│   ├── MsgPackDecoder.swift  Incremental buffered decoder
+│   ├── NvimHandle.swift      Buffer/Window/Tabpage ext-type handles
+│   ├── RPCMessage.swift      msgpack-RPC frame parsing
+│   ├── RPCError.swift        RPC error types
+│   ├── RPCSession.swift      Actor: read loop, request matching, notifications
+│   └── NvimClient.swift      Typed convenience API over RPCSession
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
-iNeovim.xcodeproj/        Single-target Xcode project (no workspace-level schemes shared)
+iNeovimTests/             XCTest target (synchronized group); codec round-trip tests
+iNeovim.xcodeproj/        iNeovim app + iNeovimTests unit test targets
 ```
 
 Important: the `iNeovim` folder is registered as a **file-system-synchronized group**, so
@@ -52,9 +66,10 @@ folder are not compiled.
 
 ## Testing
 
-There is currently **no test target, no test files, and no test infrastructure**. Do not
-invent a test scaffolding unprompted; if tests are requested later, add an XCTest target
-through the Xcode project and follow its conventions.
+Tests live in the synchronized `iNeovimTests/` group (target `iNeovimTests`, wired
+against the app as its test host). Follow the existing XCTest style when adding
+tests. Note that app sources compile with `MainActor` default isolation, so test
+classes exercising them are annotated `@MainActor`.
 
 SwiftUI `#Preview` (and `#Playground`) macros in `ContentView.swift` are the existing
 mechanism for interactive visual verification.
