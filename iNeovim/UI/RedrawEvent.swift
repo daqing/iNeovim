@@ -158,10 +158,13 @@ extension RedrawEvent {
                 return nil
             }
             // Omitted hl_id reuses the previous cell's; omitted repeat means 1.
+            // A repeat of 0 marks "the previous chunk was not a clearing
+            // chunk" when nvim splits one row across grid_line events — it
+            // covers no cells and must not overwrite anything.
             let attrId = cell.count > 1 ? (cell[1].intValue ?? lastAttrId) : lastAttrId
             let count = cell.count > 2 ? (cell[2].intValue ?? 1) : 1
             lastAttrId = attrId
-            runs.append(GridCellRun(text: text, attrId: attrId, count: max(count, 1)))
+            runs.append(GridCellRun(text: text, attrId: attrId, count: max(count, 0)))
         }
         return .gridLine(grid: grid, row: row, colStart: colStart, runs: runs)
     }

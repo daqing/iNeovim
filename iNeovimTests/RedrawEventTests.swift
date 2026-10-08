@@ -60,7 +60,10 @@ final class RedrawEventTests: XCTestCase {
                     GridCellRun(text: "h", attrId: 2, count: 1),
                     GridCellRun(text: "i", attrId: 3, count: 2),
                     GridCellRun(text: "!", attrId: 3, count: 1),
-                    GridCellRun(text: "?", attrId: 9, count: 1),
+                    // repeat 0 is nvim's "not a clearing chunk" marker when it
+                    // splits one row across grid_line events: it covers no
+                    // cells and must not overwrite anything.
+                    GridCellRun(text: "?", attrId: 9, count: 0),
                 ]),
             ]
         )

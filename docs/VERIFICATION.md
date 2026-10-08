@@ -31,6 +31,29 @@ Expected: the shell runs, prints its path, and accepts input. Failure modes to
 watch for in Console (`log stream --predicate 'subsystem == "…"'`): PTY open or
 `exec` failures, or nvim reporting "Failed to start terminal".
 
+## CJK rendering and IME input
+
+Neovim marks double-width characters by following them with an empty-text
+continuation cell in `grid_line`; cell widths come from that protocol, and
+glyphs are drawn pinned to cell origins (`CellRenderer.shiftGroups`), because
+fallback fonts (PingFang for CJK, Apple Color Emoji) advance by their own
+metrics and would otherwise drift off the grid. Automated checks:
+`CellRendererTests` (slot mapping and pin groups, including a real fallback
+shaping case) and the CJK/emoji lines in `RenderSmokeTests`.
+
+Manual check in the GUI:
+
+1. Open a file containing mixed CJK/ASCII/emoji lines (e.g.
+   `中文abc测试emoji 👋 x`) in insert or normal mode.
+2. Scroll and edit across those lines.
+
+Expected: CJK glyphs each occupy exactly two cells and stay aligned with the
+ASCII grid, backgrounds/underlines match the text, and the block cursor covers
+both cells of a CJK glyph. With a Chinese IME: composing shows the preedit at
+the cursor (wide chars spanning two cells, selection bar at the caret), the
+candidate window anchors below it, and committed text inserts and renders
+aligned.
+
 ## App shell checks
 
 - **Tabs (T8.2):** **Neovim ▸ New Tab** opens a tabpage and the tabline shows

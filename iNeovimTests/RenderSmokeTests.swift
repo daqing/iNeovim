@@ -89,6 +89,7 @@ final class RenderSmokeTests: XCTestCase {
             "}",
             "",
             "// The embedded nvim is driven over msgpack-RPC.",
+            "// 中文注释：宽字符应与网格对齐，emoji 👋 占两格。",
             "let greeting = \"hello, iNeovim\"",
             "",
         ]
@@ -114,11 +115,23 @@ final class RenderSmokeTests: XCTestCase {
         return (grid, highlights)
     }
 
-    /// One `GridCellRun` per character: `Grid.applyLine` repeats a run's text
-    /// into every cell it counts, so multi-character runs must be split the
-    /// same way nvim sends them. `CellRenderer.runs` merges them back.
+    /// One `GridCellRun` per cell, with double-width characters followed by
+    /// an empty-text continuation cell the way nvim sends them. Multi-
+    /// character runs must be split because `Grid.applyLine` repeats a run's
+    /// text into every cell it counts; `CellRenderer.runs` merges them back.
     private static func cellRuns(_ text: String, attr: Int) -> [GridCellRun] {
-        text.map { GridCellRun(text: String($0), attrId: attr, count: 1) }
+        var runs: [GridCellRun] = []
+        for character in text {
+            runs.append(GridCellRun(text: String(character), attrId: attr, count: 1))
+            if CellRenderer.isDoubleWidth(String(character)) {
+                runs.append(GridCellRun(text: "", attrId: attr, count: 1))
+            }
+        }
+        return runs
+    }
+
+    private static func displayWidth(_ text: String) -> Int {
+        text.reduce(0) { $0 + (CellRenderer.isDoubleWidth(String($1)) ? 2 : 1) }
     }
 
     private static func tokenRuns(for line: String, width: Int) -> [GridCellRun] {
@@ -145,7 +158,7 @@ final class RenderSmokeTests: XCTestCase {
                 attr = 6
             }
             runs.append(contentsOf: cellRuns(text, attr: attr))
-            remaining -= text.count
+            remaining -= displayWidth(text)
         }
         if remaining > 0 {
             runs.append(contentsOf: cellRuns(String(repeating: " ", count: remaining), attr: 6))

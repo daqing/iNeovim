@@ -401,10 +401,14 @@ final class TerminalView: NSView {
             return
         }
         let cellSize = metrics.cellSize
+        // A cursor on a double-width char (empty continuation cell beside it)
+        // glides as a two-cell rect so it matches what gets drawn.
+        let wide = next.cursor.col + 1 < grid.width
+            && grid[next.cursor.row, next.cursor.col + 1].text.isEmpty
         let newRect = CGRect(
             x: CGFloat(next.cursor.col) * cellSize.width,
             y: CGFloat(next.cursor.row) * cellSize.height,
-            width: cellSize.width,
+            width: cellSize.width * (wide ? 2 : 1),
             height: cellSize.height
         )
         let distance = max(

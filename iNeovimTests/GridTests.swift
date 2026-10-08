@@ -32,6 +32,34 @@ final class GridTests: XCTestCase {
         XCTAssertEqual(grid[0, 0], GridCell())
     }
 
+    func testApplyLineSkipsZeroCountCells() {
+        // nvim emits repeat-0 entries as chunk markers when splitting one row
+        // across grid_line events; they cover no cells.
+        var grid = Grid(id: 1, width: 4, height: 1)
+        grid.applyLine(row: 0, colStart: 0, runs: [
+            GridCellRun(text: "a", attrId: 1, count: 1),
+            GridCellRun(text: " ", attrId: 0, count: 0),
+            GridCellRun(text: "b", attrId: 2, count: 1),
+        ])
+        XCTAssertEqual(grid[0, 0].text, "a")
+        XCTAssertEqual(grid[0, 1].text, "b")
+        XCTAssertEqual(grid[0, 2], GridCell())
+    }
+
+    func testApplyLineStoresWideCharContinuationFromProtocol() {
+        // A wide char is followed by an explicit empty-text cell; the renderer
+        // reads that back as the double-width marker.
+        var grid = Grid(id: 1, width: 4, height: 1)
+        grid.applyLine(row: 0, colStart: 0, runs: [
+            GridCellRun(text: "你", attrId: 1, count: 1),
+            GridCellRun(text: "", attrId: 1, count: 1),
+            GridCellRun(text: "x", attrId: 1, count: 1),
+        ])
+        XCTAssertEqual(grid[0, 0].text, "你")
+        XCTAssertEqual(grid[0, 1].text, "")
+        XCTAssertEqual(grid[0, 2].text, "x")
+    }
+
     func testResizePreservesTopLeftAndClearsNewCells() {
         var grid = Grid(id: 1, width: 2, height: 2)
         grid.applyLine(row: 0, colStart: 0, runs: [GridCellRun(text: "x", attrId: 1, count: 2)])

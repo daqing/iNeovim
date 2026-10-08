@@ -277,11 +277,8 @@ final class GridContentLayer: CALayer {
 
         let baseline = CGFloat(row) * metrics.cellSize.height + metrics.baseline + translation.height
         let textY = bounds.height - baseline
-        context.textPosition = CGPoint(
-            x: CGFloat(run.startCol) * metrics.cellSize.width + translation.width,
-            y: textY
-        )
-        CTLineDraw(line, context)
+        let originX = CGFloat(run.startCol) * metrics.cellSize.width + translation.width
+        drawPinned(line: line, slots: run.slots, originX: originX, textY: textY, context: context)
 
         let thickness = max(1, CTFontGetUnderlineThickness(ctFont))
         let startX = CGFloat(run.startCol) * metrics.cellSize.width + translation.width
@@ -310,6 +307,30 @@ final class GridContentLayer: CALayer {
                 CGPoint(x: startX, y: strikeY),
                 CGPoint(x: endX, y: strikeY),
             ])
+        }
+    }
+
+    /// Draws a shaped line with every cell's glyph cluster pinned to its
+    /// grid origin. Fallback fonts (CJK, emoji) advance by their own metrics
+    /// instead of whole cells, so a naive CTLineDraw drifts text off the
+    /// grid; each equal-correction glyph group is drawn as one shifted
+    /// CTRunDraw range instead (see `CellRenderer.shiftGroups`). Slot columns
+    /// are relative to `originX`, the run's first cell.
+    private func drawPinned(
+        line: CTLine,
+        slots: [StyledRunSlot],
+        originX: CGFloat,
+        textY: CGFloat,
+        context: CGContext
+    ) {
+        let groups = CellRenderer.shiftGroups(
+            for: line,
+            slots: slots,
+            cellWidth: metrics.cellSize.width
+        )
+        for group in groups {
+            context.textPosition = CGPoint(x: originX + group.dx, y: textY)
+            CTRunDraw(group.run, context, group.range)
         }
     }
 
@@ -344,9 +365,18 @@ final class GridContentLayer: CALayer {
         return CGRect(
             x: CGFloat(snapshot.cursor.col) * metrics.cellSize.width,
             y: CGFloat(snapshot.cursor.row) * metrics.cellSize.height,
-            width: metrics.cellSize.width,
+            width: metrics.cellSize.width * CGFloat(cursorCellCols(grid)),
             height: metrics.cellSize.height
         )
+    }
+
+    /// Columns the cursor covers: two when it sits on a double-width char,
+    /// which nvim marks with an empty-text continuation cell.
+    private func cursorCellCols(_ grid: Grid) -> Int {
+        let row = snapshot?.cursor.row ?? 0
+        let col = snapshot?.cursor.col ?? 0
+        guard col + 1 < grid.width else { return 1 }
+        return grid[row, col + 1].text.isEmpty ? 2 : 1
     }
 
     private func drawCursor(_ dirtyRect: CGRect, context: CGContext) {
@@ -366,12 +396,13 @@ final class GridContentLayer: CALayer {
             guard let grid = snapshot.grid else { return }
             let cell = grid[snapshot.cursor.row, snapshot.cursor.col]
             guard !cell.text.isEmpty else { return }
-            let width = CellRenderer.isDoubleWidth(cell.text) ? 2 : 1
+            let cols = cursorCellCols(grid)
             let run = StyledRun(
                 text: cell.text,
                 attrId: cell.attrId,
                 startCol: snapshot.cursor.col,
-                endCol: snapshot.cursor.col + width
+                endCol: snapshot.cursor.col + cols,
+                slots: [StyledRunSlot(utf16: 0, col: 0, cols: cols)]
             )
             let swapped = ResolvedColors(
                 foreground: colors.background ?? fallbackBackground,
@@ -435,7 +466,10 @@ final class GridContentLayer: CALayer {
         )).intersection(bounds)
         guard !rect.isEmpty, rect.intersects(dirtyRect) else { return }
 
-        context.setFillColor(fallbackBackground.cgColor)
+        // Follow the nvim colorscheme (or the adaptive defaults) instead of
+        // always clearing with the system background color.
+        let colors = resolvedColors(for: 0)
+        context.setFillColor((colors.background ?? fallbackBackground).cgColor)
         context.fill(snappedToPixels(rect))
 
         // The selection bar uses layer coordinates, so it must be filled
@@ -447,7 +481,7 @@ final class GridContentLayer: CALayer {
             width: 2,
             height: anchor.height
         ))
-        context.setFillColor(fallbackForeground.cgColor)
+        context.setFillColor(colors.foreground.cgColor)
         context.fill(bar)
 
         context.saveGState()
@@ -458,12 +492,23 @@ final class GridContentLayer: CALayer {
         let font = fonts.regular
         let attributed = NSAttributedString(string: preedit.text, attributes: [
             .font: font,
-            .foregroundColor: fallbackForeground,
+            .foregroundColor: colors.foreground,
         ])
         let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+
+        // Pin each character to its cells so committed-width previews (CJK
+        // spans two cells) stay aligned with the bar and underline.
+        var slots: [StyledRunSlot] = []
+        var offset = 0
+        var col = 0
+        for character in preedit.text {
+            let cols = CellRenderer.isDoubleWidth(String(character)) ? 2 : 1
+            slots.append(StyledRunSlot(utf16: offset, col: col, cols: cols))
+            offset += String(character).utf16.count
+            col += cols
+        }
         let textY = bounds.height - (anchor.minY + metrics.baseline)
-        context.textPosition = CGPoint(x: anchor.minX, y: textY)
-        CTLineDraw(line, context)
+        drawPinned(line: line, slots: slots, originX: anchor.minX, textY: textY, context: context)
 
         let underlineY = textY + CTFontGetUnderlinePosition(font as CTFont)
         context.setStrokeColor(NSColor.controlAccentColor.cgColor)

@@ -132,9 +132,9 @@ actor Screen {
                 grids[grid] = nil
             }
         case let .cursorGoto(grid, row, col):
-            markDirty(cursor.grid, .cell(max(cursor.row, 0), max(cursor.col, 0)))
+            markCursorDirty(cursor.grid, cursor.row, cursor.col)
             cursor = CursorState(grid: grid, row: row, col: col)
-            markDirty(grid, .cell(max(row, 0), max(col, 0)))
+            markCursorDirty(grid, row, col)
         case let .hlAttrDefine(id, attr):
             highlights.define(attr, for: id)
             markAllGridsDirty()
@@ -146,10 +146,10 @@ actor Screen {
         case let .modeChange(name, index):
             modeName = name
             modeIndex = index
-            markDirty(cursor.grid, .cell(max(cursor.row, 0), max(cursor.col, 0)))
+            markCursorDirty(cursor.grid, cursor.row, cursor.col)
         case let .modeInfoSet(infos):
             modes = infos
-            markDirty(cursor.grid, .cell(max(cursor.row, 0), max(cursor.col, 0)))
+            markCursorDirty(cursor.grid, cursor.row, cursor.col)
         case let .setTitle(title):
             self.title = title
             titleHandler?(title)
@@ -165,6 +165,21 @@ actor Screen {
         case let .unknown(name):
             Log.render.debug("Ignoring unknown redraw event \(name, privacy: .public)")
         }
+    }
+
+    /// The cursor cell plus the continuation cell when it sits on a
+    /// double-width char (an empty-text cell in the grid), so a two-cell
+    /// block cursor fully repaints when it moves away or changes shape.
+    private func markCursorDirty(_ grid: Int, _ row: Int, _ col: Int) {
+        guard let g = grids[grid], row >= 0, row < g.height, col >= 0, col < g.width else {
+            markDirty(grid, .cell(max(row, 0), max(col, 0)))
+            return
+        }
+        var rect = CellRect.cell(row, col)
+        if col + 1 < g.width, g[row, col + 1].text.isEmpty {
+            rect = rect.union(.cell(row, col + 1))
+        }
+        markDirty(grid, rect)
     }
 
     /// Add a dirty region, merging it into any existing region it touches or

@@ -141,6 +141,16 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is
   keyed by ID — so enabling multigrid later is a switch flip, not a rewrite.
+- **Wide-glyph rendering:** nvim signals double-width cells by following the
+  character with an empty-text continuation cell in `grid_line` ("the right
+  cell of a double-width char will be represented as the empty string"); cell
+  widths come from that protocol, not from a local wcwidth table (which
+  disagrees with nvim on emoji). Glyphs are shaped as one CTLine per highlight
+  run but drawn pinned to cell origins (`CellRenderer.shiftGroups` →
+  per-correction `CTRunDraw` ranges), because Core Text's automatic font
+  fallback (PingFang for CJK, Apple Color Emoji) advances by its own metrics
+  and drifts text off the cell grid. `grid_line` entries with `repeat` 0 are
+  chunk markers and must not overwrite cells.
 - **Tabs (T8.2):** tabs are **Neovim tabpages**, not native macOS window tabs.
   One embedded nvim and one line-grid surface already draw the tabline and
   own the buffer/window/tab model; native tabs would require a second nvim

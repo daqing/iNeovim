@@ -54,6 +54,25 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(cursor, CursorState(grid: 1, row: 3, col: 7))
     }
 
+    func testCursorGotoDirtiesContinuationCellOfWideChar() async {
+        // A cursor on a double-width char spans two cells; moving or reshaping
+        // it must repaint both, or the leftover half smears.
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 4, height: 1))
+        await screen.apply(.gridLine(grid: 1, row: 0, colStart: 0, runs: [
+            GridCellRun(text: "你", attrId: 0, count: 1),
+            GridCellRun(text: "", attrId: 0, count: 1),
+        ]))
+        await screen.apply(.flush)
+
+        var flushed: (grid: Int, rects: [CellRect])?
+        await screen.setFlushHandler({ grid, rects in flushed = (grid, rects) })
+        await screen.apply(.cursorGoto(grid: 1, row: 0, col: 0))
+        await screen.apply(.flush)
+
+        XCTAssertEqual(flushed?.rects, [CellRect(minRow: 0, minCol: 0, maxRow: 1, maxCol: 2)])
+    }
+
     func testModeInfoAndChangeTrackCursorShape() async {
         let screen = Screen()
         await screen.apply(.modeInfoSet([
