@@ -1,17 +1,19 @@
 import SwiftUI
-import Playgrounds
 
 struct ContentView: View {
     var body: some View {
-        Text("Hello, world!")
-            .padding()
+        TerminalViewRepresentable()
     }
+}
+
+struct TerminalViewRepresentable: NSViewRepresentable {
+    func makeNSView(context: Context) -> TerminalView {
+        TerminalView()
+    }
+
+    func updateNSView(_ nsView: TerminalView, context: Context) {}
 }
 
 #Preview {
     ContentView()
-}
-
-#Playground {
-    _ = 1 + 2
 }

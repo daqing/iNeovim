@@ -50,6 +50,12 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── ResizeController.swift  debounced view-resize → nvim_ui_try_resize
 │   ├── Screen.swift            applied grid/highlight/mode/cursor state actor
 │   └── RedrawEventStream.swift  single-consumer AsyncStream of redraw events
+├── Render/               Core Text + CALayer rendering layer (Phase 5)
+│   ├── FontMetrics.swift     NSFont → cell size/ascent/baseline metrics
+│   ├── CellRenderer.swift    grid rows → styled runs for CTLine shaping
+│   ├── TerminalView.swift    layer-backed NSView drawing the grid
+│   ├── CursorBlinker.swift   cursor blink timing (wait/on/off)
+│   └── NSColor+PackedRGB.swift  0xRRGGBB ↔ NSColor helpers
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
 iNeovimTests/             XCTest target (synchronized group); codec round-trip and
                           redraw-parsing tests
