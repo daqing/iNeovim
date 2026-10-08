@@ -30,8 +30,10 @@ final class ScrollAccumulatorTests: XCTestCase {
     func testReversalRequestsOppositeDirection() {
         var accumulator = ScrollAccumulator()
         _ = accumulator.addDelta(30, lineHeight: line)
-        XCTAssertEqual(accumulator.addDelta(-15, lineHeight: line), [.down, .down])
-        // Two of the three sent lines were undone: 15 up remain outstanding.
+        // Reversing 1.5 lines cancels the one whole requested line the reverse
+        // crossed; the remaining half line stays outstanding. Rounding down
+        // (rather than up) keeps small reversals from overshooting.
+        XCTAssertEqual(accumulator.addDelta(-15, lineHeight: line), [.down])
         XCTAssertEqual(accumulator.offset, 15)
     }
 

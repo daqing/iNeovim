@@ -49,13 +49,16 @@ struct KeyInputHandler {
         return notation(String(base).lowercased(), modifiers: modifiers)
     }
 
+    /// Always emits bracketed notation: named keys (`Esc`, `Left`, `F1`, …)
+    /// need the brackets even with no modifiers, and the character path only
+    /// reaches here with at least one modifier.
     private func notation(_ key: String, modifiers: NSEvent.ModifierFlags) -> String {
         var prefix = ""
         if modifiers.contains(.control) { prefix += "C-" }
-        if modifiers.contains(.shift) { prefix += "S-" }
         if modifiers.contains(.option) { prefix += "M-" }
         if modifiers.contains(.command) { prefix += "D-" }
-        return prefix.isEmpty ? key : "<\(prefix)\(key)>"
+        if modifiers.contains(.shift) { prefix += "S-" }
+        return "<\(prefix)\(key)>"
     }
 
     /// Hardware key codes that map to a named Neovim key. Only keys that do
