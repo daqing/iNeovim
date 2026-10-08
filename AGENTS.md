@@ -2,11 +2,13 @@
 
 ## Project overview
 
-iNeovim is a native macOS desktop application written in Swift with SwiftUI. Despite the
-name, there is currently no Neovim integration, terminal emulation, or editor functionality
-implemented — the codebase is the stock Xcode 26.3 app template (a single
-"Hello, world!" view) with one commit ("Initial Commit"). It is a starting skeleton, so
-treat everything as early-stage and expect the architecture to be defined by upcoming work.
+iNeovim is a native macOS desktop application written in Swift with SwiftUI. It embeds a
+`nvim --embed` child process over msgpack-RPC and renders Neovim's linegrid protocol
+itself (Core Text + `CALayer`), with macOS-native input, smooth scrolling, and an app
+shell. Phases 1–8 of `docs/TASKS.md` are implemented: RPC, UI state, rendering, input,
+scrolling, and the SwiftUI app shell (tabs, settings, menus, window title, file opening).
+Phase 9 (polish and release) is still open — there is no app icon, license, or release
+pipeline yet.
 
 Key facts from `iNeovim.xcodeproj/project.pbxproj`:
 
@@ -19,18 +21,25 @@ Key facts from `iNeovim.xcodeproj/project.pbxproj`:
   (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`).
 - **Bundle:** display name `iNeovim`, category `public.app-category.developer-tools`,
   bundle ID `devplaceholder.<unique>.<product>` (placeholder prefix — replace before release).
-- **Capabilities:** App Sandbox enabled, user-selected files readonly, App Groups registered.
+- **Capabilities:** App Sandbox enabled, user-selected files read/write
+  (`ENABLE_USER_SELECTED_FILES = readwrite`, widened in T1.6), App Groups registered.
 - **Versioning:** `MARKETING_VERSION = 1.0`, `CURRENT_PROJECT_VERSION = 1` — both live only
-  in `project.pbxproj` (there is no standalone `Info.plist`; it is generated via
-  `GENERATE_INFOPLIST_FILE = YES`).
+  in `project.pbxproj`. The Info.plist is generated (`GENERATE_INFOPLIST_FILE = YES`) and
+  merged with the partial `Config/Info.plist`, which declares the document types the app
+  can open (T8.6).
 
 ## Repository layout
 
 ```
 iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
-├── MyApp.swift           @main entry point: WindowGroup hosting ContentView
-├── ContentView.swift     Root view ("Hello, world!" + #Preview and #Playground macros)
-├── AppDelegate.swift     NSApplicationDelegate: boots RPC session, handshake, UI attach
+├── MyApp.swift           @main entry point: WindowGroup + Settings + menu commands
+├── ContentView.swift     Window shell hosting the render view via NSViewRepresentable
+├── AppDelegate.swift     NSApplicationDelegate: bootstrap, open-file requests, teardown
+├── App/                  SwiftUI app shell (Phase 8)
+│   ├── AppModel.swift        session bootstrap, command routing, file queue, title
+│   ├── AppSettings.swift     persisted font/input/animation settings
+│   ├── SettingsView.swift    settings window
+│   └── EditorCommands.swift  File + Neovim menu commands
 ├── Logging.swift         os.Logger categories (rpc, render, input, app)
 ├── NvimDiscovery.swift   Locates the nvim binary and checks its version
 ├── NvimProcess.swift     Actor owning the nvim --embed child process
@@ -72,8 +81,10 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── ScrollAnimationSettings.swift  shared durations/thresholds knobs
 │   └── DisplayLinkDriver.swift  CVDisplayLink → Swift closure trampoline
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
-iNeovimTests/             XCTest target (synchronized group); codec round-trip and
-                          redraw-parsing tests
+iNeovimTests/             XCTest target (synchronized group); codec round-trip,
+                          redraw-parsing, settings/model, and sandbox integration tests
+Config/Info.plist         Partial Info.plist merged into the generated one
+                          (document types); outside the synchronized group
 iNeovim.xcodeproj/        iNeovim app + iNeovimTests unit test targets
 ```
 
@@ -101,7 +112,9 @@ tests. Note that app sources compile with `MainActor` default isolation, so test
 classes exercising them are annotated `@MainActor`.
 
 SwiftUI `#Preview` (and `#Playground`) macros in `ContentView.swift` are the existing
-mechanism for interactive visual verification.
+mechanism for interactive visual verification. `EmbeddedTerminalTests` is an integration
+check that starts `:terminal` in the embedded nvim and skips when nvim is unavailable;
+`docs/VERIFICATION.md` lists the manual GUI checks.
 
 ## Code style guidelines
 
@@ -122,6 +135,12 @@ mechanism for interactive visual verification.
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is
   keyed by ID — so enabling multigrid later is a switch flip, not a rewrite.
+- **Tabs (T8.2):** tabs are **Neovim tabpages**, not native macOS window tabs.
+  One embedded nvim and one line-grid surface already draw the tabline and
+  own the buffer/window/tab model; native tabs would require a second nvim
+  session or a second view onto a single-consumer redraw stream. Editor
+  commands route to `:tab*` (`EditorCommands`), and `gt`/`gT` keep working
+  through normal key input.
 - **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
   so one wheel event scrolls exactly one line and the visual lead in
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.

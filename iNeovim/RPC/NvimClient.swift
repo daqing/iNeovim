@@ -32,6 +32,35 @@ struct NvimClient {
         _ = try await session.call("nvim_command", params: [.string(command)])
     }
 
+    /// Paste clipboard text as if typed, in one chunk (`phase = -1`).
+    func paste(_ text: String) async throws {
+        _ = try await session.call("nvim_paste", params: [
+            .string(text), .bool(true), .int(-1),
+        ])
+    }
+
+    /// Evaluate a VimL expression and return its string value.
+    func evaluate(_ expression: String) async throws -> String {
+        let value = try await session.call("nvim_eval", params: [.string(expression)])
+        return value.stringValue ?? ""
+    }
+
+    /// Read a register's contents as text (used for the system clipboard).
+    func registerContents(_ name: String) async throws -> String {
+        let value = try await session.call("nvim_call_function", params: [
+            .string("getreg"), .array([.string(name), .bool(true), .bool(true)]),
+        ])
+        return value.stringValue ?? ""
+    }
+
+    /// Escape a path for use in an Ex command (`:edit <path>`).
+    func fnameescape(_ path: String) async throws -> String {
+        let value = try await session.call("nvim_call_function", params: [
+            .string("fnameescape"), .array([.string(path)]),
+        ])
+        return value.stringValue ?? path
+    }
+
     func callAtomic(_ calls: [MsgPackValue]) async throws -> MsgPackValue {
         try await session.call("nvim_call_atomic", params: [.array(calls)])
     }

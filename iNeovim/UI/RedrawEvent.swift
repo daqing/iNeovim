@@ -36,6 +36,7 @@ enum RedrawEvent: Equatable, Sendable {
     case defaultColorsSet(foreground: Int?, background: Int?, special: Int?)
     case modeChange(name: String, index: Int)
     case modeInfoSet([ModeInfo])
+    case setTitle(String)
     case flush
     case unknown(name: String)
 }
@@ -108,6 +109,9 @@ extension RedrawEvent {
         case "mode_info_set":
             guard args.count >= 2, case let .array(rawModes) = args[1] else { return nil }
             return .modeInfoSet(rawModes.compactMap(ModeInfo.init(rawValue:)))
+        case "set_title":
+            guard case let .string(title) = args.first else { return nil }
+            return .setTitle(title)
         case "flush":
             return .flush
         default:

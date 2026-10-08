@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Interpolates the cursor's position over a short glide instead of jumping
@@ -23,7 +24,9 @@ final class CursorAnimator {
             width: oldRect.minX - newRect.minX,
             height: oldRect.minY - newRect.minY
         )
-        guard distanceInCells <= settings.cursorGlideMaxCells, initial != .zero else {
+        guard settings.cursorEnabled,
+              distanceInCells <= settings.cursorGlideMaxCells,
+              initial != .zero else {
             snap()
             return
         }

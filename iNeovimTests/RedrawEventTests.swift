@@ -37,6 +37,20 @@ final class RedrawEventTests: XCTestCase {
         )
     }
 
+    func testSetTitleParsesAndSetIconIsUnknown() {
+        XCTAssertEqual(
+            parse([.array([.string("set_title"), .string("file.txt - NVIM")])]),
+            [.setTitle("file.txt - NVIM")]
+        )
+        XCTAssertEqual(
+            parse([
+                .array([.string("set_icon"), .string("icon")]),
+                .array([.string("flush")]),
+            ]),
+            [.unknown(name: "set_icon"), .flush]
+        )
+    }
+
     func testGridLineParsesRunsWithRepeatAndHlContinuation() {
         let cells: MsgPackValue = .array([
             .array([.string("h"), .uint(2)]),

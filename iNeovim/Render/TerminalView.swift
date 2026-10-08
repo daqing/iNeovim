@@ -24,6 +24,35 @@ final class TerminalView: NSView {
         }
     }
 
+    /// Apply user settings: font metrics, input switches, and animation
+    /// toggles. Changing the font reflows the grid at the new cell size.
+    func apply(settings: AppSettings) {
+        let font = settings.resolvedFont()
+        if metrics.font != font {
+            applyMetrics(FontMetrics(font: font))
+        }
+        inputSettings = settings.inputSettings
+        let animations = settings.animationSettings
+        scrollController.settings = animations
+        scrollAnimator.settings = animations
+        cursorAnimator.settings = animations
+    }
+
+    private func applyMetrics(_ newMetrics: FontMetrics) {
+        metrics = newMetrics
+        contentLayer.updateMetrics(newMetrics)
+        if let snapshot {
+            contentLayer.update(snapshot: snapshot)
+        }
+        contentLayer.setNeedsDisplay()
+        let size = bounds.size
+        Task { [weak self] in
+            guard let self else { return }
+            await self.resizeController.setCellSize(newMetrics.cellSize)
+            await self.resizeController.viewDidResize(to: size)
+        }
+    }
+
     init(
         metrics: FontMetrics = FontMetrics(
             font: .monospacedSystemFont(ofSize: FontMetrics.defaultSize, weight: .regular)
@@ -43,6 +72,7 @@ final class TerminalView: NSView {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layer?.masksToBounds = true
         layer?.addSublayer(contentLayer)
+        registerForDraggedTypes([.fileURL])
         imeHandler.view = self
         mouseHandler.view = self
         scrollController.view = self
@@ -101,6 +131,28 @@ final class TerminalView: NSView {
 
     func sendKeys(_ keys: String) {
         InputDispatcher.shared.send(.keys(keys))
+    }
+
+    // Standard Edit-menu actions reach the first responder through the
+    // responder chain. Paste goes to Neovim as typed input; copy mirrors the
+    // unnamed register to the system pasteboard.
+
+    @objc func paste(_ sender: Any?) {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        Task { try? await NvimClient().paste(text) }
+    }
+
+    @objc func copy(_ sender: Any?) {
+        Task {
+            guard let text = try? await NvimClient().registerContents("\""), !text.isEmpty else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        }
+    }
+
+    override func selectAll(_ sender: Any?) {
+        sendKeys("<Esc>ggVG")
     }
 
     /// View-space rect for a character range of the marked text, anchored at
@@ -168,6 +220,25 @@ final class TerminalView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         scrollController.scrollWheel(with: event)
+    }
+
+    // Dropping files on the editor opens them as buffers (same path as
+    // "Open With"/Dock drops, which arrive through the app delegate).
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = Self.droppedFileURLs(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        AppModel.shared.open(urls)
+        return true
+    }
+
+    static func droppedFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        return (pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]) ?? []
     }
 
     private func invalidatePreeditRegion() {

@@ -103,14 +103,23 @@ iNeovim embeds a Neovim instance and implements the GUI protocol:
 
 ## Status
 
-Early-stage skeleton. The repository currently contains the Xcode app template;
-Neovim integration and the rendering layer are under development.
+Phases 1–8 of the task plan are implemented: the app embeds `nvim --embed`,
+renders the linegrid UI with Core Text + `CALayer`, handles keyboard/IME/mouse
+input, provides smooth scrolling and cursor animation, and ships a native app
+shell (Neovim tabpages, settings window, File/Neovim menus, window title from
+`set_title`, and Open With / drag-and-drop file opening). The test suite covers
+the codec, redraw parsing, UI state, input, scrolling, settings, and an embedded
+`:terminal` sanity check.
+
+Phase 9 (polish and release) is still open: no app icon, license, or
+notarization/release pipeline yet. See `docs/TASKS.md` for the full plan and
+`docs/VERIFICATION.md` for manual checks.
 
 ## Requirements
 
 - macOS 14.6 or later
 - Xcode 26.3 or later
-- Neovim (for embedding; version requirement TBD)
+- Neovim 0.9 or later (the embedded binary is located automatically)
 
 ## Building
 

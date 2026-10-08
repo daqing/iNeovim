@@ -4,25 +4,14 @@ import os
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.app.info("Application did finish launching")
-        Task {
-            do {
-                try await RPCSession.shared.start()
-                try await RPCSession.shared.handshake()
-                let client = NvimClient()
-                try await client.uiAttach(width: 80, height: 24, options: .map(MsgPackValueMap([
-                    .string("ext_linegrid"): .bool(true),
-                ])))
-                Log.render.info("UI attached 80x24 (ext_linegrid)")
-                // One wheel event scrolls exactly one line so the visual lead
-                // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
-                try await client.command("set mousescroll=ver:1,hor:1")
-                let stream = await client.makeRedrawEventStream()
-                await Screen.shared.startConsuming(stream)
-                await InputDispatcher.shared.startConsuming(with: client)
-            } catch {
-                Log.rpc.error("Failed to connect to embedded nvim: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        Task { await AppModel.shared.bootstrap() }
+    }
+
+    /// "Open With", Dock-icon drops, and `open -a` all arrive here; the model
+    /// queues them until Neovim finished handshaking.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        Log.app.info("Open request for \(urls.count, privacy: .public) file(s)")
+        AppModel.shared.open(urls)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

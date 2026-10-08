@@ -52,6 +52,14 @@ final class GridContentLayer: CALayer {
         }
     }
 
+    /// Swap in metrics from a newly selected font. The caller re-applies the
+    /// snapshot afterwards so bounds match the new cell size.
+    func updateMetrics(_ newMetrics: FontMetrics) {
+        metrics = newMetrics
+        fonts = FontVariants(newMetrics.font)
+        setNeedsDisplay()
+    }
+
     /// Mark a cell-coordinate region dirty.
     func invalidate(cellRect: CellRect) {
         setNeedsDisplay(snappedToPixels(pixelRect(for: cellRect)))
