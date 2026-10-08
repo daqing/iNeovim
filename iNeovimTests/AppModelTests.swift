@@ -52,4 +52,17 @@ final class AppModelTests: XCTestCase {
             ["tabnew", "tabclose", "tabnext", "tabprevious", "tabnext 3"]
         )
     }
+
+    func testEditorCommandsRouteToNeovim() {
+        var commands: [String] = []
+        let model = AppModel(openHandler: { _ in }, commandHandler: { commands.append($0) })
+
+        model.splitHorizontal()
+        model.splitVertical()
+        model.closeWindow()
+        model.save()
+        model.openTerminal()
+
+        XCTAssertEqual(commands, ["split", "vsplit", "close", "write", "terminal"])
+    }
 }

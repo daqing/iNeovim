@@ -132,6 +132,28 @@ final class TerminalView: NSView {
         InputDispatcher.shared.send(.keys(keys))
     }
 
+    // Standard Edit-menu actions reach the first responder through the
+    // responder chain. Paste goes to Neovim as typed input; copy mirrors the
+    // unnamed register to the system pasteboard.
+
+    @objc func paste(_ sender: Any?) {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        Task { try? await NvimClient().paste(text) }
+    }
+
+    @objc func copy(_ sender: Any?) {
+        Task {
+            guard let text = try? await NvimClient().registerContents("\""), !text.isEmpty else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        }
+    }
+
+    override func selectAll(_ sender: Any?) {
+        sendKeys("<Esc>ggVG")
+    }
+
     /// View-space rect for a character range of the marked text, anchored at
     /// the cursor cell and wide as the covered cells, plus the live scroll
     /// offset. IME candidate windows anchor to this (see

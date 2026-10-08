@@ -93,6 +93,30 @@ final class AppModel: ObservableObject {
         command("tabnext \(index)")
     }
 
+    // MARK: - Windows and files
+
+    func splitHorizontal() {
+        command("split")
+    }
+
+    func splitVertical() {
+        command("vsplit")
+    }
+
+    func closeWindow() {
+        command("close")
+    }
+
+    func save() {
+        command("write")
+    }
+
+    /// Open an embedded `:terminal`, which exercises the sandbox/entitlement
+    /// path tracked by T8.7.
+    func openTerminal() {
+        command("terminal")
+    }
+
     /// Send raw key notation to Neovim.
     func input(_ keys: String) {
         Task {
