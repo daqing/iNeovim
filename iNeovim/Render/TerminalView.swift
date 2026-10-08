@@ -11,6 +11,7 @@ final class TerminalView: NSView {
     private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let contentLayer: GridContentLayer
     private let scrollAnimator = ScrollAnimator()
+    private let cursorAnimator = CursorAnimator()
     private let resizeController: ResizeController
     private var keyHandler = KeyInputHandler()
     private let mouseHandler = MouseHandler()
@@ -51,6 +52,10 @@ final class TerminalView: NSView {
         scrollAnimator.onUpdate = { [weak self] offset in
             guard let self else { return }
             self.contentLayer.transform = CATransform3DMakeTranslation(0, offset, 0)
+        }
+        cursorAnimator.onUpdate = { [weak self] in
+            guard let self else { return }
+            self.contentLayer.cursorGlideOffset = self.cursorAnimator.offset
         }
         imeHandler.onMarkedTextChange = { [weak self] in
             self?.invalidatePreeditRegion()
@@ -225,7 +230,9 @@ final class TerminalView: NSView {
                 guard let self, grid == 1 else { return }
                 Task { @MainActor in
                     let snapshot = await Screen.shared.snapshot()
-                    self.updateBlink(previous: self.snapshot, next: snapshot)
+                    let previous = self.snapshot
+                    self.updateBlink(previous: previous, next: snapshot)
+                    self.updateCursorGlide(previous: previous, next: snapshot)
                     self.snapshot = snapshot
                     self.contentLayer.update(snapshot: snapshot)
                     self.contentLayer.invalidate(cellRect: cellRect)
@@ -265,6 +272,33 @@ final class TerminalView: NSView {
 
     private func setCursorVisible(_ visible: Bool) {
         contentLayer.cursorVisible = visible
+    }
+
+    /// Slide the cursor to its new cell instead of jumping; runs before the
+    /// content layer adopts the new snapshot so the previous cell rect is
+    /// still available as the glide origin.
+    private func updateCursorGlide(previous: ScreenSnapshot?, next: ScreenSnapshot) {
+        guard let previous,
+              previous.cursor.grid == 1, next.cursor.grid == 1,
+              previous.cursor != next.cursor,
+              let grid = next.grid,
+              next.cursor.row >= 0, next.cursor.row < grid.height,
+              next.cursor.col >= 0, next.cursor.col < grid.width,
+              let oldRect = contentLayer.cursorAnchorRect() else {
+            return
+        }
+        let cellSize = metrics.cellSize
+        let newRect = CGRect(
+            x: CGFloat(next.cursor.col) * cellSize.width,
+            y: CGFloat(next.cursor.row) * cellSize.height,
+            width: cellSize.width,
+            height: cellSize.height
+        )
+        let distance = max(
+            abs(next.cursor.row - previous.cursor.row),
+            abs(next.cursor.col - previous.cursor.col)
+        )
+        cursorAnimator.glide(from: oldRect, to: newRect, distanceInCells: CGFloat(distance))
     }
 
     /// Colors for when nvim leaves a default unset (-1): adaptive AppKit

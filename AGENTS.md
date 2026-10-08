@@ -67,8 +67,9 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── Scroll/               smooth scrolling and animation (Phase 7)
 │   ├── ScrollAccumulator.swift  pixel↔whole-line bookkeeping (pure, testable)
 │   ├── ScrollController.swift   scrollWheel events → offsets + wheel requests
-│   ├── ScrollAnimator.swift     CADisplayLink offset chase (settle/glide)
-│   └── DisplayLinkDriver.swift  CADisplayLink → Swift closure trampoline
+│   ├── ScrollAnimator.swift     display-link offset chase (settle/glide)
+│   ├── CursorAnimator.swift     cursor glide between cells (~80 ms)
+│   └── DisplayLinkDriver.swift  CVDisplayLink → Swift closure trampoline
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
 iNeovimTests/             XCTest target (synchronized group); codec round-trip and
                           redraw-parsing tests

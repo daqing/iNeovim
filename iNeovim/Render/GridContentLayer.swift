@@ -17,6 +17,10 @@ final class GridContentLayer: CALayer {
     var cursorVisible = true {
         didSet { invalidateCursor() }
     }
+    /// Translation applied to the drawn cursor while it glides between cells.
+    var cursorGlideOffset: CGSize = .zero {
+        didSet { invalidateCursor() }
+    }
 
     init(metrics: FontMetrics) {
         self.metrics = metrics
@@ -55,11 +59,17 @@ final class GridContentLayer: CALayer {
 
     func invalidateCursor() {
         guard let rect = cursorCellRect() else { return }
-        setNeedsDisplay(snappedToPixels(rect))
+        let offsetRect = rect.offsetBy(dx: cursorGlideOffset.width, dy: cursorGlideOffset.height)
+        setNeedsDisplay(snappedToPixels(rect.union(offsetRect)))
     }
 
-    /// Layer-space rect of the cursor cell; the preedit anchors to it.
-    func cursorAnchorRect() -> CGRect? { cursorCellRect() }
+    /// Layer-space rect of the cursor cell (including any glide offset);
+    /// the preedit anchors to it.
+    func cursorAnchorRect() -> CGRect? {
+        cursorCellRect().map {
+            $0.offsetBy(dx: cursorGlideOffset.width, dy: cursorGlideOffset.height)
+        }
+    }
 
     override func draw(in context: CGContext) {
         guard let snapshot, let grid = snapshot.grid, !grid.isEmpty else { return }
@@ -167,7 +177,8 @@ final class GridContentLayer: CALayer {
         run: StyledRun,
         row: Int,
         colors: ResolvedColors,
-        context: CGContext
+        context: CGContext,
+        translation: CGSize = .zero
     ) {
         let attr = snapshot?.highlights[run.attrId] ?? HlAttr()
         let font = fonts.font(for: attr)
@@ -182,14 +193,17 @@ final class GridContentLayer: CALayer {
         ])
         let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
 
-        let baseline = CGFloat(row) * metrics.cellSize.height + metrics.baseline
+        let baseline = CGFloat(row) * metrics.cellSize.height + metrics.baseline + translation.height
         let textY = bounds.height - baseline
-        context.textPosition = CGPoint(x: CGFloat(run.startCol) * metrics.cellSize.width, y: textY)
+        context.textPosition = CGPoint(
+            x: CGFloat(run.startCol) * metrics.cellSize.width + translation.width,
+            y: textY
+        )
         CTLineDraw(line, context)
 
         let thickness = max(1, CTFontGetUnderlineThickness(ctFont))
-        let startX = CGFloat(run.startCol) * metrics.cellSize.width
-        let endX = CGFloat(run.endCol) * metrics.cellSize.width
+        let startX = CGFloat(run.startCol) * metrics.cellSize.width + translation.width
+        let endX = CGFloat(run.endCol) * metrics.cellSize.width + translation.width
         let underlineY = textY + CTFontGetUnderlinePosition(ctFont)
 
         if attr.underline || attr.undercurl {
@@ -254,7 +268,10 @@ final class GridContentLayer: CALayer {
     }
 
     private func drawCursor(_ dirtyRect: CGRect, context: CGContext) {
-        guard cursorVisible, let snapshot, let cellRect = cursorCellRect() else { return }
+        guard cursorVisible, let snapshot,
+              let cellRect = cursorCellRect()?
+                  .offsetBy(dx: cursorGlideOffset.width, dy: cursorGlideOffset.height)
+        else { return }
         let mode = snapshot.cursorModeInfo
         let colors = resolvedColors(for: cursorCellAttrId(snapshot))
 
@@ -281,7 +298,13 @@ final class GridContentLayer: CALayer {
             context.saveGState()
             context.translateBy(x: 0, y: bounds.height)
             context.scaleBy(x: 1, y: -1)
-            drawText(run: run, row: snapshot.cursor.row, colors: swapped, context: context)
+            drawText(
+                run: run,
+                row: snapshot.cursor.row,
+                colors: swapped,
+                context: context,
+                translation: cursorGlideOffset
+            )
             context.restoreGState()
         case .horizontal:
             let percentage = CGFloat(mode?.cellPercentage ?? 20)
