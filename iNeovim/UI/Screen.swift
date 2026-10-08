@@ -61,6 +61,7 @@ actor Screen {
     private(set) var modes: [ModeInfo] = []
     private(set) var modeName: String?
     private(set) var modeIndex = 0
+    private(set) var title: String?
     private var consumeTask: Task<Void, Never>?
     private var dirtyRects: [Int: CellRect] = [:]
 
@@ -74,6 +75,7 @@ actor Screen {
     /// (same sign convention as `grid_scroll`).
     private var scrollHandler: (@Sendable (Int, Int, Int) -> Void)?
     private var scrollDeltas: [Int: (rows: Int, cols: Int)] = [:]
+    private var titleHandler: (@Sendable (String) -> Void)?
 
     /// The primary (grid 1) content; nil before the first `grid_resize`.
     var primaryGrid: Grid? { grids[1] }
@@ -90,6 +92,11 @@ actor Screen {
 
     func setScrollHandler(_ handler: (@Sendable (Int, Int, Int) -> Void)?) {
         scrollHandler = handler
+    }
+
+    /// Called when Neovim reports a new window title via `set_title`.
+    func setTitleHandler(_ handler: (@Sendable (String) -> Void)?) {
+        titleHandler = handler
     }
 
     func apply(_ event: RedrawEvent) {
@@ -142,6 +149,9 @@ actor Screen {
         case let .modeInfoSet(infos):
             modes = infos
             markDirty(cursor.grid, .cell(max(cursor.row, 0), max(cursor.col, 0)))
+        case let .setTitle(title):
+            self.title = title
+            titleHandler?(title)
         case .flush:
             for (grid, rect) in dirtyRects {
                 flushHandler?(grid, rect)

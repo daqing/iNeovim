@@ -4,11 +4,13 @@ import SwiftUI
 /// minimum size so the grid never collapses below usable dimensions.
 struct ContentView: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var model: AppModel
 
     var body: some View {
         TerminalViewRepresentable(settings: settings)
             .frame(minWidth: 480, minHeight: 320)
             .background(.background)
+            .navigationTitle(model.windowTitle ?? "iNeovim")
     }
 }
 
@@ -27,5 +29,5 @@ struct TerminalViewRepresentable: NSViewRepresentable {
 }
 
 #Preview {
-    ContentView(settings: AppSettings.shared)
+    ContentView(settings: AppSettings.shared, model: AppModel.shared)
 }

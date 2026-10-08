@@ -1,6 +1,10 @@
 import XCTest
 @testable import iNeovim
 
+private final class TitleBox: @unchecked Sendable {
+    var value: String?
+}
+
 @MainActor
 final class ScreenTests: XCTestCase {
     func testGridEventsBuildPrimaryGrid() async {
@@ -29,6 +33,18 @@ final class ScreenTests: XCTestCase {
 
         let grids = await screen.grids
         XCTAssertEqual(Set(grids.keys), [1])
+    }
+
+    func testSetTitleUpdatesTitleAndNotifiesHandler() async {
+        let screen = Screen()
+        let box = TitleBox()
+        await screen.setTitleHandler { box.value = $0 }
+
+        await screen.apply(.setTitle("file.txt - NVIM"))
+
+        let title = await screen.title
+        XCTAssertEqual(title, "file.txt - NVIM")
+        XCTAssertEqual(box.value, "file.txt - NVIM")
     }
 
     func testCursorGotoUpdatesCursor() async {

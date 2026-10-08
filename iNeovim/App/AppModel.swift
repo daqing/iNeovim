@@ -12,6 +12,9 @@ final class AppModel: ObservableObject {
     /// True once the embedded Neovim is attached and its streams are running.
     @Published private(set) var isReady = false
 
+    /// Window title reported by Neovim through `set_title`.
+    @Published private(set) var windowTitle: String?
+
     private let client = NvimClient()
     private let openHandler: @MainActor ([URL]) -> Void
     private let commandHandler: @MainActor (String) -> Void
@@ -42,6 +45,9 @@ final class AppModel: ObservableObject {
             // One wheel event scrolls exactly one line so the visual lead
             // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
             try await client.command("set mousescroll=ver:1,hor:1")
+            await Screen.shared.setTitleHandler { title in
+                Task { @MainActor in AppModel.shared.windowTitle = title }
+            }
             let stream = await client.makeRedrawEventStream()
             await Screen.shared.startConsuming(stream)
             await InputDispatcher.shared.startConsuming(with: client)
