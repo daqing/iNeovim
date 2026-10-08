@@ -9,6 +9,7 @@ actor RPCSession {
     private var nextMsgid: UInt64 = 1
     private var pending: [UInt64: CheckedContinuation<MsgPackValue, Error>] = [:]
     private var notificationHandlers: [String: [@Sendable ([MsgPackValue]) -> Void]] = [:]
+    private var isClosed = false
 
     func addNotificationHandler(for method: String, handler: @escaping @Sendable ([MsgPackValue]) -> Void) {
         notificationHandlers[method, default: []].append(handler)
@@ -16,20 +17,27 @@ actor RPCSession {
 
     func start() async throws {
         try await process.start()
-        guard let output = await process.standardOutput else { throw NvimProcessError.notRunning }
+        guard !isClosed, let output = await process.standardOutput else { throw NvimProcessError.notRunning }
         output.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
+                Task { await self?.close(RPCError.connectionClosed) }
                 return
             }
             Task { await self?.feed(data) }
+        }
+        Task { [weak self] in
+            for await _ in await NvimProcess.shared.termination {
+                await self?.close(RPCError.connectionClosed)
+            }
         }
     }
 
     /// Send a request and resume with its result; a non-nil error value from nvim
     /// becomes an `RPCError.remote`.
     func call(_ method: String, params: [MsgPackValue] = []) async throws -> MsgPackValue {
+        if isClosed { throw RPCError.connectionClosed }
         let msgid = nextMsgid
         nextMsgid += 1
         let message = MsgPackValue.array([.uint(0), .uint(msgid), .string(method), .array(params)])
@@ -46,6 +54,17 @@ actor RPCSession {
 
     private func send(_ value: MsgPackValue) throws {
         try process.writeToStandardInput(MsgPackEncoder.encode(value))
+    }
+
+    private func close(_ error: Error) {
+        guard !isClosed else { return }
+        isClosed = true
+        Log.rpc.error("RPC connection closed: \(error.localizedDescription, privacy: .public)")
+        let continuations = pending
+        pending.removeAll()
+        for continuation in continuations.values {
+            continuation.resume(throwing: error)
+        }
     }
 
     func feed(_ data: Data) {
