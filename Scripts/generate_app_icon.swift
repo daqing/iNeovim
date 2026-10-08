@@ -1,6 +1,7 @@
 #!/usr/bin/env swift
-// Generates the macOS AppIcon image set. Run from the repo root:
-//   swift Scripts/generate_app_icon.swift iNeovim/Assets.xcassets/AppIcon.appiconset
+// Generates the macOS AppIcon image set from the Neovim mark. Run from the repo root:
+//   swift Scripts/generate_app_icon.swift
+// Optional args: <output-dir> <svg-path>
 import AppKit
 
 let sizes: [(name: String, px: Int)] = [
@@ -19,6 +20,19 @@ let sizes: [(name: String, px: Int)] = [
 let outputDir = CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
     : "iNeovim/Assets.xcassets/AppIcon.appiconset"
+let svgPath = CommandLine.arguments.count > 2
+    ? CommandLine.arguments[2]
+    : "iNeovim/Assets.xcassets/logo.imageset/logo.svg"
+
+guard let logo = NSImage(contentsOfFile: svgPath) else {
+    FileHandle.standardError.write(Data("Could not load SVG at \(svgPath)\n".utf8))
+    exit(1)
+}
+let logoSize = logo.size.width > 0 && logo.size.height > 0 ? logo.size : CGSize(width: 602, height: 734)
+let aspect = logoSize.width / logoSize.height
+
+// Big Sur icon geometry: artwork occupies ~824 of 1024 pt, centred.
+let artworkFraction = 824.0 / 1024.0
 
 func makeIcon(px: Int) -> Data {
     let size = CGFloat(px)
@@ -37,40 +51,23 @@ func makeIcon(px: Int) -> Data {
 
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    let ctx = NSGraphicsContext.current!.cgContext
+    NSGraphicsContext.current?.imageInterpolation = .high
 
-    // Big Sur icon geometry: 824pt artwork centered in 1024pt, corner 185.4pt.
-    let inset = size * (1 - 824.0 / 1024.0) / 2
-    let rect = CGRect(x: inset, y: inset, width: size - 2 * inset, height: size - 2 * inset)
-    let radius = size * (185.4 / 1024.0)
-    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
-    ctx.clip()
-
-    let colors = [
-        NSColor(srgbRed: 0.11, green: 0.15, blue: 0.24, alpha: 1).cgColor,
-        NSColor(srgbRed: 0.09, green: 0.62, blue: 0.52, alpha: 1).cgColor,
-    ] as CFArray
-    if let gradient = CGGradient(
-        colorsSpace: CGColorSpaceCreateDeviceRGB(),
-        colors: colors,
-        locations: [0, 1]
-    ) {
-        ctx.drawLinearGradient(
-            gradient,
-            start: CGPoint(x: rect.minX, y: rect.maxY),
-            end: CGPoint(x: rect.maxX, y: rect.minY),
-            options: []
-        )
+    let box = size * artworkFraction
+    var width = box
+    var height = box
+    if aspect >= 1 {
+        height = box / aspect
+    } else {
+        width = box * aspect
     }
-
-    // Monospace prompt glyph, centered.
-    let font = NSFont.monospacedSystemFont(ofSize: size * 0.36, weight: .bold)
-    let text = NSAttributedString(string: ">_", attributes: [
-        .font: font,
-        .foregroundColor: NSColor.white,
-    ])
-    let textSize = text.size()
-    text.draw(at: CGPoint(x: (size - textSize.width) / 2, y: (size - textSize.height) / 2))
+    let rect = CGRect(
+        x: (size - width) / 2,
+        y: (size - height) / 2,
+        width: width,
+        height: height
+    )
+    logo.draw(in: rect)
 
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
