@@ -53,3 +53,49 @@ struct HlAttr: Equatable, Sendable {
         )
     }
 }
+
+extension HlAttr {
+    /// Effective colors for rendering: per-attribute overrides falling back to
+    /// the grid defaults, with `reverse` swapping foreground and background.
+    func resolvedColors(
+        defaultForeground: Int?,
+        defaultBackground: Int?,
+        defaultSpecial: Int?
+    ) -> (foreground: Int?, background: Int?, special: Int?) {
+        var foreground = foreground ?? defaultForeground
+        var background = background ?? defaultBackground
+        if reverse {
+            swap(&foreground, &background)
+        }
+        return (foreground, background, special ?? defaultSpecial)
+    }
+}
+
+/// Highlight attributes keyed by nvim's attr id.
+struct HighlightStore: Equatable, Sendable {
+    private(set) var attrs: [Int: HlAttr] = [:]
+
+    mutating func define(_ attr: HlAttr, for id: Int) {
+        attrs[id] = attr
+    }
+
+    subscript(id: Int) -> HlAttr? {
+        attrs[id]
+    }
+
+    /// Colors for an attr id resolved against the given defaults; nil for
+    /// unknown ids.
+    func resolvedColors(
+        for id: Int,
+        defaultForeground: Int?,
+        defaultBackground: Int?,
+        defaultSpecial: Int?
+    ) -> (foreground: Int?, background: Int?, special: Int?)? {
+        guard let attr = attrs[id] else { return nil }
+        return attr.resolvedColors(
+            defaultForeground: defaultForeground,
+            defaultBackground: defaultBackground,
+            defaultSpecial: defaultSpecial
+        )
+    }
+}
