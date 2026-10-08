@@ -22,9 +22,10 @@
   清理,崩溃时强杀)。
 - **T1.5** 项目卫生:添加 `.gitignore`,排除 `xcuserdata/` 等用户级 Xcode
   状态文件。
-- **T1.6** Sandbox 权限审查:子进程 `nvim` 继承 App Sandbox,当前
-  `user-selected-files` 是只读——保存 buffer 会失败。在任何编辑类里程碑
-  之前放宽为读写(或移除 sandbox)。
+- **T1.6** Sandbox 权限审查:已通过**移除 App Sandbox** 解决
+  (`ENABLE_APP_SANDBOX = NO`)。在 sandbox 下子进程 `nvim` 根本无法被定位
+  (窗口保持空白),也无法读取 `~/.config/nvim` 或项目文件;`user-selected-files`
+  无法覆盖真实编辑器的工作流。Release 构建保留 hardened runtime。
 
 ## 阶段 2 — MessagePack codec
 

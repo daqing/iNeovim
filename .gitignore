@@ -9,3 +9,6 @@ xcuserdata/
 # Build output
 build/
 DerivedData/
+
+# Test coverage profiles
+*.profraw

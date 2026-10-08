@@ -4,11 +4,20 @@ import XCTest
 
 @MainActor
 final class FontMetricsTests: XCTestCase {
-    func testCellSizeIsPositiveAndWholePoints() {
-        let metrics = FontMetrics(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+    func testCellWidthMatchesFontAdvance() {
+        // Text runs are shaped with the font's natural advances, so the cell
+        // width must equal the advance exactly or glyphs drift away from the
+        // cursor/background cells.
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let metrics = FontMetrics(font: font)
+        let advance = font.advancement(forGlyph: font.glyph(withName: "M")).width
         XCTAssertGreaterThan(metrics.cellSize.width, 0)
+        XCTAssertEqual(metrics.cellSize.width, advance, accuracy: 0.001)
+    }
+
+    func testCellHeightIsWholePoints() {
+        let metrics = FontMetrics(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
         XCTAssertGreaterThan(metrics.cellSize.height, 0)
-        XCTAssertEqual(metrics.cellSize.width, metrics.cellSize.width.rounded())
         XCTAssertEqual(metrics.cellSize.height, metrics.cellSize.height.rounded())
     }
 

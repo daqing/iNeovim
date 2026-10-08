@@ -42,9 +42,12 @@ enum RedrawEvent: Equatable, Sendable {
 }
 
 extension RedrawEvent {
-    /// Parse the params of a `redraw` notification; nvim batches the individual
-    /// events as `[[name, args...], ...]` in a single param. Malformed entries
-    /// are skipped rather than failing the whole batch.
+    /// Parse the params of a `redraw` notification. Nvim sends a single
+    /// argument: a batch of events, each `[name, tuple, tuple, ...]`, where
+    /// every parameter tuple is one logical instance of the event. Repeatable
+    /// events (`grid_line`, `hl_attr_define`) therefore fan out into several
+    /// typed events. Malformed entries are skipped rather than failing the
+    /// whole batch.
     static func parseNotification(_ params: [MsgPackValue]) -> [RedrawEvent] {
         let rawEvents: [MsgPackValue]
         if params.count == 1, case let .array(events) = params[0] {
@@ -52,75 +55,95 @@ extension RedrawEvent {
         } else {
             rawEvents = params
         }
-        return rawEvents.compactMap(parseEvent(_:))
+        return rawEvents.flatMap(parseEvent(_:))
     }
 
-    private static func parseEvent(_ raw: MsgPackValue) -> RedrawEvent? {
+    private static func parseEvent(_ raw: MsgPackValue) -> [RedrawEvent] {
         guard case let .array(elements) = raw, !elements.isEmpty,
               case let .string(eventName) = elements[0] else {
-            return nil
+            return []
         }
-        let args = Array(elements.dropFirst())
+        let tuples = elements.dropFirst()
         switch eventName {
         case "grid_line":
-            return parseGridLine(args)
+            return tuples.compactMap { tuple in
+                guard case let .array(args) = tuple else { return nil }
+                return parseGridLine(args)
+            }
+        case "hl_attr_define":
+            return tuples.compactMap { tuple in
+                guard case let .array(args) = tuple, args.count >= 2,
+                      let id = args[0].intValue,
+                      case let .map(map) = args[1] else { return nil }
+                return .hlAttrDefine(id: id, attr: HlAttr(rawMap: map))
+            }
         case "grid_scroll":
-            return parseGridScroll(args)
+            guard let args = firstTuple(tuples), args.count == 7,
+                  let grid = args[0].intValue,
+                  let top = args[1].intValue,
+                  let bot = args[2].intValue,
+                  let left = args[3].intValue,
+                  let right = args[4].intValue,
+                  let rows = args[5].intValue,
+                  let cols = args[6].intValue else { return [] }
+            return [.gridScroll(grid: grid, top: top, bot: bot, left: left, right: right, rows: rows, cols: cols)]
         case "grid_clear":
-            guard args.count == 1, let grid = args[0].intValue else { return nil }
-            return .gridClear(grid: grid)
+            guard let args = firstTuple(tuples), let grid = args.first?.intValue else { return [] }
+            return [.gridClear(grid: grid)]
         case "grid_resize":
-            guard args.count == 3,
+            guard let args = firstTuple(tuples), args.count == 3,
                   let grid = args[0].intValue,
                   let width = args[1].intValue,
-                  let height = args[2].intValue else { return nil }
-            return .gridResize(grid: grid, width: width, height: height)
+                  let height = args[2].intValue else { return [] }
+            return [.gridResize(grid: grid, width: width, height: height)]
         case "grid_destroy":
-            guard args.count == 1, let grid = args[0].intValue else { return nil }
-            return .gridDestroy(grid: grid)
+            guard let args = firstTuple(tuples), let grid = args.first?.intValue else { return [] }
+            return [.gridDestroy(grid: grid)]
         case "grid_cursor_goto":
-            guard args.count == 3,
+            guard let args = firstTuple(tuples), args.count == 3,
                   let grid = args[0].intValue,
                   let row = args[1].intValue,
-                  let col = args[2].intValue else { return nil }
-            return .cursorGoto(grid: grid, row: row, col: col)
+                  let col = args[2].intValue else { return [] }
+            return [.cursorGoto(grid: grid, row: row, col: col)]
         case "cursor_goto":
-            guard args.count == 2,
+            guard let args = firstTuple(tuples), args.count == 2,
                   let row = args[0].intValue,
-                  let col = args[1].intValue else { return nil }
-            return .cursorGoto(grid: 1, row: row, col: col)
-        case "hl_attr_define":
-            guard args.count >= 2,
-                  let id = args[0].intValue,
-                  case let .map(map) = args[1] else { return nil }
-            return .hlAttrDefine(id: id, attr: HlAttr(rawMap: map))
+                  let col = args[1].intValue else { return [] }
+            return [.cursorGoto(grid: 1, row: row, col: col)]
         case "default_colors_set":
-            guard args.count >= 3 else { return nil }
-            return .defaultColorsSet(
+            guard let args = firstTuple(tuples), args.count >= 3 else { return [] }
+            return [.defaultColorsSet(
                 foreground: colorValue(args[0]),
                 background: colorValue(args[1]),
                 special: colorValue(args[2])
-            )
+            )]
         case "mode_change":
-            guard args.count == 2,
-                  case let .string(modeName) = args[0],
-                  let index = args[1].intValue else { return nil }
-            return .modeChange(name: modeName, index: index)
+            guard let args = firstTuple(tuples), args.count == 2,
+                  case let .string(name) = args[0],
+                  let index = args[1].intValue else { return [] }
+            return [.modeChange(name: name, index: index)]
         case "mode_info_set":
-            guard args.count >= 2, case let .array(rawModes) = args[1] else { return nil }
-            return .modeInfoSet(rawModes.compactMap(ModeInfo.init(rawValue:)))
+            guard let args = firstTuple(tuples), args.count >= 2,
+                  case let .array(rawModes) = args[1] else { return [] }
+            return [.modeInfoSet(rawModes.compactMap(ModeInfo.init(rawValue:)))]
         case "set_title":
-            guard case let .string(title) = args.first else { return nil }
-            return .setTitle(title)
+            guard let args = firstTuple(tuples), case let .string(title)? = args.first else { return [] }
+            return [.setTitle(title)]
         case "flush":
-            return .flush
+            return [.flush]
         default:
-            return .unknown(name: eventName)
+            return [.unknown(name: eventName)]
         }
     }
 
+    /// The single parameter tuple of a non-repeatable event.
+    private static func firstTuple(_ tuples: ArraySlice<MsgPackValue>) -> [MsgPackValue]? {
+        guard let first = tuples.first, case let .array(args) = first else { return nil }
+        return args
+    }
+
     private static func parseGridLine(_ args: [MsgPackValue]) -> RedrawEvent? {
-        guard args.count == 4,
+        guard args.count >= 4,
               let grid = args[0].intValue,
               let row = args[1].intValue,
               let colStart = args[2].intValue,
@@ -141,20 +164,6 @@ extension RedrawEvent {
             runs.append(GridCellRun(text: text, attrId: attrId, count: max(count, 1)))
         }
         return .gridLine(grid: grid, row: row, colStart: colStart, runs: runs)
-    }
-
-    private static func parseGridScroll(_ args: [MsgPackValue]) -> RedrawEvent? {
-        guard args.count == 7,
-              let grid = args[0].intValue,
-              let top = args[1].intValue,
-              let bot = args[2].intValue,
-              let left = args[3].intValue,
-              let right = args[4].intValue,
-              let rows = args[5].intValue,
-              let cols = args[6].intValue else {
-            return nil
-        }
-        return .gridScroll(grid: grid, top: top, bot: bot, left: left, right: right, rows: rows, cols: cols)
     }
 
     /// A color of -1 from nvim means "not set".

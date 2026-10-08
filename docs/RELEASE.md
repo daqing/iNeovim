@@ -9,7 +9,8 @@ Developer ID certificate.
 - Apple Developer Program membership and a **Developer ID Application**
   certificate in the login keychain.
 - The Xcode project already has automatic signing with team `S39RD89QY9`
-  (`DEVELOPMENT_TEAM`), App Sandbox enabled, and `ENABLE_HARDENED_RUNTIME = YES`
+  (`DEVELOPMENT_TEAM`), the App Sandbox **disabled** (the embedded `nvim` needs
+  host filesystem access), and `ENABLE_HARDENED_RUNTIME = YES`
   on Release (required for notarization).
 - An app-specific password for notarization, stored once:
 

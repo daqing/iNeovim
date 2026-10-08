@@ -17,6 +17,10 @@ final class TerminalView: NSView {
     private let mouseHandler = MouseHandler()
     private let scrollController = ScrollController()
     let imeHandler = IMEHandler()
+    private var sessionReady = false
+    /// The view size for which a corrective resize was already attempted; a
+    /// rejected request must not be repeated forever.
+    private var reconciledViewSize: CGSize?
     var inputSettings = InputSettings() {
         didSet {
             keyHandler.passCmdKeys = inputSettings.passCmdKeysThrough
@@ -38,6 +42,37 @@ final class TerminalView: NSView {
         cursorAnimator.settings = animations
     }
 
+    /// Notified when the embedded session becomes ready. The very first resize
+    /// can be issued before `ui_attach` completes, in which case nvim rejects
+    /// it and the grid would stay at its initial size; re-send the current view
+    /// size once the session is up.
+    func sessionDidChangeReady(_ ready: Bool) {
+        defer { sessionReady = ready }
+        guard ready, !sessionReady else { return }
+        requestResize(to: bounds.size)
+    }
+
+    /// Send the view size to Neovim; a new size also re-arms the corrective
+    /// resize below.
+    private func requestResize(to size: CGSize) {
+        reconciledViewSize = nil
+        Task { await resizeController.viewDidResize(to: size) }
+    }
+
+    /// Neovim rejects a resize that arrives before `ui_attach`, which would
+    /// leave the grid at its initial 80x24 and visibly smaller than the window
+    /// if the window is never resized again. Once a snapshot is applied, compare
+    /// its grid with the size the view needs and re-request when they differ
+    /// (at most once per view size, so a rejected request cannot spin).
+    private func reconcileGridSize(with snapshot: ScreenSnapshot) {
+        guard sessionReady, let grid = snapshot.grid, !grid.isEmpty else { return }
+        let expected = ResizeController.cellCount(for: bounds.size, cellSize: metrics.cellSize)
+        guard grid.width != expected.cols || grid.height != expected.rows else { return }
+        guard reconciledViewSize != bounds.size else { return }
+        reconciledViewSize = bounds.size
+        Task { await resizeController.viewDidResize(to: bounds.size) }
+    }
+
     private func applyMetrics(_ newMetrics: FontMetrics) {
         metrics = newMetrics
         contentLayer.updateMetrics(newMetrics)
@@ -51,6 +86,7 @@ final class TerminalView: NSView {
             await self.resizeController.setCellSize(newMetrics.cellSize)
             await self.resizeController.viewDidResize(to: size)
         }
+        reconciledViewSize = nil
     }
 
     init(
@@ -71,6 +107,14 @@ final class TerminalView: NSView {
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layer?.masksToBounds = true
+        // Anchor the content layer's top-left to the view's top-left. Its own
+        // bounds grow to the full grid (for scrolling); without this the layer
+        // is centered on the origin and clipped out of view.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        contentLayer.anchorPoint = .zero
+        contentLayer.position = .zero
+        CATransaction.commit()
         layer?.addSublayer(contentLayer)
         registerForDraggedTypes([.fileURL])
         imeHandler.view = self
@@ -90,6 +134,7 @@ final class TerminalView: NSView {
         imeHandler.onMarkedTextChange = { [weak self] in
             self?.invalidatePreeditRegion()
         }
+        refreshBackgroundColor()
     }
 
     required init?(coder: NSCoder) {
@@ -262,6 +307,16 @@ final class TerminalView: NSView {
         if snapshot == nil {
             connectScreen()
         }
+        // Take focus so typing reaches the editor without requiring a click.
+        // Re-assert on the next main-actor turn in case SwiftUI restores focus
+        // to another control while the window is being laid out.
+        if let window {
+            _ = window.makeFirstResponder(self)
+        }
+        Task { @MainActor [weak self] in
+            guard let self, let window = self.window else { return }
+            _ = window.makeFirstResponder(self)
+        }
     }
 
     override func viewDidChangeBackingProperties() {
@@ -273,7 +328,7 @@ final class TerminalView: NSView {
         super.viewDidChangeEffectiveAppearance()
         // Fallback colors follow the system appearance; repaint so cells
         // drawn with nvim-packed colors keep showing through where set.
-        needsDisplay = true
+        refreshBackgroundColor()
         contentLayer.setNeedsDisplay()
     }
 
@@ -285,7 +340,7 @@ final class TerminalView: NSView {
 
     override func setFrameSize(_ newSize: CGSize) {
         super.setFrameSize(newSize)
-        Task { await resizeController.viewDidResize(to: newSize) }
+        requestResize(to: newSize)
     }
 
     private var backingScale: CGFloat {
@@ -307,6 +362,8 @@ final class TerminalView: NSView {
                     self.snapshot = snapshot
                     self.contentLayer.update(snapshot: snapshot)
                     self.contentLayer.invalidate(cellRect: cellRect)
+                    self.refreshBackgroundColor()
+                    self.reconcileGridSize(with: snapshot)
                 }
             }
             await Screen.shared.setScrollHandler { [weak self] grid, rows, _ in
@@ -315,12 +372,22 @@ final class TerminalView: NSView {
                     self.scrollController.confirmScroll(rows: rows)
                 }
             }
+            // nvim may have painted before this view was in a window; adopt the
+            // current state now instead of waiting for the next flush.
+            let snapshot = await Screen.shared.snapshot()
+            guard snapshot.grid != nil else { return }
+            self.snapshot = snapshot
+            self.contentLayer.update(snapshot: snapshot)
+            self.contentLayer.setNeedsDisplay()
+            self.refreshBackgroundColor()
         }
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        backgroundColor.setFill()
-        NSBezierPath.fill(dirtyRect)
+    private func refreshBackgroundColor() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.backgroundColor = backgroundColor.cgColor
+        CATransaction.commit()
     }
 
     private func updateBlink(previous: ScreenSnapshot?, next: ScreenSnapshot) {

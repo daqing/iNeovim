@@ -27,12 +27,31 @@ final class GridContentLayer: CALayer {
         self.metrics = metrics
         self.fonts = FontVariants(metrics.font)
         super.init()
-        isGeometryFlipped = true
+        // The host view is flipped, so the layer inherits a top-left origin;
+        // leaving this false keeps the grid's y-down drawing math correct.
+        isGeometryFlipped = false
         needsDisplayOnBoundsChange = true
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Core Animation copies a layer with this initializer when it animates or
+    /// presents it; without it the layer traps.
+    override init(layer: Any) {
+        let source = layer as? GridContentLayer
+        let metrics = source?.metrics
+            ?? FontMetrics(font: .monospacedSystemFont(ofSize: FontMetrics.defaultSize, weight: .regular))
+        self.metrics = metrics
+        self.fonts = FontVariants(metrics.font)
+        super.init(layer: layer)
+        if let source {
+            snapshot = source.snapshot
+            preedit = source.preedit
+            cursorVisible = source.cursorVisible
+            cursorGlideOffset = source.cursorGlideOffset
+        }
     }
 
     /// Apply a fresh snapshot and resize to the grid's content size (the
@@ -49,7 +68,12 @@ final class GridContentLayer: CALayer {
             size = .zero
         }
         if bounds.size != size {
+            // Resizing the backing grid is a content change, not an animation;
+            // without this Core Animation would implicitly animate `bounds`.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             bounds = CGRect(origin: .zero, size: size)
+            CATransaction.commit()
         }
     }
 

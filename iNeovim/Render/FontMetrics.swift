@@ -53,6 +53,11 @@ struct FontMetrics: Equatable {
             )
         }
         let widest = advances.reduce(0) { max($0, $1.width) }
-        return ceil(widest)
+        // Use the exact advance, not a rounded-up cell: the renderer draws a
+        // run as one CTLine whose glyphs advance by the font's natural amount,
+        // so the cell width must match it or text drifts away from the cursor
+        // and background cells (a 13pt system monospace advances 8.036pt, which
+        // rounding to 9 shifted text by ~half a cell every five characters).
+        return widest
     }
 }

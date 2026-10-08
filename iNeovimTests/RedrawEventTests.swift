@@ -6,8 +6,8 @@ final class RedrawEventTests: XCTestCase {
     func testParseBatch() {
         XCTAssertEqual(
             parse([
-                .array([.string("grid_resize"), .uint(1), .uint(80), .uint(24)]),
-                .array([.string("flush")]),
+                .array([.string("grid_resize"), .array([.uint(1), .uint(80), .uint(24)])]),
+                .array([.string("flush"), .array([])]),
             ]),
             [
                 .gridResize(grid: 1, width: 80, height: 24),
@@ -19,33 +19,28 @@ final class RedrawEventTests: XCTestCase {
     func testParseSkipsMalformedEvents() {
         XCTAssertEqual(parse([.int(7), .array([]), .string("nope")]), [])
         // grid_clear missing its grid argument
-        XCTAssertEqual(parse([.array([.string("grid_clear")])]), [])
+        XCTAssertEqual(parse([.array([.string("grid_clear"), .array([])])]), [])
         XCTAssertEqual(RedrawEvent.parseNotification([]), [])
     }
 
-    func testParseToleratesFlatEventList() {
-        XCTAssertEqual(
-            RedrawEvent.parseNotification([.array([.string("flush")])]),
-            []
-        )
+    func testParseNotificationUnwrapsSingleBatchArgument() {
         XCTAssertEqual(
             RedrawEvent.parseNotification([
-                .array([.string("grid_clear"), .uint(1)]),
-                .array([.string("flush")]),
+                .array([.array([.string("flush"), .array([])])]),
             ]),
-            [.gridClear(grid: 1), .flush]
+            [.flush]
         )
     }
 
     func testSetTitleParsesAndSetIconIsUnknown() {
         XCTAssertEqual(
-            parse([.array([.string("set_title"), .string("file.txt - NVIM")])]),
+            parse([.array([.string("set_title"), .array([.string("file.txt - NVIM")])])]),
             [.setTitle("file.txt - NVIM")]
         )
         XCTAssertEqual(
             parse([
-                .array([.string("set_icon"), .string("icon")]),
-                .array([.string("flush")]),
+                .array([.string("set_icon"), .array([.string("icon")])]),
+                .array([.string("flush"), .array([])]),
             ]),
             [.unknown(name: "set_icon"), .flush]
         )
@@ -59,7 +54,7 @@ final class RedrawEventTests: XCTestCase {
             .array([.string("?"), .uint(9), .uint(0)]),
         ])
         XCTAssertEqual(
-            parse([.array([.string("grid_line"), .uint(1), .uint(4), .uint(3), cells])]),
+            parse([.array([.string("grid_line"), .array([.uint(1), .uint(4), .uint(3), cells, .bool(false)])])]),
             [
                 .gridLine(grid: 1, row: 4, colStart: 3, runs: [
                     GridCellRun(text: "h", attrId: 2, count: 1),
@@ -71,11 +66,26 @@ final class RedrawEventTests: XCTestCase {
         )
     }
 
+    func testGridLineFansOutMultipleParamTuples() {
+        let cells: MsgPackValue = .array([.array([.string("a")])])
+        XCTAssertEqual(
+            parse([.array([
+                .string("grid_line"),
+                .array([.uint(1), .uint(0), .uint(0), cells]),
+                .array([.uint(1), .uint(1), .uint(0), cells]),
+            ])]),
+            [
+                .gridLine(grid: 1, row: 0, colStart: 0, runs: [GridCellRun(text: "a", attrId: 0, count: 1)]),
+                .gridLine(grid: 1, row: 1, colStart: 0, runs: [GridCellRun(text: "a", attrId: 0, count: 1)]),
+            ]
+        )
+    }
+
     func testGridScrollParsesNegativeRows() {
         XCTAssertEqual(
             parse([.array([
                 .string("grid_scroll"),
-                .uint(1), .uint(0), .uint(24), .uint(0), .uint(80), .int(-1), .uint(0),
+                .array([.uint(1), .uint(0), .uint(24), .uint(0), .uint(80), .int(-1), .uint(0)]),
             ])]),
             [.gridScroll(grid: 1, top: 0, bot: 24, left: 0, right: 80, rows: -1, cols: 0)]
         )
@@ -83,11 +93,11 @@ final class RedrawEventTests: XCTestCase {
 
     func testCursorGotoAcceptsLinegridAndLegacyForms() {
         XCTAssertEqual(
-            parse([.array([.string("grid_cursor_goto"), .uint(1), .uint(5), .uint(9)])]),
+            parse([.array([.string("grid_cursor_goto"), .array([.uint(1), .uint(5), .uint(9)])])]),
             [.cursorGoto(grid: 1, row: 5, col: 9)]
         )
         XCTAssertEqual(
-            parse([.array([.string("cursor_goto"), .uint(5), .uint(9)])]),
+            parse([.array([.string("cursor_goto"), .array([.uint(5), .uint(9)])])]),
             [.cursorGoto(grid: 1, row: 5, col: 9)]
         )
     }
@@ -104,7 +114,10 @@ final class RedrawEventTests: XCTestCase {
             .string("reverse"): .bool(true),
         ]))
         XCTAssertEqual(
-            parse([.array([.string("hl_attr_define"), .uint(7), rgbMap, .map(MsgPackValueMap()), .array([])])]),
+            parse([.array([
+                .string("hl_attr_define"),
+                .array([.uint(7), rgbMap, .map(MsgPackValueMap()), .array([])]),
+            ])]),
             [
                 .hlAttrDefine(id: 7, attr: HlAttr(
                     foreground: 0xff_00_00,
@@ -120,11 +133,27 @@ final class RedrawEventTests: XCTestCase {
         )
     }
 
+    func testHlAttrDefineFansOutMultipleParamTuples() {
+        let first: MsgPackValue = .map(MsgPackValueMap([.string("bold"): .bool(true)]))
+        let second: MsgPackValue = .map(MsgPackValueMap([.string("italic"): .bool(true)]))
+        XCTAssertEqual(
+            parse([.array([
+                .string("hl_attr_define"),
+                .array([.uint(1), first, .map(MsgPackValueMap()), .array([])]),
+                .array([.uint(2), second, .map(MsgPackValueMap()), .array([])]),
+            ])]),
+            [
+                .hlAttrDefine(id: 1, attr: HlAttr(bold: true)),
+                .hlAttrDefine(id: 2, attr: HlAttr(italic: true)),
+            ]
+        )
+    }
+
     func testDefaultColorsSetTreatsNegativeAsUnset() {
         XCTAssertEqual(
             parse([.array([
                 .string("default_colors_set"),
-                .int(-1), .uint(0xab_cd_ef), .uint(0x12_34_56), .uint(1), .uint(2),
+                .array([.int(-1), .uint(0xab_cd_ef), .uint(0x12_34_56), .uint(1), .uint(2)]),
             ])]),
             [.defaultColorsSet(foreground: nil, background: 0xab_cd_ef, special: 0x12_34_56)]
         )
@@ -132,7 +161,7 @@ final class RedrawEventTests: XCTestCase {
 
     func testModeChange() {
         XCTAssertEqual(
-            parse([.array([.string("mode_change"), .string("insert"), .uint(1)])]),
+            parse([.array([.string("mode_change"), .array([.string("insert"), .uint(1)])])]),
             [.modeChange(name: "insert", index: 1)]
         )
     }
@@ -155,7 +184,7 @@ final class RedrawEventTests: XCTestCase {
             .map(MsgPackValueMap([.string("cursor_shape"): .string("diagonal")])),
         ])
         XCTAssertEqual(
-            parse([.array([.string("mode_info_set"), .bool(true), modes])]),
+            parse([.array([.string("mode_info_set"), .array([.bool(true), modes])])]),
             [
                 .modeInfoSet([
                     ModeInfo(
@@ -189,7 +218,7 @@ final class RedrawEventTests: XCTestCase {
 
     func testUnknownEventKeepsName() {
         XCTAssertEqual(
-            parse([.array([.string("win_pos"), .uint(1), .uint(0), .uint(0), .uint(80), .uint(24)])]),
+            parse([.array([.string("win_pos"), .array([.uint(1), .uint(0), .uint(0), .uint(80), .uint(24)])])]),
             [.unknown(name: "win_pos")]
         )
     }

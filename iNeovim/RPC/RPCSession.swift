@@ -10,6 +10,7 @@ actor RPCSession {
     private var pending: [UInt64: CheckedContinuation<MsgPackValue, Error>] = [:]
     private var notificationHandlers: [String: [@Sendable ([MsgPackValue]) -> Void]] = [:]
     private var isClosed = false
+    private var readTask: Task<Void, Never>?
 
     /// Oldest nvim API level this GUI is written against (Neovim 0.9).
     static let minimumApiLevel: UInt64 = 12
@@ -44,14 +45,27 @@ actor RPCSession {
     func start() async throws {
         try await process.start()
         guard !isClosed, let output = await process.standardOutput else { throw NvimProcessError.notRunning }
-        output.readabilityHandler = { [weak self] handle in
+        // Read on the pipe's queue and hand chunks to a single consumer through
+        // an AsyncStream. Yielding to one continuation (instead of spawning a
+        // Task per chunk) guarantees the decoder sees bytes in arrival order:
+        // an out-of-order `feed` corrupts the stream and blanks the screen.
+        readTask?.cancel()
+        let (chunks, continuation) = AsyncStream<Data>.makeStream()
+        output.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
-                Task { await self?.close(RPCError.connectionClosed) }
+                continuation.finish()
                 return
             }
-            Task { await self?.feed(data) }
+            continuation.yield(data)
+        }
+        readTask = Task { [weak self] in
+            for await chunk in chunks {
+                await self?.feed(chunk)
+            }
+            guard !Task.isCancelled else { return }
+            await self?.close(RPCError.connectionClosed)
         }
     }
 
@@ -59,6 +73,8 @@ actor RPCSession {
     /// handshaken over the same client. Pending calls are failed by `close`
     /// before `reset` is called (see `AppModel.restart`).
     func reset() {
+        readTask?.cancel()
+        readTask = nil
         decoder = MsgPackDecoder()
         nextMsgid = 1
         pending.removeAll()

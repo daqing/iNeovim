@@ -54,6 +54,14 @@ final class AppModel: ObservableObject {
             bootstrapError = nil
             try await RPCSession.shared.start()
             try await RPCSession.shared.handshake()
+            // Subscribe before attaching: nvim sends its first full screen as
+            // the redraw batch that immediately follows ui_attach, and that
+            // batch is lost if no handler is registered yet.
+            let stream = await client.makeRedrawEventStream()
+            await Screen.shared.startConsuming(stream)
+            await Screen.shared.setTitleHandler { title in
+                Task { @MainActor in AppModel.shared.windowTitle = title }
+            }
             try await client.uiAttach(width: 80, height: 24, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
             ])))
@@ -61,11 +69,6 @@ final class AppModel: ObservableObject {
             // One wheel event scrolls exactly one line so the visual lead
             // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
             try await client.command("set mousescroll=ver:1,hor:1")
-            await Screen.shared.setTitleHandler { title in
-                Task { @MainActor in AppModel.shared.windowTitle = title }
-            }
-            let stream = await client.makeRedrawEventStream()
-            await Screen.shared.startConsuming(stream)
             await InputDispatcher.shared.startConsuming(with: client)
             startObservingTermination()
             isReady = true

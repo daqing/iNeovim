@@ -22,9 +22,11 @@ in Xcode after each task (no command-line builds).
   app (clean teardown on quit, kill on crash).
 - **T1.5** Project hygiene: add `.gitignore` for `xcuserdata/` and other
   user-specific Xcode state.
-- **T1.6** Sandbox entitlement review: the child `nvim` inherits the App Sandbox,
-  and `user-selected-files` is currently readonly — saving buffers will fail.
-  Widen to read/write (or drop the sandbox) before any editing milestone.
+- **T1.6** Sandbox entitlement review: resolved by **removing the App Sandbox**
+  (`ENABLE_APP_SANDBOX = NO`). Under the sandbox the child `nvim` could not be
+  located at all (the window stayed blank) and could not read `~/.config/nvim` or
+  project files; `user-selected-files` did not cover a real editor workflow. The
+  Release build keeps the hardened runtime.
 
 ## Phase 2 — MessagePack codec
 

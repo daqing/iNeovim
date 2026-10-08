@@ -8,9 +8,10 @@ struct ContentView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        TerminalViewRepresentable(settings: settings)
+        TerminalViewRepresentable(settings: settings, isReady: model.isReady)
             .frame(minWidth: 480, minHeight: 320)
             .background(.background)
+            .overlay { statusOverlay }
             .navigationTitle(model.windowTitle ?? "iNeovim")
             .alert(
                 "Neovim exited",
@@ -26,19 +27,45 @@ struct ContentView: View {
                 Text("The embedded Neovim process exited unexpectedly (status \(crash.status)).")
             }
     }
+
+    /// A blank grid can mean Neovim is still starting or failed to start; show
+    /// that state instead of an empty window.
+    @ViewBuilder
+    private var statusOverlay: some View {
+        if model.isReady || model.crash != nil {
+            // A crash is surfaced by the alert; an empty grid is expected then.
+            EmptyView()
+        } else if let error = model.bootstrapError {
+            ContentUnavailableView {
+                Label("Could not start Neovim", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { model.restart() }
+            }
+        } else {
+            ProgressView("Starting Neovim…")
+                .controlSize(.small)
+                .padding(16)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
 }
 
 struct TerminalViewRepresentable: NSViewRepresentable {
     @ObservedObject var settings: AppSettings
+    var isReady: Bool
 
     func makeNSView(context: Context) -> TerminalView {
         let view = TerminalView(metrics: FontMetrics(font: settings.resolvedFont()))
         view.apply(settings: settings)
+        view.sessionDidChangeReady(isReady)
         return view
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
         nsView.apply(settings: settings)
+        nsView.sessionDidChangeReady(isReady)
     }
 }
 

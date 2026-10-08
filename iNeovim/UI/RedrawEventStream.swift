@@ -22,9 +22,14 @@ actor RedrawEventStream {
     func subscribe(to session: RPCSession = .shared) async {
         guard !isSubscribed else { return }
         isSubscribed = true
-        await session.addNotificationHandler(for: "redraw") { [weak self] params in
-            let events = RedrawEvent.parseNotification(params)
-            Task { await self?.publish(events) }
+        // The continuation is Sendable and its `yield` is thread-safe. Yielding
+        // synchronously on the session's dispatch keeps redraw batches in
+        // arrival order; spawning a Task per batch could reorder them.
+        let sink = continuation
+        await session.addNotificationHandler(for: "redraw") { params in
+            for event in RedrawEvent.parseNotification(params) {
+                sink.yield(event)
+            }
         }
     }
 
@@ -47,11 +52,5 @@ actor RedrawEventStream {
         self.continuation = continuation
         isSubscribed = false
         isHandedOut = false
-    }
-
-    private func publish(_ events: [RedrawEvent]) {
-        for event in events {
-            continuation.yield(event)
-        }
     }
 }

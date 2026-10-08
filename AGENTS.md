@@ -23,8 +23,9 @@ Key facts from `iNeovim.xcodeproj/project.pbxproj`:
 - **Bundle:** display name `iNeovim`, category `public.app-category.developer-tools`,
   bundle ID `com.mzevo.<product>` (`com.mzevo.iNeovim`, tests `com.mzevo.iNeovimTests`;
   changed from the template placeholder in T9.4).
-- **Capabilities:** App Sandbox enabled, user-selected files read/write
-  (`ENABLE_USER_SELECTED_FILES = readwrite`, widened in T1.6), App Groups registered.
+- **Capabilities:** App Sandbox **disabled** (`ENABLE_APP_SANDBOX = NO`) — the embedded
+  `nvim` must execute a user-installed binary and read the user's config, plugins, and
+  arbitrary project files, which the sandbox forbids. App Groups registered.
 - **Versioning:** `MARKETING_VERSION = 1.0`, `CURRENT_PROJECT_VERSION = 1` — both live only
   in `project.pbxproj`. The Info.plist is generated (`GENERATE_INFOPLIST_FILE = YES`) and
   merged with the partial `Config/Info.plist`, which declares the document types the app
@@ -85,7 +86,7 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 └── Assets.xcassets/      AccentColor colorset + AppIcon.appiconset (T9.3)
 Scripts/                  One-off tooling (app-icon generator); not part of the build
 iNeovimTests/             XCTest target (synchronized group); codec round-trip,
-                          redraw-parsing, settings/model, and sandbox integration tests
+                          redraw-parsing, settings/model, and embedded-nvim tests
 Config/Info.plist         Partial Info.plist merged into the generated one
                           (document types); outside the synchronized group
 Config/ExportOptions.plist  developer-id export options (T9.6)
@@ -161,11 +162,12 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 
 ## Security considerations
 
-- App Sandbox is **enabled** with `user-selected-files` access set to **read/write**
-  (`ENABLE_USER_SELECTED_FILES = readwrite`, widened in T1.6) so edited buffers can be
-  saved. The child `nvim` inherits the sandbox — it can only reach files the app itself
-  may access (user-selected files, the app container) — keep this in mind for features
-  like the embedded terminal or plugin file access.
+- App Sandbox is **disabled** (`ENABLE_APP_SANDBOX = NO`). Neovim has to run a
+  user-installed binary (Homebrew, `~/.local/bin`, …) and read the user's
+  `~/.config/nvim`, plugins, and arbitrary project files; under the sandbox the
+  child `nvim` could not even be located, which left the window blank. Distribution is
+  developer-id + notarization (not the Mac App Store), so the sandbox is not required.
+  The Release build keeps `ENABLE_HARDENED_RUNTIME = YES`.
 - Code signing uses automatic signing with a personal development team
   (`DEVELOPMENT_TEAM = S39RD89QY9`) — do not hardcode other team IDs or credentials.
 - Never commit secrets (API keys, provisioning credentials, `.env` files); none exist in
