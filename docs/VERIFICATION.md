@@ -57,7 +57,8 @@ aligned.
 ## App shell checks
 
 - **Tabs (T8.2):** **Neovim ▸ New Tab** opens a tabpage and the tabline shows
-  it; **Next/Previous Tab** and `gt`/`gT` move between tabpages.
+  it; ⌘T creates a tab without leaving the keyboard; **Next/Previous Tab** and
+  `gt`/`gT` move between tabpages; ⌘1…⌘9 jump straight to the Nth tab.
 - **Settings (T8.3):** ⌘, opens Settings. Changing font/size reflows the grid;
   Option-as-Meta and Command passthrough change key behavior immediately.
 - **Window title (T8.5):** opening a file updates the window title from

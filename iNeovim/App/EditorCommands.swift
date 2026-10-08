@@ -29,6 +29,7 @@ struct EditorCommands: Commands {
             Menu("Go to Tab") {
                 ForEach(1...9, id: \.self) { index in
                     Button("Tab \(index)") { AppModel.shared.goToTab(index) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
                 }
             }
             Divider()
