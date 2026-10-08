@@ -43,7 +43,8 @@ final class ResizeControllerTests: XCTestCase {
         await controller.viewDidResize(to: CGSize(width: 800, height: 600))
         try await Task.sleep(for: .milliseconds(100))
 
-        XCTAssertEqual(await box.calls, [ResizeCall(cols: 80, rows: 30)])
+        let calls = await box.calls
+        XCTAssertEqual(calls, [ResizeCall(cols: 80, rows: 30)])
     }
 
     func testRapidResizesCoalesceToLastSize() async throws {
@@ -57,7 +58,8 @@ final class ResizeControllerTests: XCTestCase {
         await controller.viewDidResize(to: CGSize(width: 1000, height: 700))
         try await Task.sleep(for: .milliseconds(150))
 
-        XCTAssertEqual(await box.calls, [ResizeCall(cols: 100, rows: 35)])
+        let calls = await box.calls
+        XCTAssertEqual(calls, [ResizeCall(cols: 100, rows: 35)])
     }
 
     func testCellSizeIsMutable() async throws {
@@ -70,6 +72,7 @@ final class ResizeControllerTests: XCTestCase {
         await controller.viewDidResize(to: CGSize(width: 100, height: 100))
         try await Task.sleep(for: .milliseconds(100))
 
-        XCTAssertEqual(await box.calls, [ResizeCall(cols: 20, rows: 10)])
+        let calls = await box.calls
+        XCTAssertEqual(calls, [ResizeCall(cols: 20, rows: 10)])
     }
 }
