@@ -80,7 +80,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── CursorAnimator.swift     cursor glide between cells (~80 ms)
 │   ├── ScrollAnimationSettings.swift  shared durations/thresholds knobs
 │   └── DisplayLinkDriver.swift  CVDisplayLink → Swift closure trampoline
-└── Assets.xcassets/      AccentColor colorset only (no app icon yet)
+└── Assets.xcassets/      AccentColor colorset + AppIcon.appiconset (T9.3)
+Scripts/                  One-off tooling (app-icon generator); not part of the build
 iNeovimTests/             XCTest target (synchronized group); codec round-trip,
                           redraw-parsing, settings/model, and sandbox integration tests
 Config/Info.plist         Partial Info.plist merged into the generated one
