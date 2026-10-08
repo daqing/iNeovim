@@ -83,13 +83,7 @@ final class TerminalView: NSView {
     }
 
     func sendKeys(_ keys: String) {
-        Task {
-            do {
-                try await NvimClient().input(keys)
-            } catch {
-                Log.input.error("nvim_input failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        InputDispatcher.shared.send(.keys(keys))
     }
 
     /// View-space rect for a character range of the marked text, anchored at

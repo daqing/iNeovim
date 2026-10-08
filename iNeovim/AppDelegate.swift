@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Log.render.info("UI attached 80x24 (ext_linegrid)")
                 let stream = await client.makeRedrawEventStream()
                 await Screen.shared.startConsuming(stream)
+                await InputDispatcher.shared.startConsuming(with: client)
             } catch {
                 Log.rpc.error("Failed to connect to embedded nvim: \(error.localizedDescription, privacy: .public)")
             }

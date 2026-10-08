@@ -29,28 +29,21 @@ final class MouseHandler {
         guard let view else { return }
         let point = view.convert(event.locationInWindow, from: nil)
         let dimensions = view.gridDimensions
-        let location = Self.cellLocation(
+        let (row, col) = Self.cellLocation(
             for: point,
             cellSize: view.metrics.cellSize,
             gridWidth: dimensions?.width,
             gridHeight: dimensions?.height
         )
         let modifier = Self.modifierString(for: event.modifierFlags)
-        let (row, col) = location
-        Task {
-            do {
-                try await NvimClient().inputMouse(
-                    button: button,
-                    action: action,
-                    modifier: modifier,
-                    grid: 1,
-                    row: row,
-                    col: col
-                )
-            } catch {
-                Log.input.error("nvim_input_mouse failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        InputDispatcher.shared.send(.mouse(
+            button: button,
+            action: action,
+            modifier: modifier,
+            grid: 1,
+            row: row,
+            col: col
+        ))
     }
 
     static func buttonName(for event: NSEvent) -> String? {
