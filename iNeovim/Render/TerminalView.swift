@@ -144,6 +144,9 @@ final class TerminalView: NSView {
         let attributed = NSAttributedString(string: run.text, attributes: [
             .font: font,
             .foregroundColor: colors.foreground,
+            // Standard ligatures on: contiguous same-style text is shaped as
+            // one CTLine above, so fonts like Fira Code ligate across cells.
+            .ligature: 1,
         ])
         let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
 

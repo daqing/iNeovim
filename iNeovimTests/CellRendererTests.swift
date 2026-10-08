@@ -37,4 +37,28 @@ final class CellRendererTests: XCTestCase {
             [StyledRun(text: "a ", attrId: 5, startCol: 0, endCol: 2)]
         )
     }
+
+    func testLigatureSequencesStayInOneShapedRun() {
+        // "==>" shaped as one CTLine lets Core Text form the Fira Code
+        // ligature; splitting the run would break it.
+        let row = ["=", "=", ">"].map { GridCell(text: $0, attrId: 0) }
+        XCTAssertEqual(
+            CellRenderer.runs(forRow: row),
+            [StyledRun(text: "==>", attrId: 0, startCol: 0, endCol: 3)]
+        )
+    }
+
+    func testStyleChangeBreaksLigatureRuns() {
+        let row = [
+            GridCell(text: "=", attrId: 1),
+            GridCell(text: "=", attrId: 2),
+        ]
+        XCTAssertEqual(
+            CellRenderer.runs(forRow: row),
+            [
+                StyledRun(text: "=", attrId: 1, startCol: 0, endCol: 1),
+                StyledRun(text: "=", attrId: 2, startCol: 1, endCol: 2),
+            ]
+        )
+    }
 }
