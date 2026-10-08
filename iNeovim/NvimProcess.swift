@@ -21,8 +21,8 @@ actor NvimProcess {
 
     private var process: Process?
     private var isStarting = false
-    private var stdinPipe: Pipe?
     private var stdoutPipe: Pipe?
+    nonisolated(unsafe) private var stdinWriter: FileHandle?
 
     private init() {
         terminationStream = AsyncStream.makeStream(of: Int32.self)
@@ -50,15 +50,15 @@ actor NvimProcess {
         }
         try process.run()
         self.process = process
-        self.stdinPipe = stdin
+        self.stdinWriter = stdin.fileHandleForWriting
         self.stdoutPipe = stdout
         forwardStandardError(stderr.fileHandleForReading)
         Log.rpc.info("Embedded nvim started (pid \(process.processIdentifier, privacy: .public))")
     }
 
-    func writeToStandardInput(_ data: Data) throws {
-        guard let stdin = stdinPipe else { throw NvimProcessError.notRunning }
-        try stdin.fileHandleForWriting.write(contentsOf: data)
+    nonisolated func writeToStandardInput(_ data: Data) throws {
+        guard let stdinWriter else { throw NvimProcessError.notRunning }
+        try stdinWriter.write(contentsOf: data)
     }
 
     func terminate() {
