@@ -58,5 +58,7 @@ final class IMEHandlerTests: XCTestCase {
         XCTAssertEqual(IMEHandler.selectorKeys[Selector("moveUp:")], "<Up>")
         XCTAssertEqual(IMEHandler.selectorKeys[Selector("cancelOperation:")], "<Esc>")
         XCTAssertEqual(IMEHandler.selectorKeys[Selector("insertBacktab:")], "<S-Tab>")
+        XCTAssertEqual(IMEHandler.selectorKeys[Selector("moveToBeginningOfLine:")], "<Home>")
+        XCTAssertEqual(IMEHandler.selectorKeys[Selector("movePageDown:")], "<PageDown>")
     }
 }

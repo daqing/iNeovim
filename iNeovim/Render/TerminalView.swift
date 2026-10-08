@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import os
 
 /// The terminal surface: a layer-backed view that renders the applied grid
 /// state from `Screen` with Core Text.

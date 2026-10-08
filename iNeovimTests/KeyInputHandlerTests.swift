@@ -136,6 +136,34 @@ final class KeyInputHandlerTests: XCTestCase {
         XCTAssertEqual(handler.nvimKey(for: event), "<M-Left>")
     }
 
+    func testDeadKeyReturnsNilForMarkedTextPath() {
+        // A dead key (e.g. the accent key on US International) arrives with no
+        // characters; the input context turns it into marked text.
+        let event = keyEvent("", ignoringModifiers: "", keyCode: 39)
+        XCTAssertNil(handler.nvimKey(for: event))
+    }
+
+    func testOptionDeadKeyFallsBackToSystemCharacter() {
+        // Option+e on a US layout starts an accent composition; without meta
+        // mode the system character path must handle it.
+        let event = keyEvent("´", ignoringModifiers: "e", keyCode: 14, modifiers: [.option])
+        XCTAssertNil(handler.nvimKey(for: event))
+    }
+
+    func testLayoutMappedCharacterReturnsNilForTextPath() {
+        // Non-US layouts are handled through event.characters: the ANSI "z"
+        // position produces "y" on a German layout and is delivered as text.
+        let event = keyEvent("y", ignoringModifiers: "y", keyCode: 6)
+        XCTAssertNil(handler.nvimKey(for: event))
+    }
+
+    func testControlLayoutCharacterUsesNotatedBase() {
+        // Ctrl on that same German key produces the notated character, since
+        // nvim key notation is by character, not key position.
+        let event = keyEvent("\u{19}", ignoringModifiers: "y", keyCode: 6, modifiers: [.control])
+        XCTAssertEqual(handler.nvimKey(for: event), "<C-y>")
+    }
+
     func testCapsLockIsNotAModifier() {
         let event = keyEvent("\u{1}", ignoringModifiers: "a", keyCode: 0, modifiers: [.control, .capsLock])
         XCTAssertEqual(handler.nvimKey(for: event), "<C-a>")

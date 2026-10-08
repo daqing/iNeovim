@@ -56,6 +56,13 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── TerminalView.swift    layer-backed NSView drawing the grid
 │   ├── CursorBlinker.swift   cursor blink timing (wait/on/off)
 │   └── NSColor+PackedRGB.swift  0xRRGGBB ↔ NSColor helpers
+├── Input/                keyboard/mouse translation layer (Phase 6)
+│   ├── KeyInputHandler.swift  keyDown → nvim key notation, special-key table
+│   ├── InputSettings.swift    passCmdKeysThrough / optionAsMeta switches
+│   ├── IMEHandler.swift       marked text state + NSTextInputClient
+│   ├── MouseHandler.swift     press/drag/release → nvim_input_mouse
+│   ├── InputEvent.swift       the unified input event enum
+│   └── InputDispatcher.swift  single-consumer stream into NvimClient
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
 iNeovimTests/             XCTest target (synchronized group); codec round-trip and
                           redraw-parsing tests

@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Holds IME (marked text) state and implements `NSTextInputClient` on
 /// behalf of TerminalView. Committed text goes to Neovim as literal input;
@@ -51,7 +52,13 @@ final class IMEHandler: NSObject {
     }
 
     func doCommand(by selector: Selector?) {
-        guard let selector, let keys = Self.selectorKeys[selector] else { return }
+        guard let selector else { return }
+        guard let keys = Self.selectorKeys[selector] else {
+            // Unknown selectors (layout-specific keys, editing commands we do
+            // not model) are dropped; visible at debug level when diagnosing.
+            Log.input.debug("Ignoring unhandled input command \(selector)")
+            return
+        }
         view?.sendKeys(keys)
     }
 
