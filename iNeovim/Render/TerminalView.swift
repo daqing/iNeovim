@@ -28,6 +28,7 @@ final class TerminalView: NSView {
             )
         ))
         wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
     }
 
     required init?(coder: NSCoder) {
@@ -39,14 +40,45 @@ final class TerminalView: NSView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        updateContentsScale()
         if snapshot == nil {
             connectScreen()
         }
     }
 
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateContentsScale()
+    }
+
+    private func updateContentsScale() {
+        layer?.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+    }
+
     override func setFrameSize(_ newSize: CGSize) {
         super.setFrameSize(newSize)
         resizeController.viewDidResize(to: newSize)
+    }
+
+    /// Round a rect to backing-pixel boundaries so filled cell rects and
+    /// cursor bars land on whole pixels instead of straddling two.
+    private func snappedToPixels(_ rect: CGRect) -> CGRect {
+        let scale = backingScale
+        guard scale > 0 else { return rect }
+        let minX = (rect.minX * scale).rounded()
+        let maxX = (rect.maxX * scale).rounded()
+        let minY = (rect.minY * scale).rounded()
+        let maxY = (rect.maxY * scale).rounded()
+        return CGRect(
+            x: minX / scale,
+            y: minY / scale,
+            width: (maxX - minX) / scale,
+            height: (maxY - minY) / scale
+        )
+    }
+
+    private var backingScale: CGFloat {
+        window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
     }
 
     /// Pull a fresh snapshot on every nvim flush, then invalidate only the
@@ -68,12 +100,12 @@ final class TerminalView: NSView {
     private func invalidate(cellRect: CellRect) {
         let cellWidth = metrics.cellSize.width
         let cellHeight = metrics.cellSize.height
-        setNeedsDisplay(CGRect(
+        setNeedsDisplay(snappedToPixels(CGRect(
             x: CGFloat(cellRect.minCol) * cellWidth,
             y: CGFloat(cellRect.minRow) * cellHeight,
             width: CGFloat(cellRect.maxCol - cellRect.minCol) * cellWidth,
             height: CGFloat(cellRect.maxRow - cellRect.minRow) * cellHeight
-        ))
+        )))
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -102,7 +134,7 @@ final class TerminalView: NSView {
                 guard runRect.intersects(dirtyRect) else { continue }
                 let colors = resolvedColors(for: run.attrId)
                 (colors.background ?? backgroundColor).setFill()
-                NSBezierPath.fill(runRect)
+                NSBezierPath.fill(snappedToPixels(runRect))
             }
 
             // Text pass, in Core Text coordinates (y up).
@@ -246,7 +278,7 @@ final class TerminalView: NSView {
         switch mode?.cursorShape ?? .block {
         case .block:
             colors.foreground.setFill()
-            NSBezierPath.fill(cellRect.intersection(dirtyRect))
+            NSBezierPath.fill(snappedToPixels(cellRect.intersection(dirtyRect)))
             // Redraw the glyph under the block, swapped to the background color.
             guard let grid = snapshot.grid else { return }
             let cell = grid[snapshot.cursor.row, snapshot.cursor.col]
@@ -278,7 +310,7 @@ final class TerminalView: NSView {
                 height: height
             )
             colors.foreground.setFill()
-            NSBezierPath.fill(bar.intersection(dirtyRect))
+            NSBezierPath.fill(snappedToPixels(bar.intersection(dirtyRect)))
         case .vertical:
             let percentage = CGFloat(mode?.cellPercentage ?? 25)
             let width = max(1, (cellRect.width * percentage / 100).rounded())
@@ -289,7 +321,7 @@ final class TerminalView: NSView {
                 height: cellRect.height
             )
             colors.foreground.setFill()
-            NSBezierPath.fill(bar.intersection(dirtyRect))
+            NSBezierPath.fill(snappedToPixels(bar.intersection(dirtyRect)))
         }
     }
 
