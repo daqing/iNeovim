@@ -11,6 +11,32 @@ actor RPCSession {
     private var notificationHandlers: [String: [@Sendable ([MsgPackValue]) -> Void]] = [:]
     private var isClosed = false
 
+    /// Oldest nvim API level this GUI is written against (Neovim 0.9).
+    static let minimumApiLevel: UInt64 = 12
+
+    private(set) var channel: UInt64?
+
+    /// Exchange `nvim_get_api_info`, recording the channel id and checking the
+    /// API level reported by nvim.
+    func handshake() async throws {
+        let response = try await call("nvim_get_api_info")
+        guard case let .array(info) = response,
+              info.count == 2,
+              case let .uint(channel) = info[0] else {
+            throw RPCError.invalidHandshake(response)
+        }
+        self.channel = channel
+
+        if case let .map(metadata) = info[1],
+           case let .map(version)? = metadata[.string("version")],
+           case let .uint(apiLevel)? = version[.string("api_level")] {
+            guard apiLevel >= Self.minimumApiLevel else {
+                throw RPCError.unsupportedApiLevel(found: apiLevel, required: Self.minimumApiLevel)
+            }
+            Log.rpc.info("nvim channel \(channel, privacy: .public), API level \(apiLevel, privacy: .public)")
+        }
+    }
+
     func addNotificationHandler(for method: String, handler: @escaping @Sendable ([MsgPackValue]) -> Void) {
         notificationHandlers[method, default: []].append(handler)
     }

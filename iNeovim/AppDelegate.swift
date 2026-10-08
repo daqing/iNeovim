@@ -5,9 +5,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.app.info("Application did finish launching")
         Task {
             do {
-                try await NvimProcess.shared.start()
+                try await RPCSession.shared.start()
+                try await RPCSession.shared.handshake()
             } catch {
-                Log.rpc.error("Failed to start embedded nvim: \(error.localizedDescription, privacy: .public)")
+                Log.rpc.error("Failed to connect to embedded nvim: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
