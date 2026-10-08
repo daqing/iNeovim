@@ -12,6 +12,7 @@ final class TerminalView: NSView {
     private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let resizeController: ResizeController
     private let keyHandler = KeyInputHandler()
+    private let mouseHandler = MouseHandler()
     let imeHandler = IMEHandler()
     var inputSettings = InputSettings() {
         didSet {
@@ -38,6 +39,7 @@ final class TerminalView: NSView {
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         imeHandler.view = self
+        mouseHandler.view = self
         imeHandler.onMarkedTextChange = { [weak self] in
             self?.invalidatePreeditRegion()
         }
@@ -127,6 +129,25 @@ final class TerminalView: NSView {
     }
 
     private var lastPreeditRect: CGRect?
+
+    /// Live grid dimensions for input translation (mouse cell coordinates).
+    var gridDimensions: (width: Int, height: Int)? {
+        snapshot?.grid.map { ($0.width, $0.height) }
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseHandler.mouseDown(event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        mouseHandler.mouseDragged(event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        mouseHandler.mouseUp(event)
+    }
 
     private func invalidatePreeditRegion() {
         let rect = preeditRect(forCharacterRange: NSRange(
