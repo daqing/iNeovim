@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Cursor position in grid coordinates.
 struct CursorState: Equatable, Sendable {
@@ -66,7 +67,7 @@ actor Screen {
     /// Called on the screen's executor once per `flush` for every grid that
     /// received events since the previous flush, with the coalesced dirty
     /// region in cell coordinates.
-    var flushHandler: (@Sendable (Int, CellRect) -> Void)?
+    private var flushHandler: (@Sendable (Int, CellRect) -> Void)?
 
     /// The primary (grid 1) content; nil before the first `grid_resize`.
     var primaryGrid: Grid? { grids[1] }
@@ -75,6 +76,10 @@ actor Screen {
     var cursorModeInfo: ModeInfo? {
         guard modes.indices.contains(modeIndex) else { return nil }
         return modes[modeIndex]
+    }
+
+    func setFlushHandler(_ handler: (@Sendable (Int, CellRect) -> Void)?) {
+        flushHandler = handler
     }
 
     func apply(_ event: RedrawEvent) {
@@ -166,7 +171,7 @@ actor Screen {
         consumeTask = Task { [weak self] in
             for await event in events {
                 guard let self else { return }
-                self.apply(event)
+                await self.apply(event)
             }
         }
     }

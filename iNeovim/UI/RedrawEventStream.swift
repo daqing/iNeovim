@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Bridges `redraw` notifications to a typed event stream for the render
 /// layer. Runs off the main actor (fed from the RPC session's notification
@@ -18,10 +19,10 @@ actor RedrawEventStream {
     }
 
     /// Register the `redraw` notification handler on the session; idempotent.
-    func subscribe(to session: RPCSession = .shared) {
+    func subscribe(to session: RPCSession = .shared) async {
         guard !isSubscribed else { return }
         isSubscribed = true
-        session.addNotificationHandler(for: "redraw") { [weak self] params in
+        await session.addNotificationHandler(for: "redraw") { [weak self] params in
             let events = RedrawEvent.parseNotification(params)
             Task { await self?.publish(events) }
         }

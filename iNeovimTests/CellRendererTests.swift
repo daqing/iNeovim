@@ -30,11 +30,24 @@ final class CellRendererTests: XCTestCase {
         )
     }
 
-    func testBlankCellsKeepTheirAttrInTheRun() {
-        let row = [GridCell(text: "a", attrId: 5), GridCell()]
+    func testBlankCellsMergeWithinSameAttr() {
+        let row = [GridCell(text: "a", attrId: 5), GridCell(text: " ", attrId: 5)]
         XCTAssertEqual(
             CellRenderer.runs(forRow: row),
             [StyledRun(text: "a ", attrId: 5, startCol: 0, endCol: 2)]
+        )
+    }
+
+    func testAttrChangeSplitsOffBlankCells() {
+        // A default-highlight blank (attr 0) is a different background and
+        // must not be absorbed into a styled run.
+        let row = [GridCell(text: "a", attrId: 5), GridCell()]
+        XCTAssertEqual(
+            CellRenderer.runs(forRow: row),
+            [
+                StyledRun(text: "a", attrId: 5, startCol: 0, endCol: 1),
+                StyledRun(text: " ", attrId: 0, startCol: 1, endCol: 2),
+            ]
         )
     }
 

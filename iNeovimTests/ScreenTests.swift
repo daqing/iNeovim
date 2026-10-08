@@ -15,7 +15,8 @@ final class ScreenTests: XCTestCase {
         let grid = await screen.primaryGrid
         XCTAssertEqual(grid?.width, 4)
         XCTAssertEqual(grid?.height, 2)
-        XCTAssertEqual(grid?[0, 0], GridCell(text: "h", attrId: 1))
+        // Positive rows scroll content up: row 0 takes row 1's (blank) content.
+        XCTAssertEqual(grid?[0, 0], GridCell())
         XCTAssertEqual(grid?[1, 0], GridCell())
     }
 
@@ -96,7 +97,7 @@ final class ScreenTests: XCTestCase {
     func testFlushReportsCoalescedDirtyRegion() async {
         let screen = Screen()
         var flushed: (grid: Int, rect: CellRect)?
-        await screen.flushHandler = { grid, rect in flushed = (grid, rect) }
+        await screen.setFlushHandler({ grid, rect in flushed = (grid, rect) })
 
         await screen.apply(.gridResize(grid: 1, width: 4, height: 3))
         await screen.apply(.gridLine(grid: 1, row: 1, colStart: 1, runs: [
@@ -112,7 +113,7 @@ final class ScreenTests: XCTestCase {
     func testFlushWithoutNewEventsDoesNotNotify() async {
         let screen = Screen()
         var flushCount = 0
-        await screen.flushHandler = { _, _ in flushCount += 1 }
+        await screen.setFlushHandler({ _, _ in flushCount += 1 })
 
         await screen.apply(.gridResize(grid: 1, width: 2, height: 2))
         await screen.apply(.flush)
@@ -124,7 +125,7 @@ final class ScreenTests: XCTestCase {
     func testDirtyRectsUnionAcrossEvents() async {
         let screen = Screen()
         var flushed: (grid: Int, rect: CellRect)?
-        await screen.flushHandler = { grid, rect in flushed = (grid, rect) }
+        await screen.setFlushHandler({ grid, rect in flushed = (grid, rect) })
 
         await screen.apply(.gridResize(grid: 1, width: 4, height: 4))
         await screen.apply(.flush)
@@ -142,7 +143,7 @@ final class ScreenTests: XCTestCase {
     func testCursorGotoDirtiesOldAndNewCells() async {
         let screen = Screen()
         var flushed: (grid: Int, rect: CellRect)?
-        await screen.flushHandler = { grid, rect in flushed = (grid, rect) }
+        await screen.setFlushHandler({ grid, rect in flushed = (grid, rect) })
 
         await screen.apply(.gridResize(grid: 1, width: 8, height: 8))
         await screen.apply(.flush)

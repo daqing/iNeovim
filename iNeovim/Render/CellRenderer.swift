@@ -24,7 +24,7 @@ enum CellRenderer {
         var runs: [StyledRun] = []
         var continuationCellsRemaining = 0
         for (index, cell) in row.enumerated() {
-            if continuationCellsRemaining > 0, !runs.isEmpty {
+            if cell.text.isEmpty, continuationCellsRemaining > 0, !runs.isEmpty {
                 continuationCellsRemaining -= 1
                 runs[runs.count - 1].endCol = index + 1
                 continue

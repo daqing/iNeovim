@@ -38,8 +38,8 @@ final class TerminalView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
         updateContentsScale()
         if snapshot == nil {
             connectScreen()
@@ -59,12 +59,12 @@ final class TerminalView: NSView {
     }
 
     private func updateContentsScale() {
-        layer?.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        layer?.contentsScale = backingScale
     }
 
     override func setFrameSize(_ newSize: CGSize) {
         super.setFrameSize(newSize)
-        resizeController.viewDidResize(to: newSize)
+        Task { await resizeController.viewDidResize(to: newSize) }
     }
 
     /// Round a rect to backing-pixel boundaries so filled cell rects and
@@ -91,8 +91,9 @@ final class TerminalView: NSView {
     /// Pull a fresh snapshot on every nvim flush, then invalidate only the
     /// cells the flush dirtied.
     private func connectScreen() {
-        Task {
-            await Screen.shared.flushHandler = { [weak self] grid, cellRect in
+        Task { [weak self] in
+            guard let self else { return }
+            await Screen.shared.setFlushHandler { [weak self] grid, cellRect in
                 guard let self, grid == 1 else { return }
                 Task { @MainActor in
                     let snapshot = await Screen.shared.snapshot()
@@ -120,7 +121,6 @@ final class TerminalView: NSView {
         NSBezierPath.fill(dirtyRect)
 
         guard let snapshot, let grid = snapshot.grid, !grid.isEmpty else { return }
-        let cellWidth = metrics.cellSize.width
         let cellHeight = metrics.cellSize.height
         let context = NSGraphicsContext.current!.cgContext
 
@@ -349,9 +349,9 @@ final class TerminalView: NSView {
             cursorKey = nil
             return
         }
-        let key = (next.cursor.row, next.cursor.col, next.modeIndex)
-        guard key != cursorKey || !blinker.isActive else { return }
-        cursorKey = key
+        let key = (row: next.cursor.row, col: next.cursor.col, modeIndex: next.modeIndex)
+        if let cursorKey, cursorKey == key, blinker.isActive { return }
+        self.cursorKey = key
         blinker.restart(wait: mode.blinkWait ?? 0, on: blinkOn, off: blinkOff) { [weak self] visible in
             guard let self else { return }
             self.cursorVisible = visible
@@ -388,9 +388,9 @@ private struct FontVariants {
     init(_ font: NSFont) {
         let manager = NSFontManager.shared
         regular = font
-        bold = manager.convert(font, toHaveSymbolicTraits: .bold) ?? font
-        italic = manager.convert(font, toHaveSymbolicTraits: .italic) ?? font
-        boldItalic = manager.convert(font, toHaveSymbolicTraits: [.bold, .italic]) ?? bold
+        bold = manager.convert(font, toHaveTrait: .boldFontMask) ?? font
+        italic = manager.convert(font, toHaveTrait: .italicFontMask) ?? font
+        boldItalic = manager.convert(font, toHaveTrait: [.boldFontMask, .italicFontMask]) ?? bold
     }
 
     func font(for attr: HlAttr) -> NSFont {
