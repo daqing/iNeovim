@@ -112,8 +112,8 @@ final class ScreenTests: XCTestCase {
 
     func testFlushReportsCoalescedDirtyRegion() async {
         let screen = Screen()
-        var flushed: (grid: Int, rect: CellRect)?
-        await screen.setFlushHandler({ grid, rect in flushed = (grid, rect) })
+        var flushed: (grid: Int, rects: [CellRect])?
+        await screen.setFlushHandler({ grid, rects in flushed = (grid, rects) })
 
         await screen.apply(.gridResize(grid: 1, width: 4, height: 3))
         await screen.apply(.gridLine(grid: 1, row: 1, colStart: 1, runs: [
@@ -123,7 +123,7 @@ final class ScreenTests: XCTestCase {
 
         // The resize dirtied the whole grid, so the line's dirt is subsumed.
         XCTAssertEqual(flushed?.grid, 1)
-        XCTAssertEqual(flushed?.rect, CellRect(minRow: 0, minCol: 0, maxRow: 3, maxCol: 4))
+        XCTAssertEqual(flushed?.rects, [CellRect(minRow: 0, minCol: 0, maxRow: 3, maxCol: 4)])
     }
 
     func testFlushWithoutNewEventsDoesNotNotify() async {
@@ -138,10 +138,10 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(flushCount, 1)
     }
 
-    func testDirtyRectsUnionAcrossEvents() async {
+    func testDirtyRectsStaySeparateAcrossDistantEvents() async {
         let screen = Screen()
-        var flushed: (grid: Int, rect: CellRect)?
-        await screen.setFlushHandler({ grid, rect in flushed = (grid, rect) })
+        var flushed: (grid: Int, rects: [CellRect])?
+        await screen.setFlushHandler({ grid, rects in flushed = (grid, rects) })
 
         await screen.apply(.gridResize(grid: 1, width: 4, height: 4))
         await screen.apply(.flush)
@@ -153,20 +153,28 @@ final class ScreenTests: XCTestCase {
         ]))
         await screen.apply(.flush)
 
-        XCTAssertEqual(flushed?.rect, CellRect(minRow: 0, minCol: 0, maxRow: 3, maxCol: 3))
+        // Two non-touching edits must not be merged into one bounding box that
+        // would span the whole screen.
+        XCTAssertEqual(flushed?.rects, [
+            CellRect(minRow: 0, minCol: 0, maxRow: 1, maxCol: 1),
+            CellRect(minRow: 2, minCol: 1, maxRow: 3, maxCol: 3),
+        ])
     }
 
     func testCursorGotoDirtiesOldAndNewCells() async {
         let screen = Screen()
-        var flushed: (grid: Int, rect: CellRect)?
-        await screen.setFlushHandler({ grid, rect in flushed = (grid, rect) })
+        var flushed: (grid: Int, rects: [CellRect])?
+        await screen.setFlushHandler({ grid, rects in flushed = (grid, rects) })
 
         await screen.apply(.gridResize(grid: 1, width: 8, height: 8))
         await screen.apply(.flush)
         await screen.apply(.cursorGoto(grid: 1, row: 2, col: 3))
         await screen.apply(.flush)
 
-        XCTAssertEqual(flushed?.rect, CellRect(minRow: 0, minCol: 0, maxRow: 3, maxCol: 4))
+        XCTAssertEqual(flushed?.rects, [
+            CellRect(minRow: 0, minCol: 0, maxRow: 1, maxCol: 1),
+            CellRect(minRow: 2, minCol: 3, maxRow: 3, maxCol: 4),
+        ])
     }
 
     func testFlushReportsNetScrollDelta() async {

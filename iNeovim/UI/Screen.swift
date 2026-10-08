@@ -63,12 +63,13 @@ actor Screen {
     private(set) var modeIndex = 0
     private(set) var title: String?
     private var consumeTask: Task<Void, Never>?
-    private var dirtyRects: [Int: CellRect] = [:]
+    private var dirtyRects: [Int: [CellRect]] = [:]
 
     /// Called on the screen's executor once per `flush` for every grid that
-    /// received events since the previous flush, with the coalesced dirty
-    /// region in cell coordinates.
-    private var flushHandler: (@Sendable (Int, CellRect) -> Void)?
+    /// received events since the previous flush, with the dirty regions in
+    /// cell coordinates. A list (not one bounding box) so that two edits at
+    /// opposite corners don't force the renderer to repaint everything between.
+    private var flushHandler: (@Sendable (Int, [CellRect]) -> Void)?
 
     /// Called on the screen's executor once per `flush` for every grid that
     /// scrolled since the previous flush, with the net scroll amounts
@@ -86,7 +87,7 @@ actor Screen {
         return modes[modeIndex]
     }
 
-    func setFlushHandler(_ handler: (@Sendable (Int, CellRect) -> Void)?) {
+    func setFlushHandler(_ handler: (@Sendable (Int, [CellRect]) -> Void)?) {
         flushHandler = handler
     }
 
@@ -153,8 +154,8 @@ actor Screen {
             self.title = title
             titleHandler?(title)
         case .flush:
-            for (grid, rect) in dirtyRects {
-                flushHandler?(grid, rect)
+            for (grid, rects) in dirtyRects {
+                flushHandler?(grid, rects)
             }
             dirtyRects = [:]
             for (grid, delta) in scrollDeltas {
@@ -166,8 +167,34 @@ actor Screen {
         }
     }
 
+    /// Add a dirty region, merging it into any existing region it touches or
+    /// overlaps so the list stays small while distinct regions stay separate.
     private func markDirty(_ grid: Int, _ rect: CellRect) {
-        dirtyRects[grid] = dirtyRects[grid]?.union(rect) ?? rect
+        var list = dirtyRects[grid] ?? []
+        var merged = rect
+        var didMerge = true
+        while didMerge {
+            didMerge = false
+            var rest: [CellRect] = []
+            rest.reserveCapacity(list.count)
+            for existing in list {
+                if Self.touches(merged, existing) {
+                    merged = merged.union(existing)
+                    didMerge = true
+                } else {
+                    rest.append(existing)
+                }
+            }
+            list = rest
+        }
+        list.append(merged)
+        dirtyRects[grid] = list
+    }
+
+    /// Two cell rects merge when they overlap or share an edge.
+    private static func touches(_ a: CellRect, _ b: CellRect) -> Bool {
+        a.minRow <= b.maxRow && b.minRow <= a.maxRow
+            && a.minCol <= b.maxCol && b.minCol <= a.maxCol
     }
 
     private func markGridDirty(_ grid: Int) {

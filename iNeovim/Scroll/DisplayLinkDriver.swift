@@ -59,6 +59,12 @@ private func outputCallback(
     guard let context else { return kCVReturnError }
     let driver = Unmanaged<DisplayLinkDriver>.fromOpaque(context).takeUnretainedValue()
     let timestamp = TimeInterval(now.pointee.videoTime) / TimeInterval(now.pointee.videoTimeScale)
-    driver.handleTick(timestamp: timestamp)
+    // CVDisplayLink fires on its own high-priority thread; the handler mutates
+    // CALayer properties (cursor glide offset, scroll transform) and calls
+    // setNeedsDisplay, which are main-thread-only. Feed the frame on the main
+    // thread so those mutations don't race the render pass.
+    DispatchQueue.main.async {
+        driver.handleTick(timestamp: timestamp)
+    }
     return kCVReturnSuccess
 }

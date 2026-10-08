@@ -18,13 +18,16 @@ final class CursorAnimator {
     private var glide: (from: CGSize, start: TimeInterval?)?
 
     /// The logical cursor cell changed: glide from its previous rect to the
-    /// new one so the cursor appears to slide between cells.
+    /// new one so the cursor appears to slide between cells. Single-cell moves
+    /// (typing, `h`/`l`/`j`/`k`) snap instead — animating them makes every
+    /// keystroke wobble the cursor for no benefit.
     func glide(from oldRect: CGRect, to newRect: CGRect, distanceInCells: CGFloat) {
         let initial = CGSize(
             width: oldRect.minX - newRect.minX,
             height: oldRect.minY - newRect.minY
         )
         guard settings.cursorEnabled,
+              distanceInCells > 1,
               distanceInCells <= settings.cursorGlideMaxCells,
               initial != .zero else {
             snap()

@@ -22,6 +22,12 @@ final class GridContentLayer: CALayer {
     var cursorGlideOffset: CGSize = .zero {
         didSet { invalidateCursor() }
     }
+    /// Layer-space rect the cursor was last drawn at, so a glide can invalidate
+    /// the position it is leaving in addition to the one it is moving to.
+    private var lastDrawnCursorRect: CGRect?
+    /// Cell regions pending redraw for the next `draw(in:)`, so a flush that
+    /// touched two far-apart cells doesn't make us shape every row between.
+    private var pendingCellRects: [CellRect] = []
 
     init(metrics: FontMetrics) {
         self.metrics = metrics
@@ -85,15 +91,25 @@ final class GridContentLayer: CALayer {
         setNeedsDisplay()
     }
 
-    /// Mark a cell-coordinate region dirty.
-    func invalidate(cellRect: CellRect) {
-        setNeedsDisplay(snappedToPixels(pixelRect(for: cellRect)))
+    /// Mark one or more cell-coordinate regions dirty.
+    func invalidate(cellRects: [CellRect]) {
+        guard !cellRects.isEmpty else { return }
+        pendingCellRects.append(contentsOf: cellRects)
+        for rect in cellRects {
+            setNeedsDisplay(snappedToPixels(pixelRect(for: rect)))
+        }
     }
 
     func invalidateCursor() {
         guard let rect = cursorCellRect() else { return }
         let offsetRect = rect.offsetBy(dx: cursorGlideOffset.width, dy: cursorGlideOffset.height)
-        setNeedsDisplay(snappedToPixels(rect.union(offsetRect)))
+        // Include the rect the cursor was last drawn at: while gliding, the
+        // offset shrinks each frame, so the union of the cell and the current
+        // offset would shrink too and leave the earlier, farther-out block
+        // pixels unpainted (smearing the block across cells).
+        var dirty = rect.union(offsetRect)
+        if let lastDrawnCursorRect { dirty = dirty.union(lastDrawnCursorRect) }
+        setNeedsDisplay(snappedToPixels(dirty))
     }
 
     /// Layer-space rect of the cursor cell (including any glide offset);
@@ -109,12 +125,26 @@ final class GridContentLayer: CALayer {
         defer { Signpost.render.endInterval("gridDraw", signpost) }
         guard let snapshot, let grid = snapshot.grid, !grid.isEmpty else { return }
         let cellHeight = metrics.cellSize.height
-        let dirtyRect = context.boundingBoxOfClipPath.intersection(bounds)
-        guard !dirtyRect.isEmpty else { return }
+        let clip = context.boundingBoxOfClipPath.intersection(bounds)
+        guard !clip.isEmpty else { return }
 
-        let firstRow = max(0, Int(floor(dirtyRect.minY / cellHeight)))
-        let lastRow = min(grid.height - 1, Int(floor(dirtyRect.maxY / cellHeight)))
+        // The regions to repaint: the flushed cells if this cycle came from a
+        // flush, otherwise the clip (a cursor blink or preedit change). Using
+        // the individual regions — not their bounding box — keeps a flush that
+        // touched two far-apart cells from shaping every row in between.
+        var dirtyRects = pendingCellRects.compactMap { rect -> CGRect? in
+            let pixelRect = snappedToPixels(pixelRect(for: rect)).intersection(bounds)
+            return pixelRect.isEmpty ? nil : pixelRect
+        }
+        pendingCellRects.removeAll(keepingCapacity: true)
+        if dirtyRects.isEmpty { dirtyRects = [clip] }
+
+        let minY = dirtyRects.map(\.minY).min() ?? 0
+        let maxY = dirtyRects.map(\.maxY).max() ?? 0
+        let firstRow = max(0, Int(floor(minY / cellHeight)))
+        let lastRow = min(grid.height - 1, Int(floor(maxY / cellHeight)))
         guard firstRow <= lastRow else { return }
+        let dirtyBounds = CGRect(x: clip.minX, y: minY, width: clip.width, height: maxY - minY)
 
         // Resolve each highlight id once per frame instead of once per run.
         var colorCache: [Int: ResolvedColors] = [:]
@@ -126,7 +156,7 @@ final class GridContentLayer: CALayer {
             // default-background fill show through.
             for run in runs {
                 let runRect = rect(for: run, row: row)
-                guard runRect.intersects(dirtyRect) else { continue }
+                guard dirtyRects.contains(where: { $0.intersects(runRect) }) else { continue }
                 guard let background = color(for: run.attrId, cache: &colorCache).background else { continue }
                 context.setFillColor(background.cgColor)
                 context.fill(snappedToPixels(runRect))
@@ -137,7 +167,7 @@ final class GridContentLayer: CALayer {
             context.translateBy(x: 0, y: bounds.height)
             context.scaleBy(x: 1, y: -1)
             for run in runs where !run.text.isEmpty {
-                guard rect(for: run, row: row).intersects(dirtyRect) else { continue }
+                guard dirtyRects.contains(where: { $0.intersects(rect(for: run, row: row)) }) else { continue }
                 drawText(
                     run: run,
                     row: row,
@@ -148,8 +178,8 @@ final class GridContentLayer: CALayer {
             context.restoreGState()
         }
 
-        drawCursor(dirtyRect, context: context)
-        drawPreedit(dirtyRect, context: context)
+        drawCursor(dirtyBounds, context: context)
+        drawPreedit(dirtyBounds, context: context)
     }
 
     private func pixelRect(for cellRect: CellRect) -> CGRect {
@@ -316,6 +346,7 @@ final class GridContentLayer: CALayer {
               let cellRect = cursorCellRect()?
                   .offsetBy(dx: cursorGlideOffset.width, dy: cursorGlideOffset.height)
         else { return }
+        lastDrawnCursorRect = cellRect
         let mode = snapshot.cursorModeInfo
         let colors = resolvedColors(for: cursorCellAttrId(snapshot))
 

@@ -352,7 +352,7 @@ final class TerminalView: NSView {
     private func connectScreen() {
         Task { [weak self] in
             guard let self else { return }
-            await Screen.shared.setFlushHandler { [weak self] grid, cellRect in
+            await Screen.shared.setFlushHandler { [weak self] grid, cellRects in
                 guard let self, grid == 1 else { return }
                 Task { @MainActor in
                     let snapshot = await Screen.shared.snapshot()
@@ -361,7 +361,7 @@ final class TerminalView: NSView {
                     self.updateCursorGlide(previous: previous, next: snapshot)
                     self.snapshot = snapshot
                     self.contentLayer.update(snapshot: snapshot)
-                    self.contentLayer.invalidate(cellRect: cellRect)
+                    self.contentLayer.invalidate(cellRects: cellRects)
                     self.refreshBackgroundColor()
                     self.reconcileGridSize(with: snapshot)
                 }
