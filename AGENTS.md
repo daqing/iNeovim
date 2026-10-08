@@ -69,6 +69,7 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── ScrollController.swift   scrollWheel events → offsets + wheel requests
 │   ├── ScrollAnimator.swift     display-link offset chase (settle/glide)
 │   ├── CursorAnimator.swift     cursor glide between cells (~80 ms)
+│   ├── ScrollAnimationSettings.swift  shared durations/thresholds knobs
 │   └── DisplayLinkDriver.swift  CVDisplayLink → Swift closure trampoline
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
 iNeovimTests/             XCTest target (synchronized group); codec round-trip and
@@ -129,6 +130,10 @@ mechanism for interactive visual verification.
 - **Scroll lead cap (T7.4):** the visual lead is clamped at one screen (or the
   grid content height when smaller). Deltas beyond the cap are dropped rather
   than deferred, which also throttles wheel requests to a stalled Neovim.
+- **Animation pacing (T7.6):** all easing is time-based (elapsed/duration,
+  sampled from `CVDisplayLink` frame timestamps), so animation speed is
+  identical at 60 Hz and 120 Hz ProMotion; ProMotion just samples the curve
+  more often. Tuning lives in `ScrollAnimationSettings`.
 
 ## Security considerations
 

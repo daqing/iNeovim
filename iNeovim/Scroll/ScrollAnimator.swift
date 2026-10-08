@@ -14,11 +14,10 @@ final class ScrollAnimator {
     private var target: CGFloat = 0
     private var lastTimestamp: TimeInterval?
 
+    var settings = ScrollAnimationSettings.default
+
     /// The offset currently applied to the content layer.
     private(set) var presentationOffset: CGFloat = 0
-
-    /// Chase time constant; ~3 time constants (≈100 ms) to settle.
-    var timeConstant: TimeInterval = 0.033
 
     var onUpdate: ((CGFloat) -> Void)?
 
@@ -43,7 +42,7 @@ final class ScrollAnimator {
     private func tick(timestamp: TimeInterval) {
         let dt = lastTimestamp.map { max(0, timestamp - $0) } ?? (1.0 / 60.0)
         lastTimestamp = timestamp
-        let step = 1 - exp(-dt / timeConstant)
+        let step = 1 - exp(-dt / settings.scrollTimeConstant)
         presentation += (target - presentation) * step
         if abs(target - presentation) < 0.25 {
             presentation = target

@@ -8,11 +8,8 @@ import AppKit
 /// carry no phase, so an idle timer synthesizes the "ended" transition and
 /// the momentum-like glide is the animator's decay.
 final class ScrollController {
-    /// How long after a gesture ends its unconfirmed lead may still be
-    /// claimed by in-flight `grid_scroll` events before snapping back.
-    static let confirmationGrace: Duration = .milliseconds(250)
-
     weak var view: TerminalView?
+    var settings = ScrollAnimationSettings.default
     private var accumulator = ScrollAccumulator()
     private var wheelEndTask: Task<Void, Never>?
     private var settleTask: Task<Void, Never>?
@@ -140,7 +137,7 @@ final class ScrollController {
         // whatever is left afterwards snaps back.
         settleTask?.cancel()
         settleTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.confirmationGrace)
+            try? await Task.sleep(for: self?.settings.confirmationGrace ?? .milliseconds(250))
             guard let self, !Task.isCancelled else { return }
             self.acceptConfirmations = false
             self.accumulator.collapse()

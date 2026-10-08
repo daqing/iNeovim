@@ -10,9 +10,7 @@ final class CursorAnimator {
     /// The offset added to the logical cursor cell rect while gliding.
     private(set) var offset: CGSize = .zero
 
-    var duration: TimeInterval = 0.08
-    /// Cursor jumps larger than this (in cells) snap instead of gliding.
-    var maxGlideCells: CGFloat = 4
+    var settings = ScrollAnimationSettings.default
 
     var onUpdate: (() -> Void)?
 
@@ -25,7 +23,7 @@ final class CursorAnimator {
             width: oldRect.minX - newRect.minX,
             height: oldRect.minY - newRect.minY
         )
-        guard distanceInCells <= maxGlideCells, initial != .zero else {
+        guard distanceInCells <= settings.cursorGlideMaxCells, initial != .zero else {
             snap()
             return
         }
@@ -59,7 +57,7 @@ final class CursorAnimator {
         }
         if animation.start == nil { animation.start = timestamp }
         guard let start = animation.start else { return }
-        let progress = min(1, max(0, (timestamp - start) / duration))
+        let progress = min(1, max(0, (timestamp - start) / settings.cursorGlideDuration))
         setOffset(Self.interpolatedOffset(
             from: animation.from,
             progress: Self.easeOutCubic(progress)
