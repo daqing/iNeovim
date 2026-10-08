@@ -499,6 +499,18 @@ final class TerminalView: NSView {
         backgroundColor.setFill()
         NSBezierPath.fill(snappedToPixels(rect))
 
+        // The selection bar uses view coordinates, so it must be filled
+        // before the Core Text coordinate flip below.
+        let selectionCells = Self.cellOffset(of: imeHandler.markedText, upToUTF16: imeHandler.markedSelection.location)
+        let bar = snappedToPixels(CGRect(
+            x: anchor.minX + CGFloat(selectionCells) * metrics.cellSize.width,
+            y: anchor.minY,
+            width: 2,
+            height: anchor.height
+        ))
+        fallbackForeground.setFill()
+        context.fill(bar)
+
         context.saveGState()
         context.clip(to: CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height))
         context.translateBy(x: 0, y: bounds.height)
@@ -521,16 +533,6 @@ final class TerminalView: NSView {
             CGPoint(x: rect.minX, y: underlineY),
             CGPoint(x: rect.maxX, y: underlineY),
         ])
-
-        let selectionCells = Self.cellOffset(of: imeHandler.markedText, upToUTF16: imeHandler.markedSelection.location)
-        let bar = snappedToPixels(CGRect(
-            x: anchor.minX + CGFloat(selectionCells) * metrics.cellSize.width,
-            y: anchor.minY,
-            width: 2,
-            height: anchor.height
-        ))
-        fallbackForeground.setFill()
-        context.fill(bar)
 
         context.restoreGState()
     }
