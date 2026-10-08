@@ -15,7 +15,7 @@ actor ResizeController {
 
     init(
         cellSize: CGSize,
-        debounceDelay: Duration = Self.defaultDebounceDelay,
+        debounceDelay: Duration = ResizeController.defaultDebounceDelay,
         client: NvimClient = NvimClient()
     ) {
         self.cellSize = cellSize
@@ -27,7 +27,7 @@ actor ResizeController {
 
     init(
         cellSize: CGSize,
-        debounceDelay: Duration = Self.defaultDebounceDelay,
+        debounceDelay: Duration = ResizeController.defaultDebounceDelay,
         handler: @escaping ResizeHandler
     ) {
         self.cellSize = cellSize
