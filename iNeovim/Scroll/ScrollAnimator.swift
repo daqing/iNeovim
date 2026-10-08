@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Drives the content layer's scroll offset. While a gesture is active the
 /// offset is applied directly (1:1 with the trackpad); afterwards the
@@ -40,6 +41,8 @@ final class ScrollAnimator {
     }
 
     private func tick(timestamp: TimeInterval) {
+        let signpost = Signpost.scroll.beginInterval("chase")
+        defer { Signpost.scroll.endInterval("chase", signpost) }
         let dt = lastTimestamp.map { max(0, timestamp - $0) } ?? (1.0 / 60.0)
         lastTimestamp = timestamp
         let step = 1 - exp(-dt / settings.scrollTimeConstant)

@@ -27,6 +27,12 @@ struct Grid: Equatable, Sendable {
         cells[row * width + col]
     }
 
+    /// A zero-copy view of one row, used by the renderer's run grouping.
+    func rowSlice(_ row: Int) -> ArraySlice<GridCell> {
+        let start = row * width
+        return cells[start..<(start + width)]
+    }
+
     /// Resize, preserving the overlapping top-left region; new cells are blank.
     mutating func resize(width: Int, height: Int) {
         let width = max(0, width)

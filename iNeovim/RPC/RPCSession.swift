@@ -101,6 +101,8 @@ actor RPCSession {
     }
 
     func feed(_ data: Data) {
+        let signpost = Signpost.rpc.beginInterval("decode")
+        defer { Signpost.rpc.endInterval("decode", signpost) }
         decoder.feed(data)
         do {
             while let value = try decoder.nextValue() {
