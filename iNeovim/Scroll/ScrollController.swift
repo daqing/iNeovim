@@ -32,6 +32,7 @@ final class ScrollController {
         let lineHeight = view.metrics.cellSize.height
         let rawDelta = event.scrollingDeltaY
         guard rawDelta != 0, rawDelta.isFinite else { return }
+        updateLeadCap()
         lastPointerLocation = view.convert(event.locationInWindow, from: nil)
         lastModifierFlags = event.modifierFlags
 
@@ -64,6 +65,17 @@ final class ScrollController {
         guard acceptConfirmations, let view else { return }
         accumulator.confirmScroll(rows: rows, lineHeight: view.metrics.cellSize.height)
         onOffsetChange?(accumulator.offset, true)
+    }
+
+    /// Cap the visual lead at one screen (or the grid content height when it
+    /// is smaller) so fast scrolling never reveals blank space.
+    private func updateLeadCap() {
+        guard let view else { return }
+        let viewHeight = view.bounds.height
+        let contentHeight = view.gridDimensions.map {
+            CGFloat($0.height) * view.metrics.cellSize.height
+        } ?? viewHeight
+        accumulator.maxLead = max(1, min(viewHeight, contentHeight))
     }
 
     private func beginGesture() {

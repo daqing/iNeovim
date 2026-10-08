@@ -86,4 +86,13 @@ final class ScrollAccumulatorTests: XCTestCase {
         _ = accumulator.addDelta(-100, lineHeight: line)
         XCTAssertEqual(accumulator.offset, -40)
     }
+
+    func testCappedLeadStillSettlesFully() {
+        var accumulator = ScrollAccumulator(maxLead: 40)
+        // Fast scroll: the cap drops everything beyond four lines, so only
+        // those four are requested and four confirmations settle it.
+        _ = accumulator.addDelta(100, lineHeight: line)
+        accumulator.confirmScroll(rows: -4, lineHeight: line)
+        XCTAssertTrue(accumulator.isSettled)
+    }
 }

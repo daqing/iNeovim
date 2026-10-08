@@ -125,6 +125,9 @@ mechanism for interactive visual verification.
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.
   Horizontal wheel input is not sent yet (`wheelleft`/`wheelright` require
   nvim 0.10; the minimum is 0.9) — horizontal deltas are ignored for now.
+- **Scroll lead cap (T7.4):** the visual lead is clamped at one screen (or the
+  grid content height when smaller). Deltas beyond the cap are dropped rather
+  than deferred, which also throttles wheel requests to a stalled Neovim.
 
 ## Security considerations
 
