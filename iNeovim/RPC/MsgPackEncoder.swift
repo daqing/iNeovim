@@ -109,7 +109,7 @@ enum MsgPackEncoder {
     /// preserves the int/uint distinction, which the wire otherwise lacks.
     private static func writeInt(_ value: Int64, to data: inout Data) {
         switch value {
-        case -32...-1:
+        case -32 ... -1:
             data.append(UInt8(bitPattern: Int8(value)))
         case -128...127:
             data.append(0xd0)
