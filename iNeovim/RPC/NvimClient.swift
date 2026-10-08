@@ -39,6 +39,12 @@ struct NvimClient {
         ])
     }
 
+    /// Evaluate a VimL expression and return its string value.
+    func evaluate(_ expression: String) async throws -> String {
+        let value = try await session.call("nvim_eval", params: [.string(expression)])
+        return value.stringValue ?? ""
+    }
+
     /// Read a register's contents as text (used for the system clipboard).
     func registerContents(_ name: String) async throws -> String {
         let value = try await session.call("nvim_call_function", params: [
