@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import os
 
 /// The terminal surface: a layer-backed view that renders the applied grid
 /// state from `Screen` with Core Text.
@@ -11,6 +12,15 @@ final class TerminalView: NSView {
     private var blinker = CursorBlinker()
     private var cursorKey: (row: Int, col: Int, modeIndex: Int)?
     private let resizeController: ResizeController
+    private var keyHandler = KeyInputHandler()
+    private let mouseHandler = MouseHandler()
+    let imeHandler = IMEHandler()
+    var inputSettings = InputSettings() {
+        didSet {
+            keyHandler.passCmdKeys = inputSettings.passCmdKeysThrough
+            keyHandler.optionAsMeta = inputSettings.optionAsMeta
+        }
+    }
 
     init(
         metrics: FontMetrics = FontMetrics(
@@ -29,6 +39,11 @@ final class TerminalView: NSView {
         ))
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        imeHandler.view = self
+        mouseHandler.view = self
+        imeHandler.onMarkedTextChange = { [weak self] in
+            self?.invalidatePreeditRegion()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -37,6 +52,109 @@ final class TerminalView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if imeHandler.hasMarkedText {
+            // Composition in progress: let the input context route the event
+            // to setMarkedText/insertText/doCommand.
+            interpretKeyEvents([event])
+            return
+        }
+        if let key = keyHandler.nvimKey(for: event) {
+            sendKeys(key)
+        } else {
+            // Printable text and dead keys go through the input context so
+            // IME composition produces marked text (see IMEHandler).
+            interpretKeyEvents([event])
+        }
+    }
+
+    /// The view's key-equivalent hook runs before the main menu's during
+    /// responder-chain dispatch, so when Command passthrough is enabled we
+    /// must offer app shortcuts the event first.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown, event.modifierFlags.contains(.command) else { return false }
+        guard inputSettings.passCmdKeysThrough else { return false }
+        if let mainMenu = NSApp.mainMenu, mainMenu.performKeyEquivalent(with: event) {
+            return true
+        }
+        guard let key = keyHandler.nvimKey(for: event) else { return false }
+        sendKeys(key)
+        return true
+    }
+
+    func sendKeys(_ keys: String) {
+        InputDispatcher.shared.send(.keys(keys))
+    }
+
+    /// View-space rect for a character range of the marked text, anchored at
+    /// the cursor cell and wide as the covered cells. IME candidate windows
+    /// anchor to this (see `firstRect(forCharacterRange:)`).
+    func preeditRect(forCharacterRange range: NSRange) -> CGRect {
+        guard imeHandler.hasMarkedText, let snapshot, let anchor = cursorCellRect(snapshot) else { return .zero }
+        let cellWidth = metrics.cellSize.width
+        let start = Self.cellOffset(of: imeHandler.markedText, upToUTF16: range.location)
+        let end = Self.cellOffset(of: imeHandler.markedText, upToUTF16: range.location + range.length)
+        return CGRect(
+            x: anchor.minX + CGFloat(start) * cellWidth,
+            y: anchor.minY,
+            width: CGFloat(max(end - start, 1)) * cellWidth,
+            height: anchor.height
+        )
+    }
+
+    /// Display width in cells for preedit text: wide characters take two,
+    /// everything else one. Kept on the view (not CellRenderer) because
+    /// preedit strings are plain text, not grid cells.
+    static func cellCount(of text: String) -> Int {
+        text.reduce(0) { $0 + (CellRenderer.isDoubleWidth(String($1)) ? 2 : 1) }
+    }
+
+    /// Cells covered by the text strictly before the utf16 offset.
+    static func cellOffset(of text: String, upToUTF16 target: Int) -> Int {
+        var consumed = 0
+        var cells = 0
+        for character in text {
+            let length = String(character).utf16.count
+            if consumed + length > target { break }
+            consumed += length
+            cells += CellRenderer.isDoubleWidth(String(character)) ? 2 : 1
+        }
+        return cells
+    }
+
+    private var lastPreeditRect: CGRect?
+
+    /// Live grid dimensions for input translation (mouse cell coordinates).
+    var gridDimensions: (width: Int, height: Int)? {
+        snapshot?.grid.map { ($0.width, $0.height) }
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseHandler.mouseDown(event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        mouseHandler.mouseDragged(event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        mouseHandler.mouseUp(event)
+    }
+
+    private func invalidatePreeditRegion() {
+        let rect = preeditRect(forCharacterRange: NSRange(
+            location: 0,
+            length: imeHandler.markedText.utf16.count
+        ))
+        var dirty = rect
+        if let lastPreeditRect { dirty = dirty.union(lastPreeditRect) }
+        lastPreeditRect = imeHandler.hasMarkedText ? rect : nil
+        guard !dirty.isEmpty else { return }
+        setNeedsDisplay(dirty)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -156,6 +274,7 @@ final class TerminalView: NSView {
         }
 
         drawCursor(dirtyRect, context: context)
+        drawPreedit(dirtyRect, context: context)
     }
 
     private func runRect(_ run: StyledRun, row: Int) -> CGRect {
@@ -362,6 +481,60 @@ final class TerminalView: NSView {
     private func invalidateCursorCell() {
         guard let snapshot, let cellRect = cursorCellRect(snapshot) else { return }
         setNeedsDisplay(cellRect)
+    }
+
+    // MARK: - Preedit (marked text)
+
+    /// Draws the IME composition at the cursor: the underlying cells are
+    /// cleared, the preedit string is drawn with an accent underline, and a
+    /// bar marks the selection position inside it.
+    private func drawPreedit(_ dirtyRect: NSRect, context: CGContext) {
+        guard imeHandler.hasMarkedText, let snapshot, let anchor = cursorCellRect(snapshot) else { return }
+        let rect = preeditRect(forCharacterRange: NSRange(
+            location: 0,
+            length: imeHandler.markedText.utf16.count
+        )).intersection(bounds)
+        guard !rect.isEmpty else { return }
+
+        backgroundColor.setFill()
+        NSBezierPath.fill(snappedToPixels(rect))
+
+        // The selection bar uses view coordinates, so it must be filled
+        // before the Core Text coordinate flip below.
+        let selectionCells = Self.cellOffset(of: imeHandler.markedText, upToUTF16: imeHandler.markedSelection.location)
+        let bar = snappedToPixels(CGRect(
+            x: anchor.minX + CGFloat(selectionCells) * metrics.cellSize.width,
+            y: anchor.minY,
+            width: 2,
+            height: anchor.height
+        ))
+        fallbackForeground.setFill()
+        context.fill(bar)
+
+        context.saveGState()
+        context.clip(to: CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height))
+        context.translateBy(x: 0, y: bounds.height)
+        context.scaleBy(x: 1, y: -1)
+
+        let font = fonts.regular
+        let attributed = NSAttributedString(string: imeHandler.markedText, attributes: [
+            .font: font,
+            .foregroundColor: fallbackForeground,
+        ])
+        let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+        let textY = bounds.height - (anchor.minY + metrics.baseline)
+        context.textPosition = CGPoint(x: anchor.minX, y: textY)
+        CTLineDraw(line, context)
+
+        let underlineY = textY + CTFontGetUnderlinePosition(font as CTFont)
+        NSColor.controlAccentColor.setStroke()
+        context.setLineWidth(max(1, CTFontGetUnderlineThickness(font as CTFont)))
+        context.strokeLineSegments(between: [
+            CGPoint(x: rect.minX, y: underlineY),
+            CGPoint(x: rect.maxX, y: underlineY),
+        ])
+
+        context.restoreGState()
     }
 
     /// Colors for when nvim leaves a default unset (-1): adaptive AppKit
