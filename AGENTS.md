@@ -7,8 +7,9 @@ iNeovim is a native macOS desktop application written in Swift with SwiftUI. It 
 itself (Core Text + `CALayer`), with macOS-native input, smooth scrolling, and an app
 shell. Phases 1–8 of `docs/TASKS.md` are implemented: RPC, UI state, rendering, input,
 scrolling, and the SwiftUI app shell (tabs, settings, menus, window title, file opening).
-Phase 9 (polish and release) is still open — there is no app icon, license, or release
-pipeline yet.
+Phase 9 (polish and release) added crash recovery, performance baselines/signposts, an
+app icon, the `com.mzevo` bundle identifier, the MIT license, and a documented
+archive → notarize release flow (`docs/RELEASE.md`).
 
 Key facts from `iNeovim.xcodeproj/project.pbxproj`:
 
@@ -172,5 +173,7 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 
 ## Deployment / release
 
-No deployment pipeline exists. There is no Fastlane, no CI, no notarization setup, and no
-shared scheme. Releases, when needed, are produced from Xcode's archive flow.
+No automated pipeline or CI exists. Release signing uses automatic signing with team
+`S39RD89QY9`; Release enables the hardened runtime for notarization. The full
+archive → export (`Config/ExportOptions.plist`) → notarize (`notarytool`) → staple flow
+is documented in `docs/RELEASE.md`. The app is MIT-licensed (`LICENSE`).
