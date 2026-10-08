@@ -92,6 +92,24 @@ final class AppModelTests: XCTestCase {
         XCTAssertNil(model.crash)
     }
 
+    func testMissingNvimEntersSetupFlow() {
+        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+
+        model.handleBootstrapFailure(NvimDiscoveryError.notFound)
+
+        XCTAssertEqual(model.setup, NvimSetupGuide(homebrewInstalled: NvimDiscovery.locateHomebrew() != nil))
+        XCTAssertNil(model.bootstrapError)
+    }
+
+    func testOtherBootstrapFailuresSurfaceAsError() {
+        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+
+        model.handleBootstrapFailure(NvimDiscoveryError.missingOverride("/nonexistent/nvim"))
+
+        XCTAssertNil(model.setup)
+        XCTAssertNotNil(model.bootstrapError)
+    }
+
     func testEditorCommandsRouteToNeovim() {
         var commands: [String] = []
         let model = AppModel(openHandler: { _ in }, commandHandler: { commands.append($0) })

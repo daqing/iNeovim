@@ -66,3 +66,7 @@ aligned.
 - **File opening (T8.6):** dragging a text file onto the editor opens it as a
   buffer, as does Finder's **Open With ▸ iNeovim** and dropping it on the Dock
   icon.
+- **Setup guide (no nvim):** on a machine where Neovim is not installed,
+  launch shows install guidance instead of the editor — `brew install neovim`
+  with a copy button when Homebrew exists, otherwise a brew.sh link — and
+  **Recheck** starts the session once Neovim is installed.

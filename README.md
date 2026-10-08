@@ -122,7 +122,8 @@ checks, `docs/PERFORMANCE.md` for profiling, and `docs/RELEASE.md` for shipping.
 ## Requirements
 
 - macOS 14.6 or later
-- Neovim 0.9 or later (the embedded binary is located automatically)
+- Neovim 0.9 or later (the embedded binary is located automatically; when it
+  is missing, the app walks you through `brew install neovim` on launch)
 - Xcode 26.3 or later (only to build from source)
 
 ## Install

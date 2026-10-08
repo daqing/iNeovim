@@ -9,6 +9,12 @@ struct NvimCrash: Identifiable, Equatable, Sendable {
     let status: Int32
 }
 
+/// First-run setup guidance: nvim is missing, so the app explains how to
+/// install it — via Homebrew when present, or Homebrew itself via brew.sh.
+struct NvimSetupGuide: Equatable {
+    let homebrewInstalled: Bool
+}
+
 /// App-wide coordination between the SwiftUI shell and the embedded Neovim
 /// session: owns startup, forwards editor commands, and queues files opened
 /// before the session is ready.
@@ -27,6 +33,9 @@ final class AppModel: ObservableObject {
 
     /// Reason the last bootstrap attempt failed, or nil after success.
     @Published private(set) var bootstrapError: String?
+
+    /// Setup guidance shown while nvim is missing, or nil.
+    @Published private(set) var setup: NvimSetupGuide?
 
     private let client = NvimClient()
     private let openHandler: @MainActor ([URL]) -> Void
@@ -52,6 +61,7 @@ final class AppModel: ObservableObject {
         guard !isReady else { return }
         do {
             bootstrapError = nil
+            setup = nil
             try await RPCSession.shared.start()
             try await RPCSession.shared.handshake()
             // Subscribe before attaching: nvim sends its first full screen as
@@ -74,9 +84,21 @@ final class AppModel: ObservableObject {
             isReady = true
             flushPendingFiles()
         } catch {
+            handleBootstrapFailure(error)
+        }
+    }
+
+    /// Route a failed bootstrap: a missing nvim enters the setup flow;
+    /// anything else surfaces as a generic error.
+    func handleBootstrapFailure(_ error: Error) {
+        guard case NvimDiscoveryError.notFound = error else {
             bootstrapError = error.localizedDescription
             Log.rpc.error("Failed to connect to embedded nvim: \(error.localizedDescription, privacy: .public)")
+            return
         }
+        let homebrew = NvimDiscovery.locateHomebrew() != nil
+        setup = NvimSetupGuide(homebrewInstalled: homebrew)
+        Log.app.info("nvim not found; entering setup flow (Homebrew installed: \(homebrew, privacy: .public))")
     }
 
     /// Mark the session ready without starting Neovim; for tests and previews.

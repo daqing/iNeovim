@@ -35,6 +35,8 @@ struct ContentView: View {
         if model.isReady || model.crash != nil {
             // A crash is surfaced by the alert; an empty grid is expected then.
             EmptyView()
+        } else if let setup = model.setup {
+            SetupView(setup: setup) { model.restart() }
         } else if let error = model.bootstrapError {
             ContentUnavailableView {
                 Label("Could not start Neovim", systemImage: "exclamationmark.triangle")

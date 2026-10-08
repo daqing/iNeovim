@@ -51,6 +51,20 @@ struct NvimDiscovery {
         NSHomeDirectory() + "/.local/bin",
     ]
 
+    /// Standard Homebrew prefixes, Apple Silicon first.
+    static let homebrewSearchDirectories = ["/opt/homebrew/bin", "/usr/local/bin"]
+
+    /// Locate the `brew` executable, or nil when Homebrew is not installed.
+    static func locateHomebrew(in directories: [String] = homebrewSearchDirectories) -> URL? {
+        for directory in directories {
+            let brew = URL(fileURLWithPath: directory, isDirectory: true).appendingPathComponent("brew")
+            if FileManager.default.isExecutableFile(atPath: brew.path) {
+                return brew
+            }
+        }
+        return nil
+    }
+
     func resolve() async throws -> URL {
         let binary = try locate()
         let version = try await installedVersion(of: binary)
