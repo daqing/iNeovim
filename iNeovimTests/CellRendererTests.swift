@@ -61,4 +61,33 @@ final class CellRendererTests: XCTestCase {
             ]
         )
     }
+
+    func testWideCharAbsorbsContinuationDespiteAttrChange() {
+        let row = [GridCell(text: "你", attrId: 1), GridCell(text: "", attrId: 2)]
+        XCTAssertEqual(
+            CellRenderer.runs(forRow: row),
+            [StyledRun(text: "你", attrId: 1, startCol: 0, endCol: 2)]
+        )
+    }
+
+    func testAdjacentWideCharsAbsorbBothContinuationCells() {
+        let row = [
+            GridCell(text: "你", attrId: 1),
+            GridCell(text: "你", attrId: 1),
+            GridCell(text: "", attrId: 1),
+            GridCell(text: "", attrId: 1),
+        ]
+        XCTAssertEqual(
+            CellRenderer.runs(forRow: row),
+            [StyledRun(text: "你你", attrId: 1, startCol: 0, endCol: 4)]
+        )
+    }
+
+    func testCombiningSequencePassesThroughUnchanged() {
+        let row = [GridCell(text: "e\u{301}", attrId: 3), GridCell(text: "x", attrId: 3)]
+        XCTAssertEqual(
+            CellRenderer.runs(forRow: row),
+            [StyledRun(text: "e\u{301}x", attrId: 3, startCol: 0, endCol: 2)]
+        )
+    }
 }
