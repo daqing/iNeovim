@@ -72,6 +72,13 @@ mechanism for interactive visual verification.
 - Keep source files under the synchronized `iNeovim/` group; name types after their file
   (e.g. `MyApp.swift` → `MyApp`).
 
+## Design decisions
+
+- **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
+  (`ext_multigrid` off). All redraw and grid handling must still carry grid
+  IDs from day one — event cases take a `grid` identifier and grid state is
+  keyed by ID — so enabling multigrid later is a switch flip, not a rewrite.
+
 ## Security considerations
 
 - App Sandbox is **enabled** with `user-selected-files` access set to **readonly** — any
