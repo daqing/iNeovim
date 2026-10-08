@@ -25,7 +25,7 @@ final class ScrollAnimator {
     ///   display-link chase when true.
     func setTarget(_ value: CGFloat, animated: Bool) {
         target = value
-        if animated {
+        if animated && settings.scrollEnabled {
             lastTimestamp = nil
             driver.start()
         } else {

@@ -24,6 +24,35 @@ final class TerminalView: NSView {
         }
     }
 
+    /// Apply user settings: font metrics, input switches, and animation
+    /// toggles. Changing the font reflows the grid at the new cell size.
+    func apply(settings: AppSettings) {
+        let font = settings.resolvedFont()
+        if metrics.font != font {
+            applyMetrics(FontMetrics(font: font))
+        }
+        inputSettings = settings.inputSettings
+        let animations = settings.animationSettings
+        scrollController.settings = animations
+        scrollAnimator.settings = animations
+        cursorAnimator.settings = animations
+    }
+
+    private func applyMetrics(_ newMetrics: FontMetrics) {
+        metrics = newMetrics
+        contentLayer.updateMetrics(newMetrics)
+        if let snapshot {
+            contentLayer.update(snapshot: snapshot)
+        }
+        contentLayer.setNeedsDisplay()
+        let size = bounds.size
+        Task { [weak self] in
+            guard let self else { return }
+            await self.resizeController.setCellSize(newMetrics.cellSize)
+            await self.resizeController.viewDidResize(to: size)
+        }
+    }
+
     init(
         metrics: FontMetrics = FontMetrics(
             font: .monospacedSystemFont(ofSize: FontMetrics.defaultSize, weight: .regular)

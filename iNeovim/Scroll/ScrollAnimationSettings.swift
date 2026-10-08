@@ -7,6 +7,10 @@ import Foundation
 /// identical at 60 Hz and at 120 Hz ProMotion refresh rates; ProMotion
 /// samples the same curve twice per frame interval instead.
 struct ScrollAnimationSettings: Equatable {
+    /// Whether the scroll offset animates; when off, offsets apply directly.
+    var scrollEnabled = true
+    /// Whether the cursor glides between cells; when off, it snaps.
+    var cursorEnabled = true
     /// Chase time constant for the scroll-offset settle; three time
     /// constants (≈100 ms) bring it to rest.
     var scrollTimeConstant: TimeInterval = 0.033
