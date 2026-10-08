@@ -41,4 +41,13 @@ struct NvimClient {
             .int(Int64(width)), .int(Int64(height)),
         ])
     }
+
+    /// Stream `redraw` notifications as typed events; subscribes to the
+    /// session on first use. Single consumer: the live stream is handed out
+    /// only once.
+    func makeRedrawEventStream() async -> AsyncStream<RedrawEvent> {
+        let bus = RedrawEventStream.shared
+        await bus.subscribe(to: session)
+        return await bus.makeStream()
+    }
 }

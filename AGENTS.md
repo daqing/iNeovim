@@ -30,7 +30,7 @@ Key facts from `iNeovim.xcodeproj/project.pbxproj`:
 iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── MyApp.swift           @main entry point: WindowGroup hosting ContentView
 ├── ContentView.swift     Root view ("Hello, world!" + #Preview and #Playground macros)
-├── AppDelegate.swift     NSApplicationDelegate: boots the RPC session + handshake
+├── AppDelegate.swift     NSApplicationDelegate: boots RPC session, handshake, UI attach
 ├── Logging.swift         os.Logger categories (rpc, render, input, app)
 ├── NvimDiscovery.swift   Locates the nvim binary and checks its version
 ├── NvimProcess.swift     Actor owning the nvim --embed child process
@@ -43,8 +43,16 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── RPCError.swift        RPC error types
 │   ├── RPCSession.swift      Actor: read loop, request matching, notifications
 │   └── NvimClient.swift      Typed convenience API over RPCSession
+├── UI/                   UI-protocol layer: redraw events and grid state (Phase 4)
+│   ├── RedrawEvent.swift     typed `redraw` events + notification parser
+│   ├── Highlight.swift       HlAttr highlight model, resolution, and store
+│   ├── Grid.swift            cell storage with line/scroll/clear/resize ops
+│   ├── ResizeController.swift  debounced view-resize → nvim_ui_try_resize
+│   ├── Screen.swift            applied grid/highlight/mode/cursor state actor
+│   └── RedrawEventStream.swift  single-consumer AsyncStream of redraw events
 └── Assets.xcassets/      AccentColor colorset only (no app icon yet)
-iNeovimTests/             XCTest target (synchronized group); codec round-trip tests
+iNeovimTests/             XCTest target (synchronized group); codec round-trip and
+                          redraw-parsing tests
 iNeovim.xcodeproj/        iNeovim app + iNeovimTests unit test targets
 ```
 
