@@ -137,6 +137,15 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 
 ## Design decisions
 
+- **Content inset:** the grid is inset `TerminalView.contentInset` (6 pt) from
+  the view on all sides, and every grid cell-count computation
+  (`ResizeController.cellCount` via `TerminalView.insetContentSize`) derives
+  from the inset size, never the raw bounds. Without this the floor-rounded
+  grid fills the view edge to edge and the last line (statusline/cmdline)
+  hugs — or, while resizes race, overflows — the window's bottom edge. All
+  view-space→grid-space conversions (mouse `MouseHandler`, wheel pointer
+  `ScrollController`, IME preedit rects) subtract the inset; layer-internal
+  geometry (`GridContentLayer`, cursor/scroll animators) is unaffected.
 - **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is

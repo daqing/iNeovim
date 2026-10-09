@@ -33,9 +33,15 @@ final class MouseHandler {
     private func handle(_ event: NSEvent, button: String, action: String) {
         guard let view else { return }
         let point = view.convert(event.locationInWindow, from: nil)
+        // The grid starts contentInset into the view; convert to grid space
+        // before dividing into cells.
+        let gridPoint = CGPoint(
+            x: point.x - TerminalView.contentInset,
+            y: point.y - TerminalView.contentInset
+        )
         let dimensions = view.gridDimensions
         let (row, col) = Self.cellLocation(
-            for: point,
+            for: gridPoint,
             cellSize: view.metrics.cellSize,
             gridWidth: dimensions?.width,
             gridHeight: dimensions?.height

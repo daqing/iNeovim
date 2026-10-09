@@ -5,6 +5,22 @@ import os
 /// The terminal surface: hosts the scrollable grid content layer, paints
 /// the background behind it, and routes keyboard, mouse, and scroll input.
 final class TerminalView: NSView {
+    /// Breathing room around the grid on every side. The grid is sized from
+    /// the inset area only, so the last line (statusline/cmdline) can never
+    /// touch the window edges.
+    static let contentInset: CGFloat = 6
+
+    /// View size minus the content inset on both sides: the area the grid
+    /// may occupy. Grid cell counts must always be derived from this, never
+    /// from the raw bounds, or the grid fills the view edge to edge.
+    static func insetContentSize(_ size: CGSize) -> CGSize {
+        let inset = contentInset * 2
+        return CGSize(
+            width: max(0, size.width - inset),
+            height: max(0, size.height - inset)
+        )
+    }
+
     let model: AppModel
     private(set) var metrics: FontMetrics
     private var snapshot: ScreenSnapshot?
@@ -55,7 +71,7 @@ final class TerminalView: NSView {
     /// resize below.
     private func requestResize(to size: CGSize) {
         reconciledViewSize = nil
-        Task { await resizeController.viewDidResize(to: size) }
+        Task { await resizeController.viewDidResize(to: Self.insetContentSize(size)) }
     }
 
     /// Neovim rejects a resize that arrives before `ui_attach`, which would
@@ -65,11 +81,14 @@ final class TerminalView: NSView {
     /// (at most once per view size, so a rejected request cannot spin).
     private func reconcileGridSize(with snapshot: ScreenSnapshot) {
         guard sessionReady, let grid = snapshot.grid, !grid.isEmpty else { return }
-        let expected = ResizeController.cellCount(for: bounds.size, cellSize: metrics.cellSize)
+        let expected = ResizeController.cellCount(
+            for: Self.insetContentSize(bounds.size),
+            cellSize: metrics.cellSize
+        )
         guard grid.width != expected.cols || grid.height != expected.rows else { return }
         guard reconciledViewSize != bounds.size else { return }
         reconciledViewSize = bounds.size
-        Task { await resizeController.viewDidResize(to: bounds.size) }
+        Task { await resizeController.viewDidResize(to: Self.insetContentSize(bounds.size)) }
     }
 
     private func applyMetrics(_ newMetrics: FontMetrics) {
@@ -83,7 +102,7 @@ final class TerminalView: NSView {
         Task { [weak self] in
             guard let self else { return }
             await self.resizeController.setCellSize(newMetrics.cellSize)
-            await self.resizeController.viewDidResize(to: size)
+            await self.resizeController.viewDidResize(to: Self.insetContentSize(size))
         }
         reconciledViewSize = nil
     }
@@ -103,20 +122,20 @@ final class TerminalView: NSView {
         super.init(frame: NSRect(
             origin: .zero,
             size: CGSize(
-                width: metrics.cellSize.width * 80,
-                height: metrics.cellSize.height * 24
+                width: metrics.cellSize.width * 80 + Self.contentInset * 2,
+                height: metrics.cellSize.height * 24 + Self.contentInset * 2
             )
         ))
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layer?.masksToBounds = true
-        // Anchor the content layer's top-left to the view's top-left. Its own
+        // Anchor the content layer's top-left to the inset origin. Its own
         // bounds grow to the full grid (for scrolling); without this the layer
         // is centered on the origin and clipped out of view.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         contentLayer.anchorPoint = .zero
-        contentLayer.position = .zero
+        contentLayer.position = CGPoint(x: Self.contentInset, y: Self.contentInset)
         CATransaction.commit()
         layer?.addSublayer(contentLayer)
         registerForDraggedTypes([.fileURL])
@@ -208,12 +227,15 @@ final class TerminalView: NSView {
     }
 
     /// View-space rect for a character range of the marked text, anchored at
-    /// the cursor cell and wide as the covered cells, plus the live scroll
-    /// offset. IME candidate windows anchor to this (see
+    /// the cursor cell and wide as the covered cells, plus the content inset
+    /// and the live scroll offset. IME candidate windows anchor to this (see
     /// `firstRect(forCharacterRange:)`).
     func preeditRect(forCharacterRange range: NSRange) -> CGRect {
         preeditLayerRect(forCharacterRange: range)
-            .offsetBy(dx: 0, dy: scrollAnimator.presentationOffset)
+            .offsetBy(
+                dx: Self.contentInset,
+                dy: Self.contentInset + scrollAnimator.presentationOffset
+            )
     }
 
     private func preeditLayerRect(forCharacterRange range: NSRange) -> CGRect {

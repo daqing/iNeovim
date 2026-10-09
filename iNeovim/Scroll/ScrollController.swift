@@ -35,7 +35,12 @@ final class ScrollController {
         let rawDelta = event.scrollingDeltaY
         guard rawDelta != 0, rawDelta.isFinite else { return }
         updateLeadCap()
-        lastPointerLocation = view.convert(event.locationInWindow, from: nil)
+        let viewPoint = view.convert(event.locationInWindow, from: nil)
+        // Grid space starts contentInset into the view (see MouseHandler).
+        lastPointerLocation = CGPoint(
+            x: viewPoint.x - TerminalView.contentInset,
+            y: viewPoint.y - TerminalView.contentInset
+        )
         lastModifierFlags = event.modifierFlags
 
         if event.hasPreciseScrollingDeltas {
