@@ -70,3 +70,7 @@ aligned.
   launch shows install guidance instead of the editor — `brew install neovim`
   with a copy button when Homebrew exists, otherwise a brew.sh link — and
   **Recheck** starts the session once Neovim is installed.
+- **Nvim exit handling:** `:q`/`:qa` on the last tab closes the window
+  silently (and quits the app when no editor window remains) with no dialog;
+  an abnormal exit (e.g. `kill` the nvim process) still shows the
+  **Neovim exited** alert with **Restart**.

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import os
@@ -40,6 +41,7 @@ final class AppModel: ObservableObject {
     private let client = NvimClient()
     private let openHandler: @MainActor ([URL]) -> Void
     private let commandHandler: @MainActor (String) -> Void
+    private let cleanExitHandler: @MainActor () -> Void
     private var pendingFiles: [URL] = []
     private var terminationTask: Task<Void, Never>?
     private var isShuttingDown = false
@@ -49,10 +51,12 @@ final class AppModel: ObservableObject {
 
     init(
         openHandler: @escaping @MainActor ([URL]) -> Void = AppModel.openInNeovim,
-        commandHandler: @escaping @MainActor (String) -> Void = AppModel.commandInNeovim
+        commandHandler: @escaping @MainActor (String) -> Void = AppModel.commandInNeovim,
+        cleanExitHandler: @escaping @MainActor () -> Void = AppModel.closeActiveWindowQuittingIfLast
     ) {
         self.openHandler = openHandler
         self.commandHandler = commandHandler
+        self.cleanExitHandler = cleanExitHandler
     }
 
     /// Start the embedded Neovim, attach the UI, and begin consuming the
@@ -120,10 +124,16 @@ final class AppModel: ObservableObject {
     }
 
     /// Called when the embedded nvim exits. Intentional shutdown is ignored;
-    /// otherwise the exit is surfaced so the UI can offer a restart.
+    /// a clean exit (status 0, e.g. `:q` on the last tab) closes the window
+    /// instead of surfacing a crash; anything else offers a restart.
     func handleTermination(status: Int32) {
         guard !isShuttingDown else { return }
         isReady = false
+        guard status != 0 else {
+            Log.app.info("Embedded nvim exited cleanly; closing the window")
+            cleanExitHandler()
+            return
+        }
         crash = NvimCrash(status: status)
         Log.app.error("Embedded nvim exited unexpectedly (status \(status, privacy: .public))")
     }
@@ -254,6 +264,18 @@ final class AppModel: ObservableObject {
             } catch {
                 Log.app.error("nvim_command failed: \(error.localizedDescription, privacy: .public)")
             }
+        }
+    }
+
+    /// Default clean-exit sink: a clean nvim exit is the user quitting the
+    /// editor, so close the window it ran in. One session per process means
+    /// the app has nothing left to show without an editor window, so quit
+    /// when none remains.
+    private static func closeActiveWindowQuittingIfLast() {
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        window?.close()
+        if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
+            NSApp.terminate(nil)
         }
     }
 

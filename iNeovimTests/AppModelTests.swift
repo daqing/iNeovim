@@ -63,6 +63,22 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.isReady)
     }
 
+    func testCleanNvimExitClosesWindowWithoutCrashDialog() {
+        var cleanExits = 0
+        let model = AppModel(
+            openHandler: { _ in },
+            commandHandler: { _ in },
+            cleanExitHandler: { cleanExits += 1 }
+        )
+        model.markReadyForTesting()
+
+        model.handleTermination(status: 0)
+
+        XCTAssertNil(model.crash)
+        XCTAssertFalse(model.isReady)
+        XCTAssertEqual(cleanExits, 1)
+    }
+
     func testShutdownSuppressesCrashDialog() {
         let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
         model.markReadyForTesting()
