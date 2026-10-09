@@ -145,9 +145,7 @@ final class TerminalView: NSView {
     }
 
     deinit {
-        if let becameKeyObserver {
-            NotificationCenter.default.removeObserver(becameKeyObserver)
-        }
+        NotificationCenter.default.removeObserver(self)
     }
 
     override var isFlipped: Bool { true }
@@ -330,13 +328,16 @@ final class TerminalView: NSView {
         }
     }
 
-    private var becameKeyObserver: NSObjectProtocol?
+    private var isObservingKeyState = false
 
     /// Menu commands act on the key window's session; follow key-window
     /// changes so `AppModel.active` always tracks the window being driven.
+    /// The selector-based observer returns no token on this SDK, so the
+    /// registration is removed by observer in `deinit`.
     private func observeWindowKeyState(_ window: NSWindow) {
-        guard becameKeyObserver == nil else { return }
-        becameKeyObserver = NotificationCenter.default.addObserver(
+        guard !isObservingKeyState else { return }
+        isObservingKeyState = true
+        NotificationCenter.default.addObserver(
             self,
             selector: #selector(hostWindowDidBecomeKey),
             name: NSWindow.didBecomeKeyNotification,
