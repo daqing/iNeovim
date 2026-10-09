@@ -13,8 +13,6 @@ enum NvimProcessError: LocalizedError {
 }
 
 actor NvimProcess {
-    static let shared = NvimProcess()
-
     private let terminationStream: (stream: AsyncStream<Int32>, continuation: AsyncStream<Int32>.Continuation)
 
     nonisolated var termination: AsyncStream<Int32> { terminationStream.stream }
@@ -24,7 +22,7 @@ actor NvimProcess {
     private var stdoutPipe: Pipe?
     nonisolated(unsafe) private var stdinWriter: FileHandle?
 
-    private init() {
+    init() {
         terminationStream = AsyncStream.makeStream(of: Int32.self)
     }
 

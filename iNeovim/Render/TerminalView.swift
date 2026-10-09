@@ -5,6 +5,7 @@ import os
 /// The terminal surface: hosts the scrollable grid content layer, paints
 /// the background behind it, and routes keyboard, mouse, and scroll input.
 final class TerminalView: NSView {
+    let model: AppModel
     private(set) var metrics: FontMetrics
     private var snapshot: ScreenSnapshot?
     private let contentLayer: GridContentLayer
@@ -12,8 +13,8 @@ final class TerminalView: NSView {
     private let cursorAnimator = CursorAnimator()
     private let resizeController: ResizeController
     private var keyHandler = KeyInputHandler()
-    private let mouseHandler = MouseHandler()
-    private let scrollController = ScrollController()
+    private let mouseHandler: MouseHandler
+    private let scrollController: ScrollController
     let imeHandler = IMEHandler()
     private var sessionReady = false
     /// The view size for which a corrective resize was already attempted; a
@@ -88,13 +89,17 @@ final class TerminalView: NSView {
     }
 
     init(
+        model: AppModel,
         metrics: FontMetrics = FontMetrics(
             font: .monospacedSystemFont(ofSize: FontMetrics.defaultSize, weight: .regular)
         )
     ) {
+        self.model = model
         self.metrics = metrics
         self.contentLayer = GridContentLayer(metrics: metrics)
-        self.resizeController = ResizeController(cellSize: metrics.cellSize)
+        self.mouseHandler = MouseHandler(dispatcher: model.inputDispatcher)
+        self.scrollController = ScrollController(dispatcher: model.inputDispatcher)
+        self.resizeController = ResizeController(cellSize: metrics.cellSize, client: model.client)
         super.init(frame: NSRect(
             origin: .zero,
             size: CGSize(
@@ -139,6 +144,12 @@ final class TerminalView: NSView {
         fatalError("init(coder:) is not supported")
     }
 
+    deinit {
+        if let becameKeyObserver {
+            NotificationCenter.default.removeObserver(becameKeyObserver)
+        }
+    }
+
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
@@ -173,7 +184,7 @@ final class TerminalView: NSView {
     }
 
     func sendKeys(_ keys: String) {
-        InputDispatcher.shared.send(.keys(keys))
+        model.inputDispatcher.send(.keys(keys))
     }
 
     // Standard Edit-menu actions reach the first responder through the
@@ -182,12 +193,12 @@ final class TerminalView: NSView {
 
     @objc func paste(_ sender: Any?) {
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
-        Task { try? await NvimClient().paste(text) }
+        Task { try? await model.client.paste(text) }
     }
 
     @objc func copy(_ sender: Any?) {
         Task {
-            guard let text = try? await NvimClient().registerContents("\""), !text.isEmpty else { return }
+            guard let text = try? await model.client.registerContents("\""), !text.isEmpty else { return }
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
@@ -275,7 +286,7 @@ final class TerminalView: NSView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = Self.droppedFileURLs(from: sender.draggingPasteboard)
         guard !urls.isEmpty else { return false }
-        AppModel.shared.open(urls)
+        model.open(urls)
         return true
     }
 
@@ -309,12 +320,32 @@ final class TerminalView: NSView {
         // Re-assert on the next main-actor turn in case SwiftUI restores focus
         // to another control while the window is being laid out.
         if let window {
+            model.attach(to: window)
+            observeWindowKeyState(window)
             _ = window.makeFirstResponder(self)
         }
         Task { @MainActor [weak self] in
             guard let self, let window = self.window else { return }
             _ = window.makeFirstResponder(self)
         }
+    }
+
+    private var becameKeyObserver: NSObjectProtocol?
+
+    /// Menu commands act on the key window's session; follow key-window
+    /// changes so `AppModel.active` always tracks the window being driven.
+    private func observeWindowKeyState(_ window: NSWindow) {
+        guard becameKeyObserver == nil else { return }
+        becameKeyObserver = NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hostWindowDidBecomeKey),
+            name: NSWindow.didBecomeKeyNotification,
+            object: window
+        )
+    }
+
+    @objc private func hostWindowDidBecomeKey(_ notification: Notification) {
+        model.becameActive()
     }
 
     override func viewDidChangeBackingProperties() {
@@ -348,12 +379,13 @@ final class TerminalView: NSView {
     /// Pull a fresh snapshot on every nvim flush, then invalidate only the
     /// cells the flush dirtied.
     private func connectScreen() {
+        let screen = model.screen
         Task { [weak self] in
             guard let self else { return }
-            await Screen.shared.setFlushHandler { [weak self] grid, cellRects in
+            await screen.setFlushHandler { [weak self] grid, cellRects in
                 guard let self, grid == 1 else { return }
                 Task { @MainActor in
-                    let snapshot = await Screen.shared.snapshot()
+                    let snapshot = await screen.snapshot()
                     let previous = self.snapshot
                     self.updateCursorGlide(previous: previous, next: snapshot)
                     self.snapshot = snapshot
@@ -363,7 +395,7 @@ final class TerminalView: NSView {
                     self.reconcileGridSize(with: snapshot)
                 }
             }
-            await Screen.shared.setScrollHandler { [weak self] grid, rows, _ in
+            await screen.setScrollHandler { [weak self] grid, rows, _ in
                 guard let self, grid == 1, rows != 0 else { return }
                 Task { @MainActor in
                     self.scrollController.confirmScroll(rows: rows)
@@ -371,7 +403,7 @@ final class TerminalView: NSView {
             }
             // nvim may have painted before this view was in a window; adopt the
             // current state now instead of waiting for the next flush.
-            let snapshot = await Screen.shared.snapshot()
+            let snapshot = await screen.snapshot()
             guard snapshot.grid != nil else { return }
             self.snapshot = snapshot
             self.contentLayer.update(snapshot: snapshot)

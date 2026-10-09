@@ -5,21 +5,19 @@ import os
 /// layer. Runs off the main actor (fed from the RPC session's notification
 /// dispatch) and supports a single consumer by contract.
 actor RedrawEventStream {
-    static let shared = RedrawEventStream()
-
     private var stream: AsyncStream<RedrawEvent>
     private var continuation: AsyncStream<RedrawEvent>.Continuation
     private var isSubscribed = false
     private var isHandedOut = false
 
-    private init() {
-        let (stream, continuation) = AsyncStream<RedrawEvent>.makeStream()
+    init() {
+        let (stream, continuation) = AsyncStream.makeStream()
         self.stream = stream
         self.continuation = continuation
     }
 
     /// Register the `redraw` notification handler on the session; idempotent.
-    func subscribe(to session: RPCSession = .shared) async {
+    func subscribe(to session: RPCSession) async {
         guard !isSubscribed else { return }
         isSubscribed = true
         // The continuation is Sendable and its `yield` is thread-safe. Yielding

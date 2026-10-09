@@ -2,15 +2,21 @@ import Foundation
 import os
 
 actor RPCSession {
-    static let shared = RPCSession()
-
-    private let process = NvimProcess.shared
     private var decoder = MsgPackDecoder()
     private var nextMsgid: UInt64 = 1
     private var pending: [UInt64: CheckedContinuation<MsgPackValue, Error>] = [:]
     private var notificationHandlers: [String: [@Sendable ([MsgPackValue]) -> Void]] = [:]
     private var isClosed = false
     private var readTask: Task<Void, Never>?
+
+    /// The embedded process this session speaks to; one process per session.
+    let process: NvimProcess
+    /// The `redraw` notification bridge owned by this session.
+    let redrawBus = RedrawEventStream()
+
+    init(process: NvimProcess = NvimProcess()) {
+        self.process = process
+    }
 
     /// Oldest nvim API level this GUI is written against (Neovim 0.9).
     static let minimumApiLevel: UInt64 = 12

@@ -12,32 +12,32 @@ struct EditorCommands: Commands {
         }
 
         CommandGroup(replacing: .saveItem) {
-            Button("Save") { AppModel.shared.save() }
+            Button("Save") { AppModel.active?.save() }
                 .keyboardShortcut("s", modifiers: .command)
         }
 
         CommandMenu("Neovim") {
-            Button("New Tab") { AppModel.shared.newTab() }
+            Button("New Tab") { AppModel.active?.newTab() }
                 .keyboardShortcut("t", modifiers: .command)
-            Button("Close Tab") { AppModel.shared.closeTab() }
+            Button("Close Tab") { AppModel.active?.closeTab() }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
             Divider()
-            Button("Next Tab") { AppModel.shared.nextTab() }
+            Button("Next Tab") { AppModel.active?.nextTab() }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-            Button("Previous Tab") { AppModel.shared.previousTab() }
+            Button("Previous Tab") { AppModel.active?.previousTab() }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
             Menu("Go to Tab") {
                 ForEach(1...9, id: \.self) { index in
-                    Button("Tab \(index)") { AppModel.shared.goToTab(index) }
+                    Button("Tab \(index)") { AppModel.active?.goToTab(index) }
                         .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
                 }
             }
             Divider()
-            Button("Split Horizontally") { AppModel.shared.splitHorizontal() }
-            Button("Split Vertically") { AppModel.shared.splitVertical() }
-            Button("Close Window") { AppModel.shared.closeWindow() }
+            Button("Split Horizontally") { AppModel.active?.splitHorizontal() }
+            Button("Split Vertically") { AppModel.active?.splitVertical() }
+            Button("Close Window") { AppModel.active?.closeWindow() }
             Divider()
-            Button("Open Terminal") { AppModel.shared.openTerminal() }
+            Button("Open Terminal") { AppModel.active?.openTerminal() }
         }
     }
 
@@ -47,6 +47,6 @@ struct EditorCommands: Commands {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
-        AppModel.shared.open(panel.urls)
+        AppModel.openFromSystem(panel.urls)
     }
 }

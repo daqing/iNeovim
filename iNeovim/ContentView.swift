@@ -5,14 +5,15 @@ import SwiftUI
 /// minimum size so the grid never collapses below usable dimensions.
 struct ContentView: View {
     @ObservedObject var settings: AppSettings
-    @ObservedObject var model: AppModel
+    @StateObject private var model = AppModel()
 
     var body: some View {
-        TerminalViewRepresentable(settings: settings, isReady: model.isReady)
+        TerminalViewRepresentable(settings: settings, model: model)
             .frame(minWidth: 480, minHeight: 320)
             .background(.background)
             .overlay { statusOverlay }
             .navigationTitle(model.windowTitle ?? "iNeovim")
+            .task { await model.bootstrap() }
             .alert(
                 "Neovim exited",
                 isPresented: Binding(
@@ -56,21 +57,21 @@ struct ContentView: View {
 
 struct TerminalViewRepresentable: NSViewRepresentable {
     @ObservedObject var settings: AppSettings
-    var isReady: Bool
+    @ObservedObject var model: AppModel
 
     func makeNSView(context: Context) -> TerminalView {
-        let view = TerminalView(metrics: FontMetrics(font: settings.resolvedFont()))
+        let view = TerminalView(model: model, metrics: FontMetrics(font: settings.resolvedFont()))
         view.apply(settings: settings)
-        view.sessionDidChangeReady(isReady)
+        view.sessionDidChangeReady(model.isReady)
         return view
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
         nsView.apply(settings: settings)
-        nsView.sessionDidChangeReady(isReady)
+        nsView.sessionDidChangeReady(model.isReady)
     }
 }
 
 #Preview {
-    ContentView(settings: AppSettings.shared, model: AppModel.shared)
+    ContentView(settings: AppSettings.shared)
 }

@@ -74,3 +74,7 @@ aligned.
   silently (and quits the app when no editor window remains) with no dialog;
   an abnormal exit (e.g. `kill` the nvim process) still shows the
   **Neovim exited** alert with **Restart**.
+- **Multiple windows (⌘N):** ⌘N opens a new window running its own embedded
+  Neovim in `$HOME` (`:pwd`); typing, scrolling, and tab shortcuts act on the
+  focused window only; menu commands and ⌘O opens route to the key window;
+  closing one window leaves the others' sessions running.

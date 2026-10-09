@@ -2,10 +2,10 @@
 
 ## Project overview
 
-iNeovim is a native macOS desktop application written in Swift with SwiftUI. It embeds a
-`nvim --embed` child process over msgpack-RPC and renders Neovim's linegrid protocol
-itself (Core Text + `CALayer`), with macOS-native input, smooth scrolling, and an app
-shell. Phases 1–8 of `docs/TASKS.md` are implemented: RPC, UI state, rendering, input,
+iNeovim is a native macOS desktop application written in Swift with SwiftUI. It embeds one
+`nvim --embed` child process per window over msgpack-RPC and renders Neovim's linegrid
+protocol itself (Core Text + `CALayer`), with macOS-native input, smooth scrolling, and an
+app shell. Phases 1–8 of `docs/TASKS.md` are implemented: RPC, UI state, rendering, input,
 scrolling, and the SwiftUI app shell (tabs, settings, menus, window title, file opening).
 Phase 9 (polish and release) added crash recovery, performance baselines/signposts, an
 app icon, the `com.mzevo` bundle identifier, the MIT license, and a documented
@@ -39,7 +39,7 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── ContentView.swift     Window shell hosting the render view via NSViewRepresentable
 ├── AppDelegate.swift     NSApplicationDelegate: bootstrap, open-file requests, teardown
 ├── App/                  SwiftUI app shell (Phase 8)
-│   ├── AppModel.swift        session bootstrap, command routing, file queue, title
+│   ├── AppModel.swift        per-window session stack, command routing, file queues, title
 │   ├── AppSettings.swift     persisted font/input/animation settings
 │   ├── SettingsView.swift    settings window
 │   └── EditorCommands.swift  File + Neovim menu commands
@@ -152,11 +152,19 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   and drifts text off the cell grid. `grid_line` entries with `repeat` 0 are
   chunk markers and must not overwrite cells.
 - **Tabs (T8.2):** tabs are **Neovim tabpages**, not native macOS window tabs.
-  One embedded nvim and one line-grid surface already draw the tabline and
-  own the buffer/window/tab model; native tabs would require a second nvim
-  session or a second view onto a single-consumer redraw stream. Editor
-  commands route to `:tab*` (`EditorCommands`), and `gt`/`gT` keep working
-  through normal key input.
+  Each window's embedded nvim already draws the tabline and owns the
+  buffer/window/tab model, so a tab is a tabpage inside that window's session.
+  Editor commands route to `:tab*` (`EditorCommands` → `AppModel.active`), and
+  `gt`/`gT` keep working through normal key input.
+- **Windows — one session per window (⌘N):** every window owns its own
+  `AppModel` and its own embedded stack (`NvimProcess` → `RPCSession`, plus
+  that session's `RedrawEventStream`/`Screen`/`InputDispatcher`); nothing
+  session-scoped is a singleton. Menu commands and system file opens route
+  through `AppModel.active` (the key window's session, tracked via
+  `NSWindow.didBecomeKey`); files that arrive before any session is ready are
+  staged app-level and flushed to the first ready session. New sessions start
+  in `$HOME` (`NvimProcess` sets the child's cwd), and closing a window
+  terminates its nvim in `AppModel.deinit`.
 - **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
   so one wheel event scrolls exactly one line and the visual lead in
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.

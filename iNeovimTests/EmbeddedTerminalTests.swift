@@ -1,17 +1,18 @@
 import XCTest
 @testable import iNeovim
 
-/// Integration checks against the live embedded-nvim session. The test host
-/// is the real app, so a passing run exercises the same launch path as the
+/// Integration checks against a live embedded-nvim session. The test host is
+/// the real app, so a passing run exercises the same launch path as the
 /// shipped build.
 @MainActor
 final class EmbeddedTerminalTests: XCTestCase {
     /// T8.7: the embedded `nvim` can open a `:terminal` (PTY + shell).
     func testEmbeddedTerminalStarts() async throws {
-        let ready = await waitForSession()
-        try XCTSkipUnless(ready, "Embedded nvim session did not start (nvim missing or handshake failed)")
+        guard let model = await readyModel() else {
+            throw XCTSkip("Embedded nvim session did not start (nvim missing or handshake failed)")
+        }
 
-        let client = NvimClient()
+        let client = model.client
         try await client.command("terminal")
         // Give the terminal buffer a moment to be created.
         try await Task.sleep(for: .milliseconds(400))
@@ -24,10 +25,11 @@ final class EmbeddedTerminalTests: XCTestCase {
     }
 
     func testEmbeddedSessionStartsInHomeDirectory() async throws {
-        let ready = await waitForSession()
-        try XCTSkipUnless(ready, "Embedded nvim session did not start (nvim missing or handshake failed)")
+        guard let model = await readyModel() else {
+            throw XCTSkip("Embedded nvim session did not start (nvim missing or handshake failed)")
+        }
 
-        let cwd = try await NvimClient().evaluate("getcwd()")
+        let cwd = try await model.client.evaluate("getcwd()")
         var home = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
         if home.hasSuffix("/") { home.removeLast() }
         XCTAssertEqual(
@@ -37,11 +39,12 @@ final class EmbeddedTerminalTests: XCTestCase {
         )
     }
 
-    private func waitForSession(timeout: TimeInterval = 15) async -> Bool {
+    private func readyModel(timeout: TimeInterval = 15) async -> AppModel? {
         let deadline = Date().addingTimeInterval(timeout)
-        while !AppModel.shared.isReady, Date() < deadline {
+        while Date() < deadline {
+            if let model = AppModel.live.first(where: \.isReady) { return model }
             try? await Task.sleep(for: .milliseconds(100))
         }
-        return AppModel.shared.isReady
+        return AppModel.live.first(where: \.isReady)
     }
 }

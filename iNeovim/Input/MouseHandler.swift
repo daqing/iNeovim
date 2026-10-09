@@ -5,7 +5,12 @@ import AppKit
 /// selection extension.
 final class MouseHandler {
     weak var view: TerminalView?
+    private let dispatcher: InputDispatcher
     private var pressedButton: String?
+
+    init(dispatcher: InputDispatcher) {
+        self.dispatcher = dispatcher
+    }
 
     func mouseDown(_ event: NSEvent) {
         guard let button = Self.buttonName(for: event) else { return }
@@ -36,7 +41,7 @@ final class MouseHandler {
             gridHeight: dimensions?.height
         )
         let modifier = Self.modifierString(for: event.modifierFlags)
-        InputDispatcher.shared.send(.mouse(
+        dispatcher.send(.mouse(
             button: button,
             action: action,
             modifier: modifier,

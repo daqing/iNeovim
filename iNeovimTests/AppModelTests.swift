@@ -5,7 +5,7 @@ import XCTest
 final class AppModelTests: XCTestCase {
     func testFilesOpenedBeforeReadyAreQueued() {
         var opened: [[URL]] = []
-        let model = AppModel(openHandler: { opened.append($0) })
+        let model = AppModel(openHandler: { urls, _ in opened.append(urls) })
         let url = URL(fileURLWithPath: "/tmp/a.txt")
 
         model.open([url])
@@ -19,7 +19,7 @@ final class AppModelTests: XCTestCase {
 
     func testFilesOpenedAfterReadyGoStraightThrough() {
         var opened: [[URL]] = []
-        let model = AppModel(openHandler: { opened.append($0) })
+        let model = AppModel(openHandler: { urls, _ in opened.append(urls) })
         model.markReadyForTesting()
         let url = URL(fileURLWithPath: "/tmp/b.txt")
 
@@ -30,16 +30,30 @@ final class AppModelTests: XCTestCase {
 
     func testEmptyFileListIsIgnored() {
         var opened: [[URL]] = []
-        let model = AppModel(openHandler: { opened.append($0) })
+        let model = AppModel(openHandler: { urls, _ in opened.append(urls) })
 
         model.open([])
         XCTAssertTrue(opened.isEmpty)
         XCTAssertEqual(model.pendingFileCount, 0)
     }
 
+    func testSystemOpensRouteToTheActiveReadySession() {
+        var opened: [[URL]] = []
+        let model = AppModel(openHandler: { urls, _ in opened.append(urls) }, commandHandler: { _, _ in })
+        model.markReadyForTesting()
+        AppModel.active = model
+        defer { AppModel.active = nil }
+        let url = URL(fileURLWithPath: "/tmp/c.txt")
+
+        AppModel.openFromSystem([url])
+
+        XCTAssertEqual(model.pendingFileCount, 0)
+        XCTAssertEqual(opened, [[url]])
+    }
+
     func testTabCommandsRouteToNeovim() {
         var commands: [String] = []
-        let model = AppModel(openHandler: { _ in }, commandHandler: { commands.append($0) })
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { command, _ in commands.append(command) })
 
         model.newTab()
         model.closeTab()
@@ -54,7 +68,7 @@ final class AppModelTests: XCTestCase {
     }
 
     func testUnexpectedTerminationSurfacesCrash() {
-        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
         model.markReadyForTesting()
 
         model.handleTermination(status: 1)
@@ -66,8 +80,8 @@ final class AppModelTests: XCTestCase {
     func testCleanNvimExitClosesWindowWithoutCrashDialog() {
         var cleanExits = 0
         let model = AppModel(
-            openHandler: { _ in },
-            commandHandler: { _ in },
+            openHandler: { _, _ in },
+            commandHandler: { _, _ in },
             cleanExitHandler: { cleanExits += 1 }
         )
         model.markReadyForTesting()
@@ -80,7 +94,7 @@ final class AppModelTests: XCTestCase {
     }
 
     func testShutdownSuppressesCrashDialog() {
-        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
         model.markReadyForTesting()
 
         model.beginShutdown()
@@ -91,7 +105,7 @@ final class AppModelTests: XCTestCase {
     }
 
     func testDismissCrashClearsIt() {
-        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
         model.handleTermination(status: 137)
         XCTAssertNotNil(model.crash)
 
@@ -100,7 +114,7 @@ final class AppModelTests: XCTestCase {
     }
 
     func testRestartIsIgnoredAfterShutdown() {
-        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
         model.beginShutdown()
 
         model.restart()
@@ -109,7 +123,7 @@ final class AppModelTests: XCTestCase {
     }
 
     func testMissingNvimEntersSetupFlow() {
-        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
 
         model.handleBootstrapFailure(NvimDiscoveryError.notFound)
 
@@ -118,7 +132,7 @@ final class AppModelTests: XCTestCase {
     }
 
     func testOtherBootstrapFailuresSurfaceAsError() {
-        let model = AppModel(openHandler: { _ in }, commandHandler: { _ in })
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
 
         model.handleBootstrapFailure(NvimDiscoveryError.missingOverride("/nonexistent/nvim"))
 
@@ -126,9 +140,22 @@ final class AppModelTests: XCTestCase {
         XCTAssertNotNil(model.bootstrapError)
     }
 
+    func testActiveSessionTracksWindowFocus() {
+        let first = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
+        let second = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
+        AppModel.active = nil
+        defer { AppModel.active = nil }
+
+        first.becameActive()
+        XCTAssertTrue(AppModel.active === first)
+
+        second.becameActive()
+        XCTAssertTrue(AppModel.active === second)
+    }
+
     func testEditorCommandsRouteToNeovim() {
         var commands: [String] = []
-        let model = AppModel(openHandler: { _ in }, commandHandler: { commands.append($0) })
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { command, _ in commands.append(command) })
 
         model.splitHorizontal()
         model.splitVertical()

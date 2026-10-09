@@ -98,7 +98,7 @@ iNeovim embeds a Neovim instance and implements the GUI protocol:
 │  └──────────────┬─────────────────┘  │
 │                 │ msgpack-RPC        │
 │  ┌──────────────▼─────────────────┐  │
-│  │ nvim --embed (child process)   │  │
+│  │ nvim --embed, one per window  │  │
 │  └────────────────────────────────┘  │
 └──────────────────────────────────────┘
 ```
@@ -110,7 +110,8 @@ renders the linegrid UI with Core Text + `CALayer`, handles keyboard/IME/mouse
 input, provides smooth scrolling and cursor animation, and ships a native app
 shell (Neovim tabpages, settings window, File/Neovim menus, window title from
 `set_title`, Open With / drag-and-drop file opening, and crash recovery with
-in-place restart). Phase 9 adds the app icon, the `com.mzevo` bundle identifier,
+in-place restart). Each window (⌘N) runs its own embedded Neovim session,
+starting in `$HOME`. Phase 9 adds the app icon, the `com.mzevo` bundle identifier,
 the MIT license, performance baselines and Instruments signposts, and a
 documented notarization/release flow.
 

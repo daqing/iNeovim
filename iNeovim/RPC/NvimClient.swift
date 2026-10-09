@@ -3,7 +3,7 @@ import Foundation
 struct NvimClient {
     let session: RPCSession
 
-    init(session: RPCSession = .shared) {
+    init(session: RPCSession) {
         self.session = session
     }
 
@@ -87,7 +87,7 @@ struct NvimClient {
     /// session on first use. Single consumer: the live stream is handed out
     /// only once.
     func makeRedrawEventStream() async -> AsyncStream<RedrawEvent> {
-        let bus = RedrawEventStream.shared
+        let bus = session.redrawBus
         await bus.subscribe(to: session)
         return await bus.makeStream()
     }

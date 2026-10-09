@@ -50,8 +50,6 @@ struct CellRect: Equatable, Sendable {
 /// updated from the redraw event stream. The render layer reads snapshots
 /// from here instead of touching raw msgpack or events.
 actor Screen {
-    static let shared = Screen()
-
     private(set) var grids: [Int: Grid] = [:]
     private(set) var highlights = HighlightStore()
     private(set) var defaultForeground: Int?

@@ -4,8 +4,6 @@ import os
 /// Carries `InputEvent`s from the view-side handlers to a single consumer
 /// that forwards them to nvim via `NvimClient`.
 actor InputDispatcher {
-    static let shared = InputDispatcher()
-
     // Immutable so `send` can yield from any thread without hopping actors.
     private let stream: AsyncStream<InputEvent>
     private let continuation: AsyncStream<InputEvent>.Continuation
@@ -44,7 +42,7 @@ actor InputDispatcher {
 
     /// Start the single consumer translating events into RPC calls. Later
     /// calls are dropped with a log message.
-    func startConsuming(with client: NvimClient = NvimClient()) {
+    func startConsuming(with client: NvimClient) {
         guard consumeTask == nil else {
             Log.input.error("Input event stream consumed more than once; dropping extra consumer")
             return

@@ -10,6 +10,7 @@ import AppKit
 final class ScrollController {
     weak var view: TerminalView?
     var settings = ScrollAnimationSettings.default
+    private let dispatcher: InputDispatcher
     private var accumulator = ScrollAccumulator()
     private var wheelEndTask: Task<Void, Never>?
     private var settleTask: Task<Void, Never>?
@@ -23,6 +24,10 @@ final class ScrollController {
     /// Visual scroll offset sink, in points (y down); the second argument
     /// asks for an animated chase (gesture ended) vs. direct application.
     var onOffsetChange: ((CGFloat, Bool) -> Void)?
+
+    init(dispatcher: InputDispatcher) {
+        self.dispatcher = dispatcher
+    }
 
     func scrollWheel(with event: NSEvent) {
         guard let view else { return }
@@ -106,7 +111,7 @@ final class ScrollController {
             case .up: button = "wheelup"
             case .down: button = "wheeldown"
             }
-            InputDispatcher.shared.send(.mouse(
+            dispatcher.send(.mouse(
                 button: button,
                 action: "press",
                 modifier: modifier,
