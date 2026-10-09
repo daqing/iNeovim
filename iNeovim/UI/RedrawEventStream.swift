@@ -11,7 +11,7 @@ actor RedrawEventStream {
     private var isHandedOut = false
 
     init() {
-        let (stream, continuation) = AsyncStream.makeStream()
+        let (stream, continuation) = AsyncStream<RedrawEvent>.makeStream()
         self.stream = stream
         self.continuation = continuation
     }
