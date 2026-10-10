@@ -48,9 +48,14 @@ extension RedrawEvent {
     /// events (`grid_line`, `hl_attr_define`) therefore fan out into several
     /// typed events. Malformed entries are skipped rather than failing the
     /// whole batch.
+    ///
+    /// Wire shapes: pre-0.10 nvim sends one argument holding the whole batch
+    /// (an array of event arrays); 0.10+ sends each event array as its own
+    /// argument — including a single-argument flush where one big event
+    /// (e.g. a full-screen `grid_line`) is sent alone with a string head.
     static func parseNotification(_ params: [MsgPackValue]) -> [RedrawEvent] {
         let rawEvents: [MsgPackValue]
-        if params.count == 1, case let .array(events) = params[0] {
+        if params.count == 1, case let .array(events) = params[0], case .array? = events.first {
             rawEvents = events
         } else {
             rawEvents = params

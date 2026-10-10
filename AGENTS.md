@@ -165,6 +165,29 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   flush, initial-snapshot, metrics-, resize-, and appearance-change paths;
   like the cmdline gap it assumes the last row is the cmdline area and the
   row above it the statusline (`laststatus` >= 2, `cmdheight` 1).
+- **RPC read path:** nvim's stdout is drained by a dedicated blocking-read
+  thread (POSIX `read(2)` loop → `AsyncStream<Data>` → a single consumer task
+  feeding `RPCSession.feed`), **not** by `FileHandle.readabilityHandler` (can
+  drop wakeups for large bursts under GUI load) and **not** via
+  `FileHandle.read(upToCount:)` (it accumulates until the full count or EOF —
+  a 64 KB request against nvim's smaller bursts hangs the session at the
+  handshake). With readabilityHandler, whole `redraw` notifications went
+  missing: the screen kept stale rows after `:edit`, and every later nvim
+  delta compounded the damage because nvim believed the UI had already seen
+  the missing rows. A raw blocking read cannot miss bytes that were written
+  to the pipe. Big redraw batches (>10 grid_line tuples) are logged at notice
+  level in `RPCSession.handleMessage` so any recurrence is visible in the
+  unified log
+  (`log show --predicate 'subsystem == "com.mzevo.iNeovim"'`).
+- **Redraw wire shapes:** `redraw` params arrive in two forms: pre-0.10 nvim
+  sends one argument holding the whole batch (an array of event arrays);
+  0.10+ sends each event array (`["grid_line", tuple, …]`) as its own
+  argument — including a single-argument flush where one big event (e.g. the
+  full-screen `grid_line` after `:edit`) is sent alone with a string head.
+  `RedrawEvent.parseNotification` must distinguish them by whether
+  `params[0].first` is itself an array; treating every single-argument
+  notification as the pre-0.10 shape silently parses the whole-screen
+  baseline to zero events and leaves stale rows.
 - **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is

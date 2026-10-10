@@ -51,21 +51,35 @@ actor RPCSession {
     func start() async throws {
         try await process.start()
         guard !isClosed, let output = await process.standardOutput else { throw NvimProcessError.notRunning }
-        // Read on the pipe's queue and hand chunks to a single consumer through
-        // an AsyncStream. Yielding to one continuation (instead of spawning a
-        // Task per chunk) guarantees the decoder sees bytes in arrival order:
-        // an out-of-order `feed` corrupts the stream and blanks the screen.
+        // Read on a dedicated blocking thread and hand chunks to a single
+        // consumer through an AsyncStream. Yielding to one continuation
+        // (instead of spawning a Task per chunk) guarantees the decoder sees
+        // bytes in arrival order: an out-of-order `feed` corrupts the stream
+        // and blanks the screen. A raw blocking read is used instead of
+        // `readabilityHandler`: under GUI load the handler's dispatch source
+        // can drop wakeups for large bursts (whole `redraw` notifications
+        // went missing with it, leaving stale grid rows after `:edit`), while
+        // a raw read cannot miss bytes that were written to the pipe.
         readTask?.cancel()
         let (chunks, continuation) = AsyncStream<Data>.makeStream()
-        output.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                handle.readabilityHandler = nil
-                continuation.finish()
-                return
+        // POSIX read(2), not FileHandle.read(upToCount:): the latter blocks
+        // until it has accumulated the full count (or EOF) — a 64 KB request
+        // against nvim's smaller bursts would hang the session at the
+        // handshake. A raw read returns whatever is in the pipe.
+        let fd = output.fileDescriptor
+        let readThread = Thread {
+            var buffer = [UInt8](repeating: 0, count: 1 << 16)
+            while true {
+                let n = read(fd, &buffer, buffer.count)
+                if n == -1 && errno == EINTR { continue }
+                guard n > 0 else { break }
+                continuation.yield(Data(buffer[0..<n]))
             }
-            continuation.yield(data)
+            continuation.finish()
         }
+        readThread.name = "nvim-rpc-read"
+        readThread.stackSize = 1 << 17
+        readThread.start()
         readTask = Task { [weak self] in
             for await chunk in chunks {
                 await self?.feed(chunk)
@@ -159,6 +173,16 @@ actor RPCSession {
                 continuation.resume(throwing: RPCError.remote(error))
             }
         case .notification(let method, let params):
+            // Delivery diagnostic: whole `redraw` batches once vanished between
+            // the pipe and the handler (stale grid rows after `:edit`), so big
+            // batches are logged at a persisting level to make any recurrence
+            // visible in the unified log.
+            if method == "redraw" {
+                let tuples = Self.gridLineTupleCount(params)
+                if tuples > 10 {
+                    Log.rpc.notice("redraw batch: \(tuples, privacy: .public) grid_line tuples in \(params.count, privacy: .public) params")
+                }
+            }
             guard let handlers = notificationHandlers[method], !handlers.isEmpty else {
                 Log.rpc.debug("No handlers for RPC notification \(method, privacy: .public)")
                 return
@@ -167,5 +191,25 @@ actor RPCSession {
                 handler(params)
             }
         }
+    }
+
+    /// Count `grid_line` tuples in a redraw batch, handling both the
+    /// single-array (pre-0.10) and multi-param wire shapes.
+    private static func gridLineTupleCount(_ params: [MsgPackValue]) -> Int {
+        var count = 0
+        for param in params {
+            guard case let .array(parts) = param else { continue }
+            if case .string("grid_line")? = parts.first {
+                count += parts.count - 1
+            } else {
+                for event in parts {
+                    if case let .array(eventParts) = event,
+                       case .string("grid_line")? = eventParts.first {
+                        count += eventParts.count - 1
+                    }
+                }
+            }
+        }
+        return count
     }
 }
