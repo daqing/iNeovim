@@ -9,6 +9,8 @@ struct EditorCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Open\u{2026}") { Self.showOpenPanel() }
                 .keyboardShortcut("o", modifiers: .command)
+            Button("Close") { Self.closeKeyWindow() }
+                .keyboardShortcut("w", modifiers: .command)
         }
 
         CommandGroup(replacing: .saveItem) {
@@ -48,5 +50,31 @@ struct EditorCommands: Commands {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
         AppModel.openFromSystem(panel.urls)
+    }
+
+    /// ⌘W closes the key editor window. With only one editor window left it
+    /// asks for confirmation instead — SwiftUI would otherwise leave the app
+    /// running with no window after the last close. Non-editor key windows
+    /// (e.g. Settings) close directly.
+    private static func closeKeyWindow() {
+        let live = AppModel.live
+        let keyWindow = NSApp.keyWindow
+        guard let model = live.first(where: { $0.hostWindow === keyWindow })
+            ?? (keyWindow == nil ? AppModel.active : nil),
+            let window = model.hostWindow else {
+            keyWindow?.performClose(nil)
+            return
+        }
+        guard live.count > 1 else {
+            let alert = NSAlert()
+            alert.messageText = "Quit iNeovim?"
+            alert.informativeText = "This is the last editor window; closing it quits iNeovim."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            NSApp.terminate(nil)
+            return
+        }
+        window.performClose(nil)
     }
 }

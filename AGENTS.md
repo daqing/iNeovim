@@ -216,6 +216,12 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   staged app-level and flushed to the first ready session. New sessions start
   in `$HOME` (`NvimProcess` sets the child's cwd), and closing a window
   terminates its nvim in `AppModel.deinit`.
+- **⌘W (File > Close):** `EditorCommands.closeKeyWindow` closes the key
+  editor window via `performClose`. When `AppModel.live` reports a single
+  session left, it first confirms with an `NSAlert` and quits via
+  `NSApp.terminate` (whose `applicationWillTerminate` begins shutdown for
+  every live session) — SwiftUI would otherwise leave the app running with
+  no window. A non-editor key window (e.g. Settings) closes directly.
 - **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
   so one wheel event scrolls exactly one line and the visual lead in
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.
