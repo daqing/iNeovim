@@ -46,6 +46,18 @@ final class TerminalView: NSView {
         return min(max(Int(y / cellHeight), 0), last - 1)
     }
 
+    /// Whether the nvim theme reads as dark: nvim reports its default
+    /// background at attach and re-reports it on every `:colorscheme`
+    /// change. nil (or nvim's -1 "unset" sentinel) means unknown, and the
+    /// window chrome then follows the system appearance.
+    static func hasDarkBackground(_ background: Int?) -> Bool? {
+        guard let background, let color = NSColor(packedRGB: background)?.usingColorSpace(.sRGB) else {
+            return nil
+        }
+        let luma = 0.299 * color.redComponent + 0.587 * color.greenComponent + 0.114 * color.blueComponent
+        return luma < 0.5
+    }
+
     let model: AppModel
     private(set) var metrics: FontMetrics
     private var snapshot: ScreenSnapshot?
@@ -182,6 +194,7 @@ final class TerminalView: NSView {
             self?.invalidatePreeditRegion()
         }
         refreshBackgroundColor()
+        refreshWindowAppearance()
     }
 
     required init?(coder: NSCoder) {
@@ -367,6 +380,7 @@ final class TerminalView: NSView {
         if let window {
             model.attach(to: window)
             observeWindowKeyState(window)
+            refreshWindowAppearance()
             _ = window.makeFirstResponder(self)
         }
         Task { @MainActor [weak self] in
@@ -440,6 +454,7 @@ final class TerminalView: NSView {
                     self.contentLayer.update(snapshot: snapshot)
                     self.contentLayer.invalidate(cellRects: cellRects)
                     self.refreshBackgroundColor()
+                    self.refreshWindowAppearance()
                     self.reconcileGridSize(with: snapshot)
                 }
             }
@@ -457,6 +472,7 @@ final class TerminalView: NSView {
             self.contentLayer.update(snapshot: snapshot)
             self.contentLayer.setNeedsDisplay()
             self.refreshBackgroundColor()
+            self.refreshWindowAppearance()
         }
     }
 
@@ -465,6 +481,14 @@ final class TerminalView: NSView {
         CATransaction.setDisableActions(true)
         layer?.backgroundColor = backgroundColor.cgColor
         CATransaction.commit()
+    }
+
+    /// Push the nvim theme into the window chrome through SwiftUI: setting
+    /// `NSWindow.appearance` directly is reset by the hosting WindowGroup,
+    /// while `preferredColorScheme` drives the window appearance (titlebar,
+    /// traffic lights, title text) and survives SwiftUI updates.
+    private func refreshWindowAppearance() {
+        model.setThemeIsDark(Self.hasDarkBackground(snapshot?.defaultBackground))
     }
 
     /// Slide the cursor to its new cell instead of jumping; runs before the

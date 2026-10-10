@@ -59,6 +59,16 @@ final class AppModel: ObservableObject {
     /// Setup guidance shown while nvim is missing, or nil.
     @Published private(set) var setup: NvimSetupGuide?
 
+    /// Whether the nvim colorscheme background is dark (nil before nvim
+    /// reports default colors). Drives the window chrome color scheme.
+    @Published private(set) var themeIsDark: Bool?
+
+    func setThemeIsDark(_ isDark: Bool?) {
+        if themeIsDark != isDark {
+            themeIsDark = isDark
+        }
+    }
+
     let session: RPCSession
     let screen: Screen
     let inputDispatcher: InputDispatcher

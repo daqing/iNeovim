@@ -137,6 +137,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 
 ## Design decisions
 
+- **Window chrome follows the nvim theme:** nvim's default background
+  (reported at attach and re-reported on every `:colorscheme` change via
+  `default_colors_set`) drives the window's `preferredColorScheme` — luma
+  < 0.5 maps to dark, otherwise light, and an unset background follows the
+  system. The titlebar, traffic lights, title text, and the adaptive
+  fallback colors then match the editor instead of the OS mode. Do not set
+  `NSWindow.appearance` directly: the hosting WindowGroup resets it on its
+  next update pass.
 - **Content inset & cmdline gap:** the grid is inset `TerminalView.contentInset`
   (6 pt) from the view on all sides, and the last grid row (nvim's
   cmdline/message area) is drawn `TerminalView.cmdlineGap` (4 pt) below the

@@ -12,6 +12,7 @@ struct ContentView: View {
             .frame(minWidth: 480, minHeight: 320)
             .background(.background)
             .overlay { statusOverlay }
+            .preferredColorScheme(model.themeIsDark.map { $0 ? .dark : .light })
             .navigationTitle(model.windowTitle ?? "iNeovim")
             .task { await model.bootstrap() }
             .alert(
