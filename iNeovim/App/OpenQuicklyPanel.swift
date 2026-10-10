@@ -16,9 +16,8 @@ final class OpenQuicklyPanel: NSView {
     private let tableView = NSTableView()
     private let previewField = NSTextField(labelWithString: "")
     private var allEntries: [QuicklyEntry] = []
-    /// Displayed rows: `..` (go up) plus the in-scope entries.
+    /// Displayed rows: the in-scope entries.
     private var matches: [QuicklyEntry] = []
-    private var showsUpRow = false
     /// Directory the panel is narrowed into; nil lists the working tree.
     private var scope: String?
     private var cwd = ""
@@ -131,18 +130,15 @@ final class OpenQuicklyPanel: NSView {
         updatePreview()
     }
 
-    /// Rows: `..` when narrowed into a directory, then the filtered entries.
     private var rows: [QuicklyEntry] {
-        (showsUpRow ? [QuicklyEntry(path: "..", isDirectory: true)] : []) + matches
+        matches
     }
 
     @objc private func openSelected() {
         let current = rows
         guard current.indices.contains(tableView.selectedRow) else { return }
         let entry = current[tableView.selectedRow]
-        if entry.path == ".." {
-            goUp()
-        } else if entry.isDirectory {
+        if entry.isDirectory {
             rescope(entry.path)
         } else {
             onOpen?(entry.path)
@@ -180,7 +176,6 @@ final class OpenQuicklyPanel: NSView {
     }
 
     private func refresh() {
-        showsUpRow = scope != nil
         let scoped = allEntries
         let query = searchField.stringValue
         filterTask?.cancel()
@@ -232,6 +227,14 @@ extension OpenQuicklyPanel: NSSearchFieldDelegate, NSTableViewDataSource, NSTabl
             case #selector(NSResponder.cancelOperation(_:)):
                 onClose?()
                 return true
+            case #selector(NSResponder.deleteBackward(_:)):
+                // Going up is Backspace on an empty query (the `..` row is
+                // deliberately not shown; the first entry stays selected).
+                if searchField.stringValue.isEmpty, scope != nil {
+                    goUp()
+                    return true
+                }
+                return false
             default:
                 return false
             }
