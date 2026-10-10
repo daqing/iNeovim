@@ -1,18 +1,24 @@
 import AppKit
 import GhosttySupport
 
-/// One native terminal pane: a slim header (title + close button) above a
-/// Ghostty surface. The surface close cycle — the child exiting, or a close
-/// request from the button, ⌃`, or the window closing — ends in `onClose`,
-/// which the split container uses to remove the pane.
+/// One native terminal pane: a slim header (terminal glyph + close button)
+/// above a Ghostty surface. The surface close cycle — the child exiting, or
+/// a close request from the button, ⌃`, or the window closing — ends in
+/// `onClose`, which the split container uses to remove the pane.
 final class TerminalPaneView: NSView {
     static let headerHeight: CGFloat = 26
+
+    /// Left inset of the surface's text content. Mirrored in the generated
+    /// Ghostty config (`window-padding-x`) and the header glyph so both
+    /// start on the same column.
+    static let contentInset: CGFloat = 8
 
     var onClose: (() -> Void)?
 
     let surfaceView: Ghostty.SurfaceView
     private let closeButton = NSButton()
-    private let titleLabel = NSTextField(labelWithString: "terminal")
+    /// Terminal-app motif (SF Symbol "terminal") standing in for a title.
+    private let titleIconView = NSImageView()
 
     /// Set once a close has been requested; the next close callback (even
     /// with the child still alive) finishes the teardown instead of asking
@@ -24,9 +30,12 @@ final class TerminalPaneView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
 
-        titleLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        titleLabel.textColor = .secondaryLabelColor
-        addSubview(titleLabel)
+        titleIconView.image = NSImage(
+            systemSymbolName: "terminal",
+            accessibilityDescription: "Terminal"
+        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        titleIconView.contentTintColor = .secondaryLabelColor
+        addSubview(titleIconView)
 
         closeButton.isBordered = false
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close terminal")
@@ -68,8 +77,13 @@ final class TerminalPaneView: NSView {
     private func relayout() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         closeButton.frame = NSRect(x: bounds.width - 28, y: 3, width: 24, height: 20)
-        let titleSize = titleLabel.fittingSize
-        titleLabel.frame = NSRect(x: 10, y: 5, width: titleSize.width, height: titleSize.height)
+        let iconSize = titleIconView.fittingSize
+        titleIconView.frame = NSRect(
+            x: Self.contentInset,
+            y: (Self.headerHeight - iconSize.height) / 2,
+            width: iconSize.width,
+            height: iconSize.height
+        )
         surfaceView.frame = NSRect(
             x: 0,
             y: Self.headerHeight,

@@ -69,6 +69,12 @@ final class GhosttyTerminalController {
 
         var lines = [
             "shell-integration = none",
+            // Room between the pane divider and the text; the surface still
+            // paints its background full-bleed, so no color seam appears.
+            // Mirrors TerminalPaneView.contentInset for the title alignment.
+            // Interpolated via Int: CGFloat would render "8.0", which
+            // Ghostty's integer parser rejects (option silently dropped).
+            "window-padding-x = \(Int(TerminalPaneView.contentInset))",
             "font-size = \(font.pointSize)",
         ]
         // System-mono fonts report private family names (".AppleSystem…")
