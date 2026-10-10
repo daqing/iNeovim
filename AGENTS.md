@@ -137,15 +137,18 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 
 ## Design decisions
 
-- **Content inset:** the grid is inset `TerminalView.contentInset` (6 pt) from
-  the view on all sides, and every grid cell-count computation
-  (`ResizeController.cellCount` via `TerminalView.insetContentSize`) derives
-  from the inset size, never the raw bounds. Without this the floor-rounded
-  grid fills the view edge to edge and the last line (statusline/cmdline)
-  hugs — or, while resizes race, overflows — the window's bottom edge. All
-  view-space→grid-space conversions (mouse `MouseHandler`, wheel pointer
-  `ScrollController`, IME preedit rects) subtract the inset; layer-internal
-  geometry (`GridContentLayer`, cursor/scroll animators) is unaffected.
+- **Content inset & cmdline gap:** the grid is inset `TerminalView.contentInset`
+  (6 pt) from the view on all sides, and the last grid row (nvim's
+  cmdline/message area) is drawn `TerminalView.cmdlineGap` (4 pt) below the
+  row above it, so the statusline and the cmdline never touch. Every grid
+  cell-count computation (`ResizeController.cellCount` via
+  `TerminalView.gridAreaSize`) derives from the inset- and gap-adjusted size,
+  never the raw bounds — otherwise the floor-rounded grid fills the view edge
+  to edge and the last line hugs — or, while resizes race, overflows — the
+  window's bottom edge. All view-space→grid-space conversions (mouse
+  `MouseHandler`, wheel pointer `ScrollController`, IME preedit rects)
+  subtract the inset, and row↔y math everywhere goes through
+  `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent.
 - **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is

@@ -10,15 +10,40 @@ final class TerminalView: NSView {
     /// touch the window edges.
     static let contentInset: CGFloat = 6
 
-    /// View size minus the content inset on both sides: the area the grid
-    /// may occupy. Grid cell counts must always be derived from this, never
-    /// from the raw bounds, or the grid fills the view edge to edge.
-    static func insetContentSize(_ size: CGSize) -> CGSize {
+    /// Extra vertical space between the statusline row and the cmdline row
+    /// below it: the last grid row is drawn this far below its uniform slot,
+    /// so the two rows never touch. The last grid row is nvim's message /
+    /// cmdline area; with `laststatus` >= 2 the row above it is the
+    /// statusline.
+    static let cmdlineGap: CGFloat = 4
+
+    /// View size minus the content inset on both sides and the cmdline gap:
+    /// the area the grid (rows plus gap) may occupy. Grid cell counts must
+    /// always be derived from this, never from the raw bounds, or the grid
+    /// fills the view edge to edge.
+    static func gridAreaSize(_ size: CGSize) -> CGSize {
         let inset = contentInset * 2
         return CGSize(
             width: max(0, size.width - inset),
-            height: max(0, size.height - inset)
+            height: max(0, size.height - inset - cmdlineGap)
         )
+    }
+
+    /// Y of a grid row's top edge in grid space (view space minus the
+    /// content inset), with the cmdline row shifted down by `cmdlineGap`.
+    static func gridRowY(_ row: Int, gridHeight: Int, cellHeight: CGFloat) -> CGFloat {
+        let y = CGFloat(row) * cellHeight
+        return row == gridHeight - 1 ? y + cmdlineGap : y
+    }
+
+    /// Inverse of `gridRowY` for hit-testing: grid-space y to a row index,
+    /// clamped to the grid. The gap band itself belongs to the statusline
+    /// row; the cmdline row starts at its shifted top edge.
+    static func gridRow(atY y: CGFloat, gridHeight: Int, cellHeight: CGFloat) -> Int {
+        let last = gridHeight - 1
+        if last <= 0 { return max(0, last) }
+        if y >= CGFloat(last) * cellHeight + cmdlineGap { return last }
+        return min(max(Int(y / cellHeight), 0), last - 1)
     }
 
     let model: AppModel
@@ -71,7 +96,7 @@ final class TerminalView: NSView {
     /// resize below.
     private func requestResize(to size: CGSize) {
         reconciledViewSize = nil
-        Task { await resizeController.viewDidResize(to: Self.insetContentSize(size)) }
+        Task { await resizeController.viewDidResize(to: Self.gridAreaSize(size)) }
     }
 
     /// Neovim rejects a resize that arrives before `ui_attach`, which would
@@ -82,13 +107,13 @@ final class TerminalView: NSView {
     private func reconcileGridSize(with snapshot: ScreenSnapshot) {
         guard sessionReady, let grid = snapshot.grid, !grid.isEmpty else { return }
         let expected = ResizeController.cellCount(
-            for: Self.insetContentSize(bounds.size),
+            for: Self.gridAreaSize(bounds.size),
             cellSize: metrics.cellSize
         )
         guard grid.width != expected.cols || grid.height != expected.rows else { return }
         guard reconciledViewSize != bounds.size else { return }
         reconciledViewSize = bounds.size
-        Task { await resizeController.viewDidResize(to: Self.insetContentSize(bounds.size)) }
+        Task { await resizeController.viewDidResize(to: Self.gridAreaSize(bounds.size)) }
     }
 
     private func applyMetrics(_ newMetrics: FontMetrics) {
@@ -102,7 +127,7 @@ final class TerminalView: NSView {
         Task { [weak self] in
             guard let self else { return }
             await self.resizeController.setCellSize(newMetrics.cellSize)
-            await self.resizeController.viewDidResize(to: Self.insetContentSize(size))
+            await self.resizeController.viewDidResize(to: Self.gridAreaSize(size))
         }
         reconciledViewSize = nil
     }
@@ -123,7 +148,7 @@ final class TerminalView: NSView {
             origin: .zero,
             size: CGSize(
                 width: metrics.cellSize.width * 80 + Self.contentInset * 2,
-                height: metrics.cellSize.height * 24 + Self.contentInset * 2
+                height: metrics.cellSize.height * 24 + Self.contentInset * 2 + Self.cmdlineGap
             )
         ))
         wantsLayer = true
@@ -462,7 +487,11 @@ final class TerminalView: NSView {
             && grid[next.cursor.row, next.cursor.col + 1].text.isEmpty
         let newRect = CGRect(
             x: CGFloat(next.cursor.col) * cellSize.width,
-            y: CGFloat(next.cursor.row) * cellSize.height,
+            y: Self.gridRowY(
+                next.cursor.row,
+                gridHeight: grid.height,
+                cellHeight: cellSize.height
+            ),
             width: cellSize.width * (wide ? 2 : 1),
             height: cellSize.height
         )

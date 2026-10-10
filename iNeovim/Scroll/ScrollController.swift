@@ -80,7 +80,7 @@ final class ScrollController {
         guard let view else { return }
         let viewHeight = view.bounds.height
         let contentHeight = view.gridDimensions.map {
-            CGFloat($0.height) * view.metrics.cellSize.height
+            CGFloat($0.height) * view.metrics.cellSize.height + TerminalView.cmdlineGap
         } ?? viewHeight
         accumulator.maxLead = max(1, min(viewHeight, contentHeight))
     }

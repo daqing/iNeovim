@@ -76,7 +76,7 @@ final class GridContentLayer: CALayer {
         if let grid = snapshot.grid, !grid.isEmpty {
             size = CGSize(
                 width: CGFloat(grid.width) * metrics.cellSize.width,
-                height: CGFloat(grid.height) * metrics.cellSize.height
+                height: CGFloat(grid.height) * metrics.cellSize.height + TerminalView.cmdlineGap
             )
         } else {
             size = .zero
@@ -190,21 +190,34 @@ final class GridContentLayer: CALayer {
         drawPreedit(dirtyBounds, context: context)
     }
 
+    /// Y of a row's top edge in layer space; the last row (cmdline/message
+    /// area) is shifted down by the cmdline gap. Every row-positioning math
+    /// in the layer must go through this so the gap stays consistent.
+    private func rowY(_ row: Int) -> CGFloat {
+        TerminalView.gridRowY(
+            row,
+            gridHeight: snapshot?.grid?.height ?? 0,
+            cellHeight: metrics.cellSize.height
+        )
+    }
+
     private func pixelRect(for cellRect: CellRect) -> CGRect {
         let cellWidth = metrics.cellSize.width
         let cellHeight = metrics.cellSize.height
+        let y = rowY(cellRect.minRow)
+        let bottom = rowY(cellRect.maxRow - 1) + cellHeight
         return CGRect(
             x: CGFloat(cellRect.minCol) * cellWidth,
-            y: CGFloat(cellRect.minRow) * cellHeight,
+            y: y,
             width: CGFloat(cellRect.maxCol - cellRect.minCol) * cellWidth,
-            height: CGFloat(cellRect.maxRow - cellRect.minRow) * cellHeight
+            height: bottom - y
         )
     }
 
     private func rect(for run: StyledRun, row: Int) -> CGRect {
         CGRect(
             x: CGFloat(run.startCol) * metrics.cellSize.width,
-            y: CGFloat(row) * metrics.cellSize.height,
+            y: rowY(row),
             width: CGFloat(run.endCol - run.startCol) * metrics.cellSize.width,
             height: metrics.cellSize.height
         )
@@ -275,7 +288,7 @@ final class GridContentLayer: CALayer {
         ])
         let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
 
-        let baseline = CGFloat(row) * metrics.cellSize.height + metrics.baseline + translation.height
+        let baseline = rowY(row) + metrics.baseline + translation.height
         let textY = bounds.height - baseline
         let originX = CGFloat(run.startCol) * metrics.cellSize.width + translation.width
         drawPinned(line: line, slots: run.slots, originX: originX, textY: textY, context: context)
@@ -364,7 +377,7 @@ final class GridContentLayer: CALayer {
         }
         return CGRect(
             x: CGFloat(snapshot.cursor.col) * metrics.cellSize.width,
-            y: CGFloat(snapshot.cursor.row) * metrics.cellSize.height,
+            y: rowY(snapshot.cursor.row),
             width: metrics.cellSize.width * CGFloat(cursorCellCols(grid)),
             height: metrics.cellSize.height
         )

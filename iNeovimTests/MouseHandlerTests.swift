@@ -39,6 +39,31 @@ final class MouseHandlerTests: XCTestCase {
         XCTAssertEqual(location.col, 25)
     }
 
+    func testCellLocationAccountsForCmdlineGap() {
+        // The last row starts at 23 * 20 + 4 = 464; the 4pt gap band above it
+        // still belongs to the statusline row.
+        let belowGap = MouseHandler.cellLocation(
+            for: CGPoint(x: 0, y: 465),
+            cellSize: cellSize,
+            gridWidth: 80,
+            gridHeight: 24
+        )
+        XCTAssertEqual(belowGap.row, 23)
+
+        let inGap = MouseHandler.cellLocation(
+            for: CGPoint(x: 0, y: 462),
+            cellSize: cellSize,
+            gridWidth: 80,
+            gridHeight: 24
+        )
+        XCTAssertEqual(inGap.row, 22)
+    }
+
+    func testGridRowYShiftsCmdlineRow() {
+        XCTAssertEqual(TerminalView.gridRowY(22, gridHeight: 24, cellHeight: 20), 440)
+        XCTAssertEqual(TerminalView.gridRowY(23, gridHeight: 24, cellHeight: 20), 464)
+    }
+
     func testModifierStringOrder() {
         let flags: NSEvent.ModifierFlags = [.shift, .command]
         XCTAssertEqual(MouseHandler.modifierString(for: flags), "SM")

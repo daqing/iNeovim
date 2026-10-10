@@ -80,6 +80,8 @@ final class MouseHandler {
     }
 
     /// View point (y-down, flipped view) to grid cell, clamped to the grid.
+    /// Row mapping goes through `TerminalView.gridRow` so the gap above the
+    /// cmdline row is accounted for.
     static func cellLocation(
         for point: CGPoint,
         cellSize: CGSize,
@@ -87,7 +89,16 @@ final class MouseHandler {
         gridHeight: Int?
     ) -> (row: Int, col: Int) {
         let col = min(max(Int(point.x / cellSize.width), 0), gridWidth.map { $0 - 1 } ?? .max)
-        let row = min(max(Int(point.y / cellSize.height), 0), gridHeight.map { $0 - 1 } ?? .max)
+        let row: Int
+        if let gridHeight {
+            row = TerminalView.gridRow(
+                atY: point.y,
+                gridHeight: gridHeight,
+                cellHeight: cellSize.height
+            )
+        } else {
+            row = max(Int(point.y / cellSize.height), 0)
+        }
         return (row, col)
     }
 }
