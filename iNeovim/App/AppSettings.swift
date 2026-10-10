@@ -27,6 +27,11 @@ final class AppSettings: ObservableObject {
     @Published var cursorAnimationEnabled: Bool {
         didSet { defaults.set(cursorAnimationEnabled, forKey: Keys.cursorAnimationEnabled) }
     }
+    /// Redirect a typed `:terminal` to the native Ghostty side pane instead
+    /// of an in-buffer terminal.
+    @Published var nativeTerminalPane: Bool {
+        didSet { defaults.set(nativeTerminalPane, forKey: Keys.nativeTerminalPane) }
+    }
 
     private let defaults: UserDefaults
 
@@ -37,6 +42,7 @@ final class AppSettings: ObservableObject {
         static let passCmdKeysThrough = "settings.passCmdKeysThrough"
         static let scrollAnimationEnabled = "settings.scrollAnimationEnabled"
         static let cursorAnimationEnabled = "settings.cursorAnimationEnabled"
+        static let nativeTerminalPane = "settings.nativeTerminalPane"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -48,6 +54,7 @@ final class AppSettings: ObservableObject {
             Keys.passCmdKeysThrough: false,
             Keys.scrollAnimationEnabled: true,
             Keys.cursorAnimationEnabled: true,
+            Keys.nativeTerminalPane: true,
         ])
         fontFamily = defaults.string(forKey: Keys.fontFamily) ?? ""
         fontSize = defaults.double(forKey: Keys.fontSize)
@@ -55,6 +62,7 @@ final class AppSettings: ObservableObject {
         passCmdKeysThrough = defaults.bool(forKey: Keys.passCmdKeysThrough)
         scrollAnimationEnabled = defaults.bool(forKey: Keys.scrollAnimationEnabled)
         cursorAnimationEnabled = defaults.bool(forKey: Keys.cursorAnimationEnabled)
+        nativeTerminalPane = defaults.bool(forKey: Keys.nativeTerminalPane)
     }
 
     var inputSettings: InputSettings {
@@ -101,5 +109,6 @@ final class AppSettings: ObservableObject {
         passCmdKeysThrough = false
         scrollAnimationEnabled = true
         cursorAnimationEnabled = true
+        nativeTerminalPane = true
     }
 }

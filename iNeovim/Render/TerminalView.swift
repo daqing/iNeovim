@@ -91,6 +91,8 @@ final class TerminalView: NSView {
             keyHandler.optionAsMeta = inputSettings.optionAsMeta
         }
     }
+    /// Whether a typed `:terminal` opens the native pane; from settings.
+    var nativeTerminalPaneEnabled = true
 
     /// Apply user settings: font metrics, input switches, and animation
     /// toggles. Changing the font reflows the grid at the new cell size.
@@ -100,6 +102,7 @@ final class TerminalView: NSView {
             applyMetrics(FontMetrics(font: font))
         }
         inputSettings = settings.inputSettings
+        nativeTerminalPaneEnabled = settings.nativeTerminalPane
         let animations = settings.animationSettings
         scrollController.settings = animations
         scrollAnimator.settings = animations
@@ -270,6 +273,17 @@ final class TerminalView: NSView {
 
     func sendKeys(_ keys: String) {
         trackCmdline(keys)
+        // A typed `:terminal` opens the native Ghostty pane beside the
+        // editor instead of a terminal buffer inside nvim; the Enter that
+        // would execute it cancels the cmdline instead.
+        if keys == "<CR>", nativeTerminalPaneEnabled,
+           let shellCommand = Self.nativeTerminalRequest(from: cmdlineBuffer) {
+            Log.input.notice("Intercepted typed :terminal, opening native pane")
+            cmdlineBuffer = ""
+            model.inputDispatcher.send(.keys("<Esc>"))
+            model.requestTerminalPane(command: shellCommand)
+            return
+        }
         // Hard gate: the tree-walking fzf commands must not run in / or
         // $HOME — walking either tree can freeze the machine.
         if keys == "<CR>", Self.isFzfWalkCommand(cmdlineBuffer) {
@@ -298,11 +312,46 @@ final class TerminalView: NSView {
         return path == "/" || path == home
     }
 
+    /// Whether a `mode_change` name names the cmdline. nvim's UI protocol
+    /// sends the full forms (`cmdline_normal` while typing, `cmdline_insert`
+    /// / `cmdline_replace` submodes); `"c"` is only the short name `mode()`
+    /// returns — the fzf gate and the `:terminal` interception both keyed on
+    /// the short form and never fired. Accept both spellings.
+    static func isCmdlineMode(_ modeName: String?) -> Bool {
+        guard let modeName else { return false }
+        return modeName == "c" || modeName.hasPrefix("cmdline_")
+    }
+
+    /// Whether a typed cmdline names a `:terminal` invocation that should
+    /// open the native pane instead of an in-buffer terminal.
+    static func isNativeTerminalCommand(_ command: String) -> Bool {
+        nativeTerminalRequest(from: command) != nil
+    }
+
+    /// Parse the cmdline text (after the leading `:`) of a typed `:terminal`
+    /// into the shell command the native pane should run ("" for the default
+    /// shell); nil when the command is anything else. Matching mirrors nvim:
+    /// built-in commands are case-sensitive (`:Term` stays a user command)
+    /// and `term`…`terminal` are the accepted abbreviations. An optional
+    /// `vert`…`vertical` modifier matches the pane's right-side placement;
+    /// other modifiers (`:tab`, `:hor`) are left to nvim itself.
+    static func nativeTerminalRequest(from command: String) -> String? {
+        var words = command.trimmingCharacters(in: .whitespaces)
+            .split(separator: " ", omittingEmptySubsequences: true)
+        if let first = words.first, first.count >= 4, "vertical".hasPrefix(first) {
+            words.removeFirst()
+        }
+        guard let name = words.first else { return nil }
+        let bare = name.hasSuffix("!") ? name.dropLast() : name
+        guard bare.count >= 4, "terminal".hasPrefix(bare) else { return nil }
+        return words.dropFirst().joined(separator: " ")
+    }
+
     /// Cmdline text accumulated while nvim reports cmdline mode.
     private var cmdlineBuffer = ""
 
     private func trackCmdline(_ keys: String) {
-        guard snapshot?.modeName == "c" else {
+        guard Self.isCmdlineMode(snapshot?.modeName) else {
             cmdlineBuffer = ""
             return
         }
@@ -755,6 +804,10 @@ final class TerminalView: NSView {
     /// traffic lights, title text) and survives SwiftUI updates.
     private func refreshWindowAppearance() {
         model.setThemeIsDark(Self.hasDarkBackground(snapshot?.defaultBackground))
+        model.setTerminalColors(AppModel.TerminalColors(
+            foreground: snapshot?.defaultForeground,
+            background: snapshot?.defaultBackground
+        ))
     }
 
     /// Slide the cursor to its new cell instead of jumping; runs before the

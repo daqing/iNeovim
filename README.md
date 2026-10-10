@@ -24,6 +24,8 @@ iNeovim aims for a complete native Mac experience, including:
 - **Native keyboard experience** — macOS key handling and native shortcuts
 - **System integration** — input methods (IME), the Emoji & Symbols panel, and other
   macOS services working as they do in any native app
+- **Native terminal pane** — `:terminal` opens a real [Ghostty](https://ghostty.org)
+  terminal docked beside the editor instead of a terminal buffer inside Neovim
 
 ## Architecture
 
@@ -119,6 +121,18 @@ The test suite covers the codec, redraw parsing, UI state, input, scrolling,
 settings, crash recovery, render smoke tests, and an embedded `:terminal`
 sanity check. See `docs/TASKS.md` for the plan, `docs/VERIFICATION.md` for manual
 checks, `docs/PERFORMANCE.md` for profiling, and `docs/RELEASE.md` for shipping.
+
+### Native terminal pane
+
+Typing `:terminal` opens a native terminal pane docked to the right of the
+editor — a real Ghostty terminal surface (libghostty), not a terminal buffer
+inside Neovim. The pane starts in Neovim's working directory
+(`:term <cmd>` runs a command instead of a shell), mirrors the editor's font
+and colors, and follows `⌃\`` or **Neovim ▸ Toggle Terminal Pane**. The
+interception can be disabled in Settings to fall back to Neovim's in-buffer
+terminal. The embedded GhosttyKit binary and its adapted Swift bindings are
+vendored under `Packages/GhosttySupport` (built from a pinned Ghostty source
+snapshot; see its `ADAPTATION.md`).
 
 ## Requirements
 

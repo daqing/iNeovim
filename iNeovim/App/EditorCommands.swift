@@ -41,7 +41,8 @@ struct EditorCommands: Commands {
             Button("Split Vertically") { AppModel.active?.splitVertical() }
             Button("Close Window") { AppModel.active?.closeWindow() }
             Divider()
-            Button("Open Terminal") { AppModel.active?.openTerminal() }
+            Button("Toggle Terminal Pane") { AppModel.active?.toggleTerminalPane() }
+                .keyboardShortcut("`", modifiers: .control)
         }
     }
 

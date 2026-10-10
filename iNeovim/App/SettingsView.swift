@@ -37,6 +37,10 @@ struct SettingsView: View {
                 Toggle("Animate cursor", isOn: $settings.cursorAnimationEnabled)
             }
 
+            Section("Terminal") {
+                Toggle("Open :terminal in native pane", isOn: $settings.nativeTerminalPane)
+            }
+
             HStack {
                 Spacer()
                 Button("Reset to Defaults") { settings.resetToDefaults() }

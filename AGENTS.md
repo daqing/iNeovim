@@ -89,7 +89,15 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── CursorAnimator.swift     cursor glide between cells (~80 ms)
 │   ├── ScrollAnimationSettings.swift  shared durations/thresholds knobs
 │   └── DisplayLinkDriver.swift  CVDisplayLink → Swift closure trampoline
+├── TerminalPane/         native Ghostty terminal pane (see design decisions)
+│   ├── EditorSplitView.swift    editor|divider|pane container, pane intents
+│   ├── TerminalPaneView.swift   pane header + surface lifecycle
+│   └── GhosttyTerminalController.swift  process-wide Ghostty.App, config, surfaces
 └── Assets.xcassets/      AccentColor colorset + AppIcon.appiconset (T9.3)
+Packages/GhosttySupport/  Local Swift package wrapping the self-built
+                          GhosttyKit xcframework (Vendor/) and the adapted
+                          libghostty Swift bindings (Sources/); see its
+                          ADAPTATION.md for provenance and pruning notes
 Scripts/                  One-off tooling (app-icon generator); not part of the build
 iNeovimTests/             XCTest target (synchronized group); codec round-trip,
                           redraw-parsing, settings/model, and embedded-nvim tests
@@ -222,7 +230,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   PATH.
 - **fzf tree-walk guard:** typed cmdline input is funneled through
   `TerminalView.sendKeys`, which accumulates the command text while nvim
-  reports cmdline mode (`ScreenSnapshot.modeName == "c"`) and, on Enter,
+  reports cmdline mode (`TerminalView.isCmdlineMode`: nvim's UI protocol
+  sends `cmdline_normal`/`cmdline_insert`/`cmdline_replace`, never
+  `mode()`'s short `"c"` — keying on the short form silently disabled
+  both gates until it was caught in the Ghostty-pane work) and, on Enter,
   matches it against the tree-walking fzf.vim commands (`FZF`, `Files`,
   `Ag`, `Rg`, `RGrep`, `LGrep`). In `/` or `$HOME` the Enter is held while
   an `NSAlert` asks whether to run anyway (Cancel sends `<Esc>` instead) —
@@ -256,6 +267,31 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   unchanged. The rest of the intercepted gesture (drag/release) is always
   swallowed so nvim never sees orphan events. The popover is a transient
   `NSPopover` (click-outside dismissal); typing or scrolling closes it too.
+- **Native terminal pane (Ghostty):** a typed `:terminal` (and its `term`…
+  `terminal` abbreviations, optional `vert[ical]` modifier, optional `!`,
+  optional trailing command) never reaches nvim: `TerminalView.sendKeys`
+  matches the accumulated cmdline (same `cmdlineBuffer` mechanism as the
+  fzf gate), swallows the Enter, sends `<Esc>` to cancel the cmdline, and
+  asks `AppModel.requestTerminalPane(command:)` to open the native pane
+  instead. The pane is an in-window right-hand split (`EditorSplitView`:
+  editor | draggable divider | `TerminalPaneView`) whose width drives the
+  normal resize pipeline — narrowing the editor simply reflows the nvim
+  grid through `ResizeController`. The pane hosts a real libghostty
+  surface: `Packages/GhosttySupport` (local Swift package) wraps a
+  self-built `GhosttyKit.xcframework` (ghostty 1.3.2-main+246f702, Zig
+  0.16.0, macOS-universal slice only — iOS slices pruned; provenance and
+  pruning in its `ADAPTATION.md`) plus adapted Swift bindings. One
+  `Ghostty.App` per process (`GhosttyTerminalController`) hosts every
+  window's surface; per-surface `SurfaceConfiguration` sets the cwd from
+  nvim's `getcwd()` and the command parsed off the cmdline. The generated
+  app config (Application Support/iNeovim/ghostty.conf, frozen when the
+  first pane opens) mirrors the editor font and nvim's default colors and
+  sets `shell-integration = none` — Ghostty's shell-integration scripts
+  are GPLv3 and must not ship in this MIT app. Menu "Toggle Terminal
+  Pane" / ⌃` toggles regardless of focus; the settings toggle
+  "Open :terminal in native pane" only gates the cmdline interception
+  (mappings/plugins/RPC `:terminal` bypass `sendKeys` and keep nvim's
+  in-buffer terminal, exactly like the fzf gate's known edges).
 - **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is
