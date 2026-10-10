@@ -1,5 +1,20 @@
 import Foundation
 
+/// One `vim.diagnostic` entry on the clicked line.
+struct LineDiagnostic: Equatable {
+    enum Severity: Int {
+        case error = 1
+        case warning
+        case info
+        case hint
+    }
+
+    var severity: Severity
+    var message: String
+    var source: String
+    var code: String
+}
+
 struct NvimClient {
     let session: RPCSession
 
@@ -78,6 +93,71 @@ struct NvimClient {
     func currentDirectory() async throws -> String {
         try await callFunction("getcwd", args: [])
     }
+
+    /// Run a Lua chunk with `nvim_exec_lua`; `args` arrive as varargs.
+    func execLua(_ code: String, args: [MsgPackValue] = []) async throws -> MsgPackValue {
+        try await session.call("nvim_exec_lua", params: [.string(code), .array(args)])
+    }
+
+    /// Translate a grid position to the buffer line it displays (across
+    /// splits), then collect the diagnostics on that line. The Lua runs in
+    /// the embedded nvim because only it knows the window layout and each
+    /// window's scroll position.
+    func lineDiagnostics(row: Int, col: Int) async throws -> [LineDiagnostic] {
+        let value = try await execLua(Self.lineDiagnosticsLua, args: [
+            .int(Int64(row)), .int(Int64(col)),
+        ])
+        return Self.parseLineDiagnostics(value)
+    }
+
+    /// Map with the `lnum`/`items` shape produced by `lineDiagnosticsLua`.
+    static func parseLineDiagnostics(_ value: MsgPackValue) -> [LineDiagnostic] {
+        guard case let .map(map) = value,
+              case let .array(items)? = map[.string("items")] else { return [] }
+        return items.compactMap { item in
+            guard case let .map(fields) = item else { return nil }
+            return LineDiagnostic(
+                severity: fields[.string("severity")]?.intValue.flatMap(LineDiagnostic.Severity.init(rawValue:)) ?? .info,
+                message: fields[.string("message")]?.stringValue ?? "",
+                source: fields[.string("source")]?.stringValue ?? "",
+                code: fields[.string("code")]?.stringValue ?? ""
+            )
+        }
+    }
+
+    /// Find the window covering the clicked cell, map the screen row to a
+    /// buffer line (`getwininfo` reports window rects in the same global
+    /// grid coordinates `nvim_input_mouse` uses), and list that line's
+    /// `vim.diagnostic` entries. Guarded by pcall so nvim versions without
+    /// the module still return an empty list and the click falls through.
+    private static let lineDiagnosticsLua = """
+        local row, col = ...
+        local target = nil
+        for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          local info = vim.fn.getwininfo(w)[1]
+          if info
+            and row + 1 >= info.winrow and row + 1 < info.winrow + info.height
+            and col + 1 >= info.wincol and col + 1 < info.wincol + info.width then
+            target = { win = w, info = info }
+            break
+          end
+        end
+        if not target then return { items = {} } end
+        local lnum = target.info.topline + (row + 1 - target.info.winrow)
+        local items = {}
+        local ok, diags = pcall(vim.diagnostic.get, vim.api.nvim_win_get_buf(target.win), { lnum = lnum - 1 })
+        if ok then
+          for _, d in ipairs(diags) do
+            table.insert(items, {
+              severity = d.severity or 3,
+              message = d.message or '',
+              source = d.source or '',
+              code = d.code and tostring(d.code) or '',
+            })
+          end
+        end
+        return { lnum = lnum, items = items }
+        """
 
     private func callFunction(_ name: String, args: [MsgPackValue]) async throws -> String {
         let value = try await session.call("nvim_call_function", params: [

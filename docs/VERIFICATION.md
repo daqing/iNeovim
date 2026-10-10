@@ -78,3 +78,9 @@ aligned.
   Neovim in `$HOME` (`:pwd`); typing, scrolling, and tab shortcuts act on the
   focused window only; menu commands and ⌘O opens route to the key window;
   closing one window leaves the others' sessions running.
+- **Diagnostics popover:** in a Go (or any LSP) project with a diagnostic on
+  screen, click the error sign in the gutter ("E" left of the line number): a
+  native popover appears anchored there listing severity, message, and
+  `source · code`; click outside, type, or scroll to dismiss. Clicking a
+  gutter cell on a clean line behaves exactly like before (the click reaches
+  nvim, e.g. it toggles a fold when a fold column is present).

@@ -4,9 +4,16 @@ import AppKit
 /// Dragging extends selections because nvim treats "drag" actions as
 /// selection extension.
 final class MouseHandler {
+    /// The gutter cells (sign column) where a plain left click opens the
+    /// diagnostics popover instead of moving nvim's cursor.
+    static let signColumnMaxCol = 1
+
     weak var view: TerminalView?
     private let dispatcher: InputDispatcher
     private var pressedButton: String?
+    /// The current gesture was routed to the diagnostics popover; its drag
+    /// and release must not reach nvim as orphans.
+    private var isSwallowingGesture = false
 
     init(dispatcher: InputDispatcher) {
         self.dispatcher = dispatcher
@@ -16,22 +23,47 @@ final class MouseHandler {
         guard let button = Self.buttonName(for: event) else { return }
         view?.window?.makeFirstResponder(view)
         pressedButton = button
+        if button == "left",
+           Self.modifierString(for: event.modifierFlags).isEmpty,
+           let cell = cellLocation(for: event),
+           cell.col <= Self.signColumnMaxCol {
+            isSwallowingGesture = true
+            view?.presentDiagnostics(atRow: cell.row, col: cell.col)
+            return
+        }
         handle(event, button: button, action: "press")
     }
 
     func mouseDragged(_ event: NSEvent) {
-        guard let pressedButton else { return }
+        guard let pressedButton, !isSwallowingGesture else { return }
         handle(event, button: pressedButton, action: "drag")
     }
 
     func mouseUp(_ event: NSEvent) {
         guard let pressedButton else { return }
         self.pressedButton = nil
+        if isSwallowingGesture {
+            isSwallowingGesture = false
+            return
+        }
         handle(event, button: pressedButton, action: "release")
     }
 
     private func handle(_ event: NSEvent, button: String, action: String) {
-        guard let view else { return }
+        guard let cell = cellLocation(for: event) else { return }
+        let modifier = Self.modifierString(for: event.modifierFlags)
+        dispatcher.send(.mouse(
+            button: button,
+            action: action,
+            modifier: modifier,
+            grid: 1,
+            row: cell.row,
+            col: cell.col
+        ))
+    }
+
+    private func cellLocation(for event: NSEvent) -> (row: Int, col: Int)? {
+        guard let view else { return nil }
         let point = view.convert(event.locationInWindow, from: nil)
         // The grid starts contentInset into the view; convert to grid space
         // before dividing into cells.
@@ -40,21 +72,12 @@ final class MouseHandler {
             y: point.y - TerminalView.contentInset
         )
         let dimensions = view.gridDimensions
-        let (row, col) = Self.cellLocation(
+        return Self.cellLocation(
             for: gridPoint,
             cellSize: view.metrics.cellSize,
             gridWidth: dimensions?.width,
             gridHeight: dimensions?.height
         )
-        let modifier = Self.modifierString(for: event.modifierFlags)
-        dispatcher.send(.mouse(
-            button: button,
-            action: action,
-            modifier: modifier,
-            grid: 1,
-            row: row,
-            col: col
-        ))
     }
 
     static func buttonName(for event: NSEvent) -> String? {

@@ -72,6 +72,8 @@ final class TerminalView: NSView {
     /// Native ⌘P file finder; presented centered over the editor and hidden
     /// again after a pick or cancel.
     private let openQuicklyPanel = OpenQuicklyPanel()
+    /// Native popover listing the diagnostics on a gutter sign's line.
+    private let diagnosticPopover = DiagnosticPopover()
     private let scrollAnimator = ScrollAnimator()
     private let cursorAnimator = CursorAnimator()
     private let resizeController: ResizeController
@@ -236,6 +238,7 @@ final class TerminalView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        diagnosticPopover.close()
         if imeHandler.hasMarkedText {
             // Composition in progress: let the input context route the event
             // to setMarkedText/insertText/doCommand.
@@ -474,7 +477,45 @@ final class TerminalView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        diagnosticPopover.close()
         scrollController.scrollWheel(with: event)
+    }
+
+    // MARK: - Diagnostics popover
+
+    /// A plain left click in the sign column (the gutter carrying the
+    /// diagnostic signs): look up the clicked line's `vim.diagnostic`
+    /// entries and show them in a native popover anchored at the clicked
+    /// cell. A line without diagnostics falls back to a normal click,
+    /// forwarded after the lookup.
+    func presentDiagnostics(atRow row: Int, col: Int) {
+        let anchor = signColumnRect(row: row, col: col)
+        let themeIsDark = Self.hasDarkBackground(snapshot?.defaultBackground)
+        Task { @MainActor in
+            let items = (try? await model.client.lineDiagnostics(row: row, col: col)) ?? []
+            guard !items.isEmpty else {
+                model.inputDispatcher.send(.mouse(
+                    button: "left", action: "press", modifier: "", grid: 1, row: row, col: col
+                ))
+                return
+            }
+            diagnosticPopover.present(
+                items: items, relativeTo: anchor, of: self, themeIsDark: themeIsDark
+            )
+        }
+    }
+
+    /// View-space rect of the clicked gutter cell, two cells wide so the
+    /// popover arrow centers on the sign slot.
+    private func signColumnRect(row: Int, col: Int) -> CGRect {
+        let cell = metrics.cellSize
+        let gridHeight = gridDimensions?.height ?? 0
+        return CGRect(
+            x: Self.contentInset + CGFloat(col) * cell.width,
+            y: Self.contentInset + Self.gridRowY(row, gridHeight: gridHeight, cellHeight: cell.height),
+            width: cell.width * 2,
+            height: cell.height
+        )
     }
 
     // Dropping files on the editor opens them as buffers (same path as

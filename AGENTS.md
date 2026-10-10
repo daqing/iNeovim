@@ -42,7 +42,11 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── AppModel.swift        per-window session stack, command routing, file queues, title
 │   ├── AppSettings.swift     persisted font/input/animation settings
 │   ├── SettingsView.swift    settings window
-│   └── EditorCommands.swift  File + Neovim menu commands
+│   ├── SetupView.swift       first-run guidance when no nvim is installed
+│   ├── EditorCommands.swift  File + Neovim menu commands
+│   ├── OpenQuicklyPanel.swift  native ⌘P file finder panel
+│   ├── QuicklyFileSource.swift  first-level directory listing for the panel
+│   └── FuzzyMatcher.swift    fzf --filter front end with in-process fallback
 ├── Logging.swift         os.Logger categories (rpc, render, input, app)
 ├── NvimDiscovery.swift   Locates the nvim binary and checks its version
 ├── NvimProcess.swift     Actor owning the nvim --embed child process
@@ -67,6 +71,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── CellRenderer.swift    grid rows → styled runs for CTLine shaping
 │   ├── GridContentLayer.swift  cells/cursor/preedit in a scrollable CALayer
 │   ├── TerminalView.swift    layer-backed NSView hosting the content layer
+│   ├── CompletionPanelView.swift  native ext_popupmenu completion list
+│   ├── DiagnosticPopover.swift  native vim.diagnostic popover for gutter clicks
 │   ├── CursorBlinker.swift   cursor blink timing (wait/on/off)
 │   └── NSColor+PackedRGB.swift  0xRRGGBB ↔ NSColor helpers
 ├── Input/                keyboard/mouse translation layer (Phase 6)
@@ -236,6 +242,20 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   only completion UI while attached — there is no in-grid fallback. Hover /
   signature-help floats still render as grid content; making those native
   requires `ext_multigrid` and is a separate, much larger iteration.
+- **Sign-column diagnostics popover:** a plain left click in the gutter
+  (grid columns 0–1, where LSP signs such as gopls' "E" render) opens a
+  native popover listing that line's `vim.diagnostic` entries — severity
+  dot, selectable message, `source · code` — anchored at the clicked cell,
+  with its appearance following the nvim theme. The click is intercepted in
+  `MouseHandler` before `nvim_input_mouse`: `TerminalView` asks nvim via
+  `nvim_exec_lua` (`NvimClient.lineDiagnostics`) to map the screen row to a
+  buffer line — across splits, using `getwininfo` window rects in global
+  grid coordinates — and to collect the diagnostics. An empty result (clean
+  line, non-text row, or an nvim without `vim.diagnostic`, guarded by
+  pcall) forwards the original press, so behavior outside the feature is
+  unchanged. The rest of the intercepted gesture (drag/release) is always
+  swallowed so nvim never sees orphan events. The popover is a transient
+  `NSPopover` (click-outside dismissal); typing or scrolling closes it too.
 - **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is
