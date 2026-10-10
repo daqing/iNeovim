@@ -65,6 +65,27 @@ struct NvimClient {
         return value.stringValue ?? ""
     }
 
+    /// Pick an ext_popupmenu completion: move the selection to `index` and
+    /// insert it, closing the menu (row clicks in the native panel).
+    func selectPopupmenuItem(_ index: Int) async throws {
+        _ = try await session.call("nvim_select_popupmenu_item", params: [
+            .int(Int64(index)), .bool(true), .bool(true), .nil,
+        ])
+    }
+
+    /// The embedded nvim's working directory (the directory fzf's sources
+    /// would walk when launched from the cmdline).
+    func currentDirectory() async throws -> String {
+        try await callFunction("getcwd", args: [])
+    }
+
+    private func callFunction(_ name: String, args: [MsgPackValue]) async throws -> String {
+        let value = try await session.call("nvim_call_function", params: [
+            .string(name), .array(args),
+        ])
+        return value.stringValue ?? ""
+    }
+
     /// Escape a path for use in an Ex command (`:edit <path>`).
     func fnameescape(_ path: String) async throws -> String {
         let value = try await session.call("nvim_call_function", params: [

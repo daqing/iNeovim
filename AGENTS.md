@@ -188,6 +188,54 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `params[0].first` is itself an array; treating every single-argument
   notification as the pre-0.10 shape silently parses the whole-screen
   baseline to zero events and leaves stale rows.
+- **Open Quickly (⌘P):** a native file finder, deliberately outside nvim —
+  `EditorCommands` routes ⌘P to the key window's TerminalView, which
+  presents `OpenQuicklyPanel` (vibrancy panel: `NSSearchField` +
+  `NSTableView` + path preview, centered over the editor, focus moves into
+  the panel and back to the terminal on close). The list shows the FIRST
+  LEVEL of the current directory only (`QuicklyFileSource`: `fd
+  --max-depth 1` respecting .gitignore → `find -maxdepth 1`, non-hidden);
+  Enter on a directory re-collects that directory's children (drill-down,
+  with a `..` row to go back up) — never a recursive walk, so huge trees
+  cannot stall it. Ranking goes through `FuzzyMatcher`, which shells out to
+  `fzf --filter` when the binary exists (homebrew paths are probed — the
+  GUI PATH does not include them) and otherwise falls back to an
+  in-process subsequence scorer; selected rows use the OS accent color.
+  Picking a file sends `:edit <fnameescape(path)>` over RPC. This panel is
+  also the safe replacement for tree-walking fzf usage in huge
+  directories: it never spawns a TUI and caps its sources.
+- **Child-process environment:** nvim is spawned with an augmented PATH —
+  the GUI PATH omits version managers (rbenv/asdf) and Homebrew, so tools
+  nvim spawns (LSP servers, formatters) silently fell back to system
+  binaries: a `ruby-lsp` resolved to the system Ruby 2.6 and died against a
+  modern Gemfile. `NvimProcess.augmentedEnvironment()` prepends
+  `~/.rbenv/shims`, `~/.asdf/shims`, `~/.local/bin`, `/opt/homebrew/bin`,
+  and `/usr/local/bin` (inherited PATH kept at the end). The same GUI-PATH
+  limitation is why `NvimDiscovery`, `FuzzyMatcher`, and
+  `QuicklyFileSource` probe absolute Homebrew paths instead of relying on
+  PATH.
+- **fzf tree-walk guard:** typed cmdline input is funneled through
+  `TerminalView.sendKeys`, which accumulates the command text while nvim
+  reports cmdline mode (`ScreenSnapshot.modeName == "c"`) and, on Enter,
+  matches it against the tree-walking fzf.vim commands (`FZF`, `Files`,
+  `Ag`, `Rg`, `RGrep`, `LGrep`). In `/` or `$HOME` the Enter is held while
+  an `NSAlert` asks whether to run anyway (Cancel sends `<Esc>` instead) —
+  walking either tree has frozen the machine (625k+ entries under `$HOME`).
+  Commands triggered by mappings/plugins bypass the cmdline and are not
+  gated; the native Open Quickly panel is the safe replacement.
+- **Native completion panel (ext_popupmenu):** the UI attaches with
+  `ext_popupmenu: true`, so nvim stops drawing the popupmenu into the grid
+  and sends `popupmenu_show/select/hide` instead. `Screen` keeps a
+  `PopupState` (items, selected, anchor row/col) surfaced through
+  `ScreenSnapshot.popup`; `TerminalView.updateCompletionPanel()` places
+  `CompletionPanelView` (vibrancy-backed AppKit list, row cap 50, ~10 rows
+  visible) at the anchor cell — flipping up when it would overflow the
+  bottom edge — from the flush, initial-snapshot, metrics-, and resize
+  paths. Keyboard navigation stays with nvim (`popupmenu_select` updates the
+  panel); row clicks call `nvim_select_popupmenu_item`. The panel is the
+  only completion UI while attached — there is no in-grid fallback. Hover /
+  signature-help floats still render as grid content; making those native
+  requires `ext_multigrid` and is a separate, much larger iteration.
 - **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is

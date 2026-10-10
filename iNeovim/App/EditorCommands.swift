@@ -9,6 +9,8 @@ struct EditorCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Open\u{2026}") { Self.showOpenPanel() }
                 .keyboardShortcut("o", modifiers: .command)
+            Button("Open Quickly\u{2026}") { Self.toggleOpenQuickly() }
+                .keyboardShortcut("p", modifiers: .command)
             Button("Close") { Self.closeKeyWindow() }
                 .keyboardShortcut("w", modifiers: .command)
         }
@@ -50,6 +52,13 @@ struct EditorCommands: Commands {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
         AppModel.openFromSystem(panel.urls)
+    }
+
+    /// ⌘P acts on the key window's editor view — the terminal is normally
+    /// the first responder, so the panel's own focus also routes back here.
+    private static func toggleOpenQuickly() {
+        guard let terminal = NSApp.keyWindow?.firstResponder as? TerminalView else { return }
+        terminal.toggleOpenQuickly()
     }
 
     /// ⌘W closes the key editor window. With only one editor window left it

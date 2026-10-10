@@ -226,6 +226,43 @@ final class RedrawEventTests: XCTestCase {
         )
     }
 
+    func testPopupmenuShowParsesItemsSelectedAndAnchor() {
+        let items: MsgPackValue = .array([
+            .array([.string("get_clients"), .string("Function"), .string("[LSP]"), .string("long description")]),
+            .array([.string("get_log_level"), .uint(1)]),
+            .array([.string("word_only")]),
+        ])
+        XCTAssertEqual(
+            parse([.array([.string("popupmenu_show"), .array([items, .uint(1), .uint(4), .uint(7), .uint(1)])])]),
+            [
+                .popupmenuShow(items: [
+                    PopupItem(word: "get_clients", kind: "Function", menu: "[LSP]", info: "long description"),
+                    PopupItem(word: "get_log_level", kind: "1"),
+                    PopupItem(word: "word_only"),
+                ], selected: 1, row: 4, col: 7, grid: 1),
+            ]
+        )
+    }
+
+    func testPopupmenuShowParsesWithoutGridArgument() {
+        let items: MsgPackValue = .array([])
+        XCTAssertEqual(
+            parse([.array([.string("popupmenu_show"), .array([items, .uint(-1), .uint(0), .uint(2)])])]),
+            [.popupmenuShow(items: [], selected: -1, row: 0, col: 2, grid: 1)]
+        )
+    }
+
+    func testPopupmenuSelectAndHideParse() {
+        XCTAssertEqual(
+            parse([.array([.string("popupmenu_select"), .array([.uint(3)])])]),
+            [.popupmenuSelect(3)]
+        )
+        XCTAssertEqual(
+            parse([.array([.string("popupmenu_hide"), .array([])])]),
+            [.popupmenuHide]
+        )
+    }
+
     private func parse(_ events: [MsgPackValue]) -> [RedrawEvent] {
         RedrawEvent.parseNotification([.array(events)])
     }

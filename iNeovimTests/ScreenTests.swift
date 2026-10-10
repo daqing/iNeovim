@@ -240,4 +240,35 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(reports.map(\.rows), [1, -1])
         XCTAssertEqual(reports.map(\.cols), [0, 0])
     }
+
+    func testPopupmenuStateTransitionsThroughSnapshot() async {
+        let screen = Screen()
+        let items = [
+            PopupItem(word: "alpha"),
+            PopupItem(word: "beta", kind: "Function", menu: "[LSP]"),
+        ]
+        await screen.apply(.popupmenuShow(items: items, selected: 0, row: 3, col: 6, grid: 1))
+        await screen.apply(.popupmenuSelect(1))
+
+        var snapshot = await screen.snapshot()
+        XCTAssertEqual(
+            snapshot.popup,
+            PopupState(items: items, selected: 1, row: 3, col: 6)
+        )
+
+        await screen.apply(.popupmenuHide)
+        snapshot = await screen.snapshot()
+        XCTAssertNil(snapshot.popup)
+    }
+
+    func testPopupmenuIgnoresForeignGridsAndSelectWithoutShow() async {
+        let screen = Screen()
+        await screen.apply(.popupmenuShow(items: [PopupItem(word: "x")], selected: 0, row: 0, col: 0, grid: 2))
+        var snapshot = await screen.snapshot()
+        XCTAssertNil(snapshot.popup)
+
+        await screen.apply(.popupmenuSelect(2))
+        snapshot = await screen.snapshot()
+        XCTAssertNil(snapshot.popup)
+    }
 }
