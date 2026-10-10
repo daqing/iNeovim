@@ -15,7 +15,7 @@ final class TerminalView: NSView {
     /// so the two rows never touch. The last grid row is nvim's message /
     /// cmdline area; with `laststatus` >= 2 the row above it is the
     /// statusline.
-    static let cmdlineGap: CGFloat = 4
+    static let cmdlineGap: CGFloat = 5
 
     /// View size minus the content inset on both sides and the cmdline gap:
     /// the area the grid (rows plus gap) may occupy. Grid cell counts must
@@ -62,6 +62,10 @@ final class TerminalView: NSView {
     private(set) var metrics: FontMetrics
     private var snapshot: ScreenSnapshot?
     private let contentLayer: GridContentLayer
+    /// Backdrop stretching the statusline row's background to the window
+    /// edges; the content layer draws over it, so only the side bands the
+    /// content inset leaves open actually show.
+    private let statuslineLayer = CALayer()
     private let scrollAnimator = ScrollAnimator()
     private let cursorAnimator = CursorAnimator()
     private let resizeController: ResizeController
@@ -135,6 +139,7 @@ final class TerminalView: NSView {
             contentLayer.update(snapshot: snapshot)
         }
         contentLayer.setNeedsDisplay()
+        updateStatuslineLayer()
         let size = bounds.size
         Task { [weak self] in
             guard let self else { return }
@@ -174,6 +179,7 @@ final class TerminalView: NSView {
         contentLayer.anchorPoint = .zero
         contentLayer.position = CGPoint(x: Self.contentInset, y: Self.contentInset)
         CATransaction.commit()
+        layer?.addSublayer(statuslineLayer)
         layer?.addSublayer(contentLayer)
         registerForDraggedTypes([.fileURL])
         imeHandler.view = self
@@ -420,6 +426,7 @@ final class TerminalView: NSView {
         // Fallback colors follow the system appearance; repaint so cells
         // drawn with nvim-packed colors keep showing through where set.
         refreshBackgroundColor()
+        updateStatuslineLayer()
         contentLayer.setNeedsDisplay()
     }
 
@@ -432,6 +439,7 @@ final class TerminalView: NSView {
     override func setFrameSize(_ newSize: CGSize) {
         super.setFrameSize(newSize)
         requestResize(to: newSize)
+        updateStatuslineLayer()
     }
 
     private var backingScale: CGFloat {
@@ -454,6 +462,7 @@ final class TerminalView: NSView {
                     self.contentLayer.update(snapshot: snapshot)
                     self.contentLayer.invalidate(cellRects: cellRects)
                     self.refreshBackgroundColor()
+                    self.updateStatuslineLayer()
                     self.refreshWindowAppearance()
                     self.reconcileGridSize(with: snapshot)
                 }
@@ -472,6 +481,7 @@ final class TerminalView: NSView {
             self.contentLayer.update(snapshot: snapshot)
             self.contentLayer.setNeedsDisplay()
             self.refreshBackgroundColor()
+            self.updateStatuslineLayer()
             self.refreshWindowAppearance()
         }
     }
@@ -481,6 +491,52 @@ final class TerminalView: NSView {
         CATransaction.setDisableActions(true)
         layer?.backgroundColor = backgroundColor.cgColor
         CATransaction.commit()
+    }
+
+    /// Stretch the statusline row's background to the full window width.
+    /// The row above the last grid row is the statusline — the same layout
+    /// the cmdline gap assumes (last row = cmdline area, `laststatus` >= 2).
+    /// The layer sits below the content layer, so the row's own in-grid fill
+    /// (same color) covers the overlap; the edges are snapped to the same
+    /// pixels that fill snaps to inside the content layer.
+    private func updateStatuslineLayer() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let snapshot, let grid = snapshot.grid, !grid.isEmpty, grid.height >= 2 else {
+            statuslineLayer.frame = .zero
+            statuslineLayer.backgroundColor = nil
+            return
+        }
+        let row = grid.height - 2
+        let cellHeight = metrics.cellSize.height
+        let scale = backingScale
+        let top = Self.contentInset + Self.gridRowY(row, gridHeight: grid.height, cellHeight: cellHeight)
+        let snappedTop = (top * scale).rounded() / scale
+        let snappedBottom = ((top + cellHeight) * scale).rounded() / scale
+        statuslineLayer.frame = CGRect(
+            x: 0,
+            y: snappedTop,
+            width: bounds.width,
+            height: max(0, snappedBottom - snappedTop)
+        )
+        statuslineLayer.backgroundColor = statuslineBackgroundColor(row: row).cgColor
+    }
+
+    /// The statusline row's background: its leftmost run's resolved color,
+    /// falling back to the view's background when the row leaves it unset.
+    private func statuslineBackgroundColor(row: Int) -> NSColor {
+        guard let snapshot, let grid = snapshot.grid,
+              let run = CellRenderer.runs(forRow: grid.rowSlice(row)).first else {
+            return backgroundColor
+        }
+        let attr = snapshot.highlights[run.attrId] ?? HlAttr()
+        let resolved = attr.resolvedColors(
+            defaultForeground: snapshot.defaultForeground,
+            defaultBackground: snapshot.defaultBackground,
+            defaultSpecial: snapshot.defaultSpecial
+        )
+        return resolved.background.flatMap(NSColor.init(packedRGB:)) ?? backgroundColor
     }
 
     /// Push the nvim theme into the window chrome through SwiftUI: setting

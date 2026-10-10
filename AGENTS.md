@@ -157,6 +157,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `MouseHandler`, wheel pointer `ScrollController`, IME preedit rects)
   subtract the inset, and row↔y math everywhere goes through
   `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent.
+- **Full-width statusline bar:** the statusline row (the one above the cmdline
+  row) gets a backdrop layer (`TerminalView.statuslineLayer`, below the
+  content layer) that fills the row's leftmost run's resolved background from
+  window edge to window edge, so the bar runs full width while the cells stay
+  inset. `updateStatuslineLayer()` keeps its frame/color in sync from the
+  flush, initial-snapshot, metrics-, resize-, and appearance-change paths;
+  like the cmdline gap it assumes the last row is the cmdline area and the
+  row above it the statusline (`laststatus` >= 2, `cmdheight` 1).
 - **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is
