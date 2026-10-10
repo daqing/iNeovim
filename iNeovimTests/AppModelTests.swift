@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import iNeovim
 
@@ -161,8 +162,33 @@ final class AppModelTests: XCTestCase {
         model.splitVertical()
         model.closeWindow()
         model.save()
-        model.openTerminal()
 
-        XCTAssertEqual(commands, ["split", "vsplit", "close", "write", "terminal"])
+        XCTAssertEqual(commands, ["split", "vsplit", "close", "write"])
+    }
+
+    func testTerminalPaneFocusAndCloseIntents() {
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
+        model.setTerminalPaneVisible(true)
+
+        model.requestTerminalPane(command: "ls")
+        XCTAssertEqual(model.terminalPaneIntent, .focus)
+
+        model.toggleTerminalPane()
+        XCTAssertEqual(model.terminalPaneIntent, .close)
+    }
+
+    func testTerminalPaneOpenPublishesIntent() async {
+        let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
+        let opened = expectation(description: "open intent published")
+        var sink: Set<AnyCancellable> = []
+        model.$terminalPaneIntent.sink { intent in
+            if case .open(let request) = intent {
+                XCTAssertEqual(request.shellCommand, "git status")
+                opened.fulfill()
+            }
+        }.store(in: &sink)
+
+        model.requestTerminalPane(command: "git status")
+        await fulfillment(of: [opened], timeout: 2)
     }
 }

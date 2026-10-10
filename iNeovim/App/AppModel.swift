@@ -69,6 +69,26 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// nvim's default fg/bg (0xRRGGBB), mirrored so the native terminal
+    /// pane can match the editor's colorscheme.
+    struct TerminalColors: Equatable {
+        var foreground: Int?
+        var background: Int?
+
+        init(foreground: Int? = nil, background: Int? = nil) {
+            self.foreground = foreground
+            self.background = background
+        }
+    }
+
+    @Published private(set) var terminalColors = TerminalColors()
+
+    func setTerminalColors(_ colors: TerminalColors) {
+        if terminalColors != colors {
+            terminalColors = colors
+        }
+    }
+
     let session: RPCSession
     let screen: Screen
     let inputDispatcher: InputDispatcher
@@ -312,12 +332,6 @@ final class AppModel: ObservableObject {
         command("write")
     }
 
-    /// Open an embedded `:terminal`, which exercises the sandbox/entitlement
-    /// path tracked by T8.7.
-    func openTerminal() {
-        command("terminal")
-    }
-
     /// Send raw key notation to Neovim.
     func input(_ keys: String) {
         Task {
@@ -326,6 +340,58 @@ final class AppModel: ObservableObject {
             } catch {
                 Log.input.error("nvim_input failed: \(error.localizedDescription, privacy: .public)")
             }
+        }
+    }
+
+    // MARK: - Native terminal pane
+
+    /// Startup parameters for one native terminal pane surface.
+    struct TerminalPaneRequest: Equatable {
+        let workingDirectory: String
+        let shellCommand: String
+    }
+
+    /// What the terminal pane should do next; consumed by the split
+    /// container, which owns the actual Ghostty surface.
+    enum TerminalPaneIntent: Equatable {
+        case open(TerminalPaneRequest)
+        case focus
+        case close
+    }
+
+    /// Whether this window's native terminal pane is shown; kept in sync by
+    /// the split container as it opens and closes the surface.
+    @Published private(set) var isTerminalPaneVisible = false
+
+    @Published private(set) var terminalPaneIntent: TerminalPaneIntent?
+
+    func setTerminalPaneVisible(_ visible: Bool) {
+        isTerminalPaneVisible = visible
+    }
+
+    /// Open the native terminal pane in the session's working directory
+    /// (running `shellCommand` instead of the default shell when nonempty),
+    /// or focus it when it is already shown.
+    func requestTerminalPane(command: String) {
+        guard !isTerminalPaneVisible else {
+            terminalPaneIntent = .focus
+            return
+        }
+        Task { @MainActor in
+            let directory = (try? await client.currentDirectory()) ?? ""
+            terminalPaneIntent = .open(TerminalPaneRequest(
+                workingDirectory: directory,
+                shellCommand: command
+            ))
+        }
+    }
+
+    /// Menu / ⌃` action: hide a shown pane, otherwise open one.
+    func toggleTerminalPane() {
+        if isTerminalPaneVisible {
+            terminalPaneIntent = .close
+        } else {
+            requestTerminalPane(command: "")
         }
     }
 

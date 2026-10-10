@@ -8,6 +8,7 @@ xcuserdata/
 
 # Build output
 build/
+.build/
 DerivedData/
 
 # Test coverage profiles

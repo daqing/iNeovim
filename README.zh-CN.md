@@ -20,6 +20,8 @@ iNeovim 追求完整的 Mac 原生体验,包括:
 - **系统级字体渲染**——通过 Core Text 实现正确的字距、合字与 Retina 级抗锯齿
 - **原生键盘体验**——macOS 键盘事件处理与原生快捷键
 - **系统集成**——输入法(IME)、Emoji 表情面板等 macOS 服务,与任何原生应用一致
+- **原生终端面板**——`:terminal` 在编辑器旁打开一个真正的
+  [Ghostty](https://ghostty.org) 终端,而非 Neovim 内的终端缓冲区
 
 ## 架构
 
@@ -97,6 +99,16 @@ iNeovim 嵌入一个 Neovim 实例并实现其 GUI 协议:
 测试覆盖编解码、redraw 解析、UI 状态、输入、滚动、设置、崩溃恢复、渲染冒烟测试
 以及内嵌 `:terminal` 冒烟检查。完整计划见 `docs/TASKS.md`,手动检查见
 `docs/VERIFICATION.md`,性能见 `docs/PERFORMANCE.md`,发布见 `docs/RELEASE.md`。
+
+### 原生终端面板
+
+输入 `:terminal` 会在编辑器右侧打开一个原生终端面板——真正的 Ghostty 终端
+surface(libghostty),而不是 Neovim 内的终端缓冲区。面板在 Neovim 的当前工作
+目录启动(`:term <cmd>` 则运行指定命令),字体与配色跟随编辑器,可随时用
+`` ⌃` `` 或 **Neovim ▸ Toggle Terminal Pane** 开关。设置中可关闭该拦截,回落到
+Neovim 原生的缓冲区内终端。内嵌的 GhosttyKit 二进制与适配后的 Swift 绑定位于
+`Packages/GhosttySupport`(基于固定版本的 Ghostty 源码快照自建,详见其中的
+`ADAPTATION.md`)。
 
 ## 环境要求
 

@@ -39,6 +39,39 @@ final class EmbeddedTerminalTests: XCTestCase {
         )
     }
 
+    /// The cmdline gates (`:terminal` interception, fzf) key on the mode
+    /// name carried by our snapshots. This pins what nvim's UI protocol
+    /// actually reports when the user enters cmdline mode: the full form
+    /// (`cmdline_normal`), not `mode()`'s short `"c"`.
+    func testCmdlineModeIsReportedAsCmdlineNormal() async throws {
+        guard let model = await readyModel() else {
+            throw XCTSkip("Embedded nvim session did not start (nvim missing or handshake failed)")
+        }
+
+        // Baseline BEFORE pressing ':' — the redraw may land before the
+        // input call returns, so the baseline must not race it.
+        let baseline = await model.screen.snapshot().modeName
+        try await model.client.input(":")
+        var reported: String?
+        var last: String?
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            let snapshot = await model.screen.snapshot()
+            last = snapshot.modeName
+            if let modeName = snapshot.modeName, modeName != baseline {
+                reported = modeName
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try await model.client.input("<Esc>")
+
+        XCTAssertTrue(
+            TerminalView.isCmdlineMode(reported),
+            "baseline \(baseline.map { "'\($0)'" } ?? "nil"), nvim reported mode \(reported.map { "'\($0)'" } ?? last.map { "'\($0)'" } ?? "nil") after ':'; the cmdline gates must accept it"
+        )
+    }
+
     private func readyModel(timeout: TimeInterval = 15) async -> AppModel? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

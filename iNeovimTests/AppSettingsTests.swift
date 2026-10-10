@@ -19,6 +19,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.passCmdKeysThrough)
         XCTAssertTrue(settings.scrollAnimationEnabled)
         XCTAssertTrue(settings.cursorAnimationEnabled)
+        XCTAssertTrue(settings.nativeTerminalPane)
     }
 
     func testInputSettingsMirror() {
@@ -42,10 +43,12 @@ final class AppSettingsTests: XCTestCase {
         let first = AppSettings(defaults: defaults)
         first.fontSize = 18
         first.optionAsMeta = true
+        first.nativeTerminalPane = false
 
         let second = AppSettings(defaults: defaults)
         XCTAssertEqual(second.fontSize, 18)
         XCTAssertTrue(second.optionAsMeta)
+        XCTAssertFalse(second.nativeTerminalPane)
     }
 
     func testResolvedFontUsesRequestedSize() {
@@ -60,6 +63,7 @@ final class AppSettingsTests: XCTestCase {
         settings.fontSize = 22
         settings.optionAsMeta = true
         settings.scrollAnimationEnabled = false
+        settings.nativeTerminalPane = false
 
         settings.resetToDefaults()
 
@@ -67,5 +71,6 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.fontSize, Double(FontMetrics.defaultSize))
         XCTAssertFalse(settings.optionAsMeta)
         XCTAssertTrue(settings.scrollAnimationEnabled)
+        XCTAssertTrue(settings.nativeTerminalPane)
     }
 }

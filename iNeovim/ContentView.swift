@@ -8,7 +8,7 @@ struct ContentView: View {
     @StateObject private var model = AppModel()
 
     var body: some View {
-        TerminalViewRepresentable(settings: settings, model: model)
+        EditorSplitRepresentable(settings: settings, model: model)
             .frame(minWidth: 480, minHeight: 320)
             .background(.background)
             .overlay { statusOverlay }
@@ -56,18 +56,18 @@ struct ContentView: View {
     }
 }
 
-struct TerminalViewRepresentable: NSViewRepresentable {
+struct EditorSplitRepresentable: NSViewRepresentable {
     @ObservedObject var settings: AppSettings
     @ObservedObject var model: AppModel
 
-    func makeNSView(context: Context) -> TerminalView {
-        let view = TerminalView(model: model, metrics: FontMetrics(font: settings.resolvedFont()))
+    func makeNSView(context: Context) -> EditorSplitView {
+        let view = EditorSplitView(model: model, metrics: FontMetrics(font: settings.resolvedFont()))
         view.apply(settings: settings)
         view.sessionDidChangeReady(model.isReady)
         return view
     }
 
-    func updateNSView(_ nsView: TerminalView, context: Context) {
+    func updateNSView(_ nsView: EditorSplitView, context: Context) {
         nsView.apply(settings: settings)
         nsView.sessionDidChangeReady(model.isReady)
     }

@@ -16,10 +16,12 @@ or read `~/.config/nvim` under it); `ENABLE_HARDENED_RUNTIME` stays on for
 Release.
 
 Automated check: `EmbeddedTerminalTests.testEmbeddedTerminalStarts` waits for
-the app's embedded session to handshake, runs `:terminal`, and asserts that the
-current buffer name contains `term`. It skips when no `nvim` is installed. The
-test host is the real app, so a pass exercises the same launch path as the
-shipped build.
+the app's embedded session to handshake, runs `:terminal` over RPC, and
+asserts that the current buffer name contains `term`. It skips when no `nvim`
+is installed. The test host is the real app, so a pass exercises the same
+launch path as the shipped build. Note that this drives `nvim_command`
+directly — the typed-`:terminal` interception below never sees it, so the
+in-buffer terminal remains reachable through RPC, mappings, and plugins.
 
 Manual check in the GUI:
 
@@ -84,3 +86,28 @@ aligned.
   `source · code`; click outside, type, or scroll to dismiss. Clicking a
   gutter cell on a clean line behaves exactly like before (the click reaches
   nvim, e.g. it toggles a fold when a fold column is present).
+
+## Native terminal pane (Ghostty)
+
+A typed `:terminal` opens a native Ghostty terminal pane docked to the right
+of the editor instead of an in-buffer terminal. Manual checks:
+
+1. Type `:terminal` and press Return: the cmdline cancels (no nvim terminal
+   buffer), the pane slides in on the right, focus moves into it, and the
+   pane's shell starts in nvim's working directory (`:pwd` matches `pwd` in
+   the pane). The nvim grid reflows to the narrower editor area.
+2. Type `:term git status`: the pane runs that command instead of a shell.
+3. ⌃` or **Neovim ▸ Toggle Terminal Pane** toggles the pane; ⌃` works while
+   the pane has focus too. Dragging the divider resizes the pane (280 pt…
+   60% of the window) and the editor follows live.
+4. `:terminal` while the pane is open just focuses it. Typing `exit` in the
+   pane (or the ⓧ button) closes the pane and returns focus to the editor.
+5. Settings ▸ Terminal ▸ "Open :terminal in native pane" off: `:terminal`
+   falls back to nvim's in-buffer terminal; ⌃`/the menu still open the pane.
+6. The pane's font and colors follow the editor (font/size from settings,
+   background/foreground from nvim's colorscheme at open time).
+7. Multiple windows (⌘N) each own a pane; closing a window cleans up its
+   surface; IME composition works inside the pane.
+
+Automated checks: `TerminalPaneCommandTests` pins the cmdline matcher
+(abbreviations, `vert[ical]`, bang, arguments, non-matches).
