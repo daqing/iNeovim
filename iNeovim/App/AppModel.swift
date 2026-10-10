@@ -143,12 +143,14 @@ final class AppModel: ObservableObject {
             let stream = await client.makeRedrawEventStream()
             await screen.startConsuming(stream)
             await screen.setTitleHandler { [weak self] title in
-                Task { @MainActor in self?.windowTitle = title }
+                guard let self else { return }
+                Task { @MainActor in self.windowTitle = title }
             }
             try await client.uiAttach(width: 80, height: 24, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
+                .string("ext_popupmenu"): .bool(true),
             ])))
-            Log.render.info("UI attached 80x24 (ext_linegrid)")
+            Log.render.info("UI attached 80x24 (ext_linegrid, ext_popupmenu)")
             // One wheel event scrolls exactly one line so the visual lead
             // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
             try await client.command("set mousescroll=ver:1,hor:1")

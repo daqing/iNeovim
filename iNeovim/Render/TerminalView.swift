@@ -66,6 +66,14 @@ final class TerminalView: NSView {
     /// edges; the content layer draws over it, so only the side bands the
     /// content inset leaves open actually show.
     private let statuslineLayer = CALayer()
+    /// Native ext_popupmenu completion panel, placed above the content layer
+    /// at the anchor nvim reports.
+    private let completionPanel = CompletionPanelView()
+    /// Native ⌘P file finder; presented centered over the editor and hidden
+    /// again after a pick or cancel.
+    private let openQuicklyPanel = OpenQuicklyPanel()
+    /// Native popover listing the diagnostics on a gutter sign's line.
+    private let diagnosticPopover = DiagnosticPopover()
     private let scrollAnimator = ScrollAnimator()
     private let cursorAnimator = CursorAnimator()
     private let resizeController: ResizeController
@@ -140,6 +148,7 @@ final class TerminalView: NSView {
         }
         contentLayer.setNeedsDisplay()
         updateStatuslineLayer()
+        updateCompletionPanel()
         let size = bounds.size
         Task { [weak self] in
             guard let self else { return }
@@ -181,6 +190,20 @@ final class TerminalView: NSView {
         CATransaction.commit()
         layer?.addSublayer(statuslineLayer)
         layer?.addSublayer(contentLayer)
+        completionPanel.onSelect = { [weak self] index in
+            guard let self else { return }
+            Task { try? await self.model.client.selectPopupmenuItem(index) }
+        }
+        addSubview(completionPanel)
+        completionPanel.isHidden = true
+        addSubview(openQuicklyPanel)
+        openQuicklyPanel.isHidden = true
+        openQuicklyPanel.onOpen = { [weak self] path in
+            self?.openQuickly(path: path)
+        }
+        openQuicklyPanel.onClose = { [weak self] in
+            self?.dismissOpenQuickly()
+        }
         registerForDraggedTypes([.fileURL])
         imeHandler.view = self
         mouseHandler.view = self
@@ -215,6 +238,7 @@ final class TerminalView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        diagnosticPopover.close()
         if imeHandler.hasMarkedText {
             // Composition in progress: let the input context route the event
             // to setMarkedText/insertText/doCommand.
@@ -245,7 +269,123 @@ final class TerminalView: NSView {
     }
 
     func sendKeys(_ keys: String) {
+        trackCmdline(keys)
+        // Hard gate: the tree-walking fzf commands must not run in / or
+        // $HOME — walking either tree can freeze the machine.
+        if keys == "<CR>", Self.isFzfWalkCommand(cmdlineBuffer) {
+            gateFzfExecution(pendingKeys: keys)
+            return
+        }
         model.inputDispatcher.send(.keys(keys))
+    }
+
+    /// fzf.vim commands whose source walks the current directory tree.
+    static let fzfWalkCommands = ["FZF", "Files", "Ag", "Rg", "RGrep", "LGrep"]
+
+    /// Whether a typed cmdline names a tree-walking fzf command. The buffer
+    /// holds the command text after the leading `:` (the mode-change flush
+    /// has usually landed by the time the first character is typed).
+    static func isFzfWalkCommand(_ command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespaces)
+        guard let name = trimmed.split(separator: " ").first else { return false }
+        let bare = name.hasSuffix("!") ? name.dropLast() : name
+        return fzfWalkCommands.contains(String(bare))
+    }
+
+    /// Directories whose trees are too large to walk with fzf.
+    static func isDangerousFzfDirectory(_ path: String) -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return path == "/" || path == home
+    }
+
+    /// Cmdline text accumulated while nvim reports cmdline mode.
+    private var cmdlineBuffer = ""
+
+    private func trackCmdline(_ keys: String) {
+        guard snapshot?.modeName == "c" else {
+            cmdlineBuffer = ""
+            return
+        }
+        switch keys {
+        case "<BS>":
+            if !cmdlineBuffer.isEmpty { cmdlineBuffer.removeLast() }
+        case "<C-u>":
+            cmdlineBuffer = ""
+        default:
+            // Printable runs arrive as plain text; notation tokens (<Esc>,
+            // arrows, …) are cmdline editing keys that do not add text.
+            if !keys.hasPrefix("<") { cmdlineBuffer += keys }
+        }
+    }
+
+    /// Hold the Enter that would launch fzf until the working directory is
+    /// known to be safe; in / or $HOME ask first, since walking those trees
+    /// can freeze the machine.
+    private func gateFzfExecution(pendingKeys: String) {
+        let command = cmdlineBuffer
+        cmdlineBuffer = ""
+        Task { @MainActor in
+            let directory = (try? await model.client.currentDirectory()) ?? ""
+            guard Self.isDangerousFzfDirectory(directory) else {
+                model.inputDispatcher.send(.keys(pendingKeys))
+                return
+            }
+            let where_ = directory == "/" ? "the root directory" : "your home directory"
+            let alert = NSAlert()
+            alert.messageText = "Run \(command) in \(where_)?"
+            alert.informativeText = "That directory tree is enormous; walking it with fzf can freeze the machine."
+            alert.addButton(withTitle: "Run Anyway")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn {
+                model.inputDispatcher.send(.keys(pendingKeys))
+            } else {
+                model.inputDispatcher.send(.keys("<Esc>"))
+            }
+        }
+    }
+
+    // MARK: - Open Quickly (⌘P)
+
+    /// Toggle the native file finder; presented centered over the editor.
+    func toggleOpenQuickly() {
+        if openQuicklyPanel.isHidden {
+            presentOpenQuickly()
+        } else {
+            dismissOpenQuickly()
+        }
+    }
+
+    private func presentOpenQuickly() {
+        positionOpenQuicklyPanel()
+        openQuicklyPanel.isHidden = false
+        window?.makeFirstResponder(openQuicklyPanel.preferredFocus)
+        Task { @MainActor in
+            let cwd = (try? await model.client.currentDirectory()) ?? ""
+            guard !openQuicklyPanel.isHidden, !cwd.isEmpty else { return }
+            let files = await QuicklyFileSource.collect(cwd: cwd)
+            guard !openQuicklyPanel.isHidden else { return }
+            openQuicklyPanel.present(files: files, workingDirectory: cwd)
+        }
+    }
+
+    private func dismissOpenQuickly() {
+        openQuicklyPanel.isHidden = true
+        window?.makeFirstResponder(self)
+    }
+
+    private func openQuickly(path: String) {
+        dismissOpenQuickly()
+        Task { @MainActor in
+            guard let escaped = try? await model.client.fnameescape(path) else { return }
+            try? await model.client.command("edit \(escaped)")
+        }
+    }
+
+    private func positionOpenQuicklyPanel() {
+        let size = OpenQuicklyPanel.panelSize
+        let x = (bounds.width - size.width) / 2
+        let y = max((bounds.height - size.height) / 2, 0)
+        openQuicklyPanel.setFrameOrigin(CGPoint(x: x, y: y))
     }
 
     // Standard Edit-menu actions reach the first responder through the
@@ -337,7 +477,45 @@ final class TerminalView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        diagnosticPopover.close()
         scrollController.scrollWheel(with: event)
+    }
+
+    // MARK: - Diagnostics popover
+
+    /// A plain left click in the sign column (the gutter carrying the
+    /// diagnostic signs): look up the clicked line's `vim.diagnostic`
+    /// entries and show them in a native popover anchored at the clicked
+    /// cell. A line without diagnostics falls back to a normal click,
+    /// forwarded after the lookup.
+    func presentDiagnostics(atRow row: Int, col: Int) {
+        let anchor = signColumnRect(row: row, col: col)
+        let themeIsDark = Self.hasDarkBackground(snapshot?.defaultBackground)
+        Task { @MainActor in
+            let items = (try? await model.client.lineDiagnostics(row: row, col: col)) ?? []
+            guard !items.isEmpty else {
+                model.inputDispatcher.send(.mouse(
+                    button: "left", action: "press", modifier: "", grid: 1, row: row, col: col
+                ))
+                return
+            }
+            diagnosticPopover.present(
+                items: items, relativeTo: anchor, of: self, themeIsDark: themeIsDark
+            )
+        }
+    }
+
+    /// View-space rect of the clicked gutter cell, two cells wide so the
+    /// popover arrow centers on the sign slot.
+    private func signColumnRect(row: Int, col: Int) -> CGRect {
+        let cell = metrics.cellSize
+        let gridHeight = gridDimensions?.height ?? 0
+        return CGRect(
+            x: Self.contentInset + CGFloat(col) * cell.width,
+            y: Self.contentInset + Self.gridRowY(row, gridHeight: gridHeight, cellHeight: cell.height),
+            width: cell.width * 2,
+            height: cell.height
+        )
     }
 
     // Dropping files on the editor opens them as buffers (same path as
@@ -379,8 +557,7 @@ final class TerminalView: NSView {
         updateContentsScale()
         if snapshot == nil {
             connectScreen()
-        }
-        // Take focus so typing reaches the editor without requiring a click.
+        }        // Take focus so typing reaches the editor without requiring a click.
         // Re-assert on the next main-actor turn in case SwiftUI restores focus
         // to another control while the window is being laid out.
         if let window {
@@ -440,6 +617,8 @@ final class TerminalView: NSView {
         super.setFrameSize(newSize)
         requestResize(to: newSize)
         updateStatuslineLayer()
+        updateCompletionPanel()
+        positionOpenQuicklyPanel()
     }
 
     private var backingScale: CGFloat {
@@ -463,6 +642,7 @@ final class TerminalView: NSView {
                     self.contentLayer.invalidate(cellRects: cellRects)
                     self.refreshBackgroundColor()
                     self.updateStatuslineLayer()
+                    self.updateCompletionPanel()
                     self.refreshWindowAppearance()
                     self.reconcileGridSize(with: snapshot)
                 }
@@ -482,6 +662,7 @@ final class TerminalView: NSView {
             self.contentLayer.setNeedsDisplay()
             self.refreshBackgroundColor()
             self.updateStatuslineLayer()
+            self.updateCompletionPanel()
             self.refreshWindowAppearance()
         }
     }
@@ -523,10 +704,39 @@ final class TerminalView: NSView {
         statuslineLayer.backgroundColor = statuslineBackgroundColor(row: row).cgColor
     }
 
+    /// Place and update the native completion panel from the popup state in
+    /// the snapshot. The anchor cell comes from nvim (it has already picked
+    /// above/below the cursor); the panel flips up when it would overflow
+    /// the bottom edge and clamps inside the view horizontally.
+    private func updateCompletionPanel() {
+        guard let popup = snapshot?.popup, let grid = snapshot?.grid, !grid.isEmpty else {
+            if !completionPanel.isHidden { completionPanel.isHidden = true }
+            return
+        }
+        let size = completionPanel.update(
+            popup,
+            metrics: metrics,
+            maxWidth: bounds.width - Self.contentInset * 2
+        )
+        let cellWidth = metrics.cellSize.width
+        let cellHeight = metrics.cellSize.height
+        let anchorRowTop = Self.contentInset + CGFloat(popup.row) * cellHeight
+        let x = Self.contentInset + CGFloat(popup.col) * cellWidth
+        var y = Self.contentInset + Self.gridRowY(
+            popup.row, gridHeight: grid.height, cellHeight: cellHeight
+        )
+        if y + size.height > bounds.height {
+            y = anchorRowTop - size.height
+        }
+        y = min(max(y, 0), max(0, bounds.height - size.height))
+        let clampedX = min(max(x, 0), max(0, bounds.width - size.width))
+        completionPanel.setFrameOrigin(CGPoint(x: clampedX, y: y))
+        completionPanel.isHidden = false
+    }
+
     /// The statusline row's background: its leftmost run's resolved color,
     /// falling back to the view's background when the row leaves it unset.
-    private func statuslineBackgroundColor(row: Int) -> NSColor {
-        guard let snapshot, let grid = snapshot.grid,
+    private func statuslineBackgroundColor(row: Int) -> NSColor {        guard let snapshot, let grid = snapshot.grid,
               let run = CellRenderer.runs(forRow: grid.rowSlice(row)).first else {
             return backgroundColor
         }

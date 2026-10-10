@@ -61,7 +61,7 @@ final class MouseHandlerTests: XCTestCase {
 
     func testGridRowYShiftsCmdlineRow() {
         XCTAssertEqual(TerminalView.gridRowY(22, gridHeight: 24, cellHeight: 20), 440)
-        XCTAssertEqual(TerminalView.gridRowY(23, gridHeight: 24, cellHeight: 20), 464)
+        XCTAssertEqual(TerminalView.gridRowY(23, gridHeight: 24, cellHeight: 20), 465)
     }
 
     func testModifierStringOrder() {

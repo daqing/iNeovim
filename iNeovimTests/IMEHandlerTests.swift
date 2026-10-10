@@ -54,11 +54,11 @@ final class IMEHandlerTests: XCTestCase {
     }
 
     func testDoCommandMapsKnownSelectors() {
-        XCTAssertEqual(IMEHandler.selectorKeys[Selector("insertNewline:")], "<CR>")
-        XCTAssertEqual(IMEHandler.selectorKeys[Selector("moveUp:")], "<Up>")
-        XCTAssertEqual(IMEHandler.selectorKeys[Selector("cancelOperation:")], "<Esc>")
-        XCTAssertEqual(IMEHandler.selectorKeys[Selector("insertBacktab:")], "<S-Tab>")
-        XCTAssertEqual(IMEHandler.selectorKeys[Selector("moveToBeginningOfLine:")], "<Home>")
-        XCTAssertEqual(IMEHandler.selectorKeys[Selector("movePageDown:")], "<PageDown>")
+        XCTAssertEqual(IMEHandler.selectorKeys[NSSelectorFromString("insertNewline:")], "<CR>")
+        XCTAssertEqual(IMEHandler.selectorKeys[NSSelectorFromString("moveUp:")], "<Up>")
+        XCTAssertEqual(IMEHandler.selectorKeys[NSSelectorFromString("cancelOperation:")], "<Esc>")
+        XCTAssertEqual(IMEHandler.selectorKeys[NSSelectorFromString("insertBacktab:")], "<S-Tab>")
+        XCTAssertEqual(IMEHandler.selectorKeys[NSSelectorFromString("moveToBeginningOfLine:")], "<Home>")
+        XCTAssertEqual(IMEHandler.selectorKeys[NSSelectorFromString("movePageDown:")], "<PageDown>")
     }
 }

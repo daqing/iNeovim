@@ -2,14 +2,23 @@ import Foundation
 import os
 
 /// Cursor position in grid coordinates.
-struct CursorState: Equatable, Sendable {
+nonisolated struct CursorState: Equatable, Sendable {
     var grid: Int
     var row: Int
     var col: Int
 }
 
+/// The ext_popupmenu completion menu state: items, the selected index
+/// (-1 = none), and the grid cell the panel anchors at.
+nonisolated struct PopupState: Equatable, Sendable {
+    var items: [PopupItem]
+    var selected: Int
+    var row: Int
+    var col: Int
+}
+
 /// An immutable copy of the applied UI state for one render pass.
-struct ScreenSnapshot: Equatable, Sendable {
+nonisolated struct ScreenSnapshot: Equatable, Sendable {
     var grid: Grid?
     var highlights: HighlightStore
     var defaultForeground: Int?
@@ -18,6 +27,8 @@ struct ScreenSnapshot: Equatable, Sendable {
     var cursor: CursorState
     var modes: [ModeInfo]
     var modeIndex: Int
+    var modeName: String?
+    var popup: PopupState?
 
     var cursorModeInfo: ModeInfo? {
         guard modes.indices.contains(modeIndex) else { return nil }
@@ -26,7 +37,7 @@ struct ScreenSnapshot: Equatable, Sendable {
 }
 
 /// A half-open rectangle in grid cell coordinates.
-struct CellRect: Equatable, Sendable {
+nonisolated struct CellRect: Equatable, Sendable {
     var minRow: Int
     var minCol: Int
     var maxRow: Int   // exclusive
@@ -60,6 +71,7 @@ actor Screen {
     private(set) var modeName: String?
     private(set) var modeIndex = 0
     private(set) var title: String?
+    private(set) var popup: PopupState?
     private var consumeTask: Task<Void, Never>?
     private var dirtyRects: [Int: [CellRect]] = [:]
 
@@ -151,6 +163,13 @@ actor Screen {
         case let .setTitle(title):
             self.title = title
             titleHandler?(title)
+        case let .popupmenuShow(items, selected, row, col, grid):
+            guard grid == 1 else { break }
+            popup = PopupState(items: items, selected: selected, row: row, col: col)
+        case let .popupmenuSelect(selected):
+            popup?.selected = selected
+        case .popupmenuHide:
+            popup = nil
         case .flush:
             for (grid, rects) in dirtyRects {
                 flushHandler?(grid, rects)
@@ -231,7 +250,9 @@ actor Screen {
             defaultSpecial: defaultSpecial,
             cursor: cursor,
             modes: modes,
-            modeIndex: modeIndex
+            modeIndex: modeIndex,
+            modeName: modeName,
+            popup: popup
         )
     }
 
@@ -265,6 +286,7 @@ actor Screen {
         modeName = nil
         modeIndex = 0
         title = nil
+        popup = nil
         dirtyRects = [:]
         scrollDeltas = [:]
     }

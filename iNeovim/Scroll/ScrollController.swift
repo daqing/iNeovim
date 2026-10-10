@@ -50,9 +50,10 @@ final class ScrollController {
             apply(delta: rawDelta, lineHeight: lineHeight)
             // A phase ended without momentum can be followed by a momentum
             // began, so close the gesture on a short delay that a momentum
-            // start cancels.
+            // start cancels. (`.none` would resolve to Optional.none and
+            // compare against nil; an unset phase is the empty set.)
             if event.momentumPhase == .ended
-                || (event.phase == .ended && event.momentumPhase == .none) {
+                || (event.phase == .ended && event.momentumPhase.isEmpty) {
                 scheduleWheelEnd()
             } else {
                 wheelEndTask?.cancel()

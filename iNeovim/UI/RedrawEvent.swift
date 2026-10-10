@@ -2,14 +2,49 @@ import Foundation
 
 /// A run of identical cells from a `grid_line` event: cell text, highlight id,
 /// and the number of consecutive cells it occupies.
-struct GridCellRun: Equatable, Sendable {
+nonisolated struct GridCellRun: Equatable, Sendable {
     var text: String
     var attrId: Int
     var count: Int
 }
 
+/// One completion entry from a `popupmenu_show` event (ext_popupmenu). The
+/// kind is a string in current nvim ("Function", "Variable", …) but older
+/// revisions sent the protocol's legacy integer codes, so both parse.
+nonisolated struct PopupItem: Equatable, Sendable {
+    var word: String
+    var kind: String
+    var menu: String
+    var info: String
+
+    init(word: String = "", kind: String = "", menu: String = "", info: String = "") {
+        self.word = word
+        self.kind = kind
+        self.menu = menu
+        self.info = info
+    }
+
+    init?(rawValue raw: MsgPackValue) {
+        guard case let .array(fields) = raw, case .string(let word)? = fields.first else {
+            return nil
+        }
+        self.init(
+            word: word,
+            kind: Self.kindString(fields.count > 1 ? fields[1] : .nil),
+            menu: fields.count > 2 ? fields[2].stringValue ?? "" : "",
+            info: fields.count > 3 ? fields[3].stringValue ?? "" : ""
+        )
+    }
+
+    private static func kindString(_ raw: MsgPackValue) -> String {
+        if let text = raw.stringValue { return text }
+        if let code = raw.intValue { return String(code) }
+        return ""
+    }
+}
+
 /// Per-mode cursor presentation from a `mode_info_set` event.
-struct ModeInfo: Equatable, Sendable {
+nonisolated struct ModeInfo: Equatable, Sendable {
     enum CursorShape: String, Equatable, Sendable {
         case block
         case horizontal
@@ -25,7 +60,7 @@ struct ModeInfo: Equatable, Sendable {
 }
 
 /// A Neovim UI redraw event (linegrid protocol, `ext_multigrid` off).
-enum RedrawEvent: Equatable, Sendable {
+nonisolated enum RedrawEvent: Equatable, Sendable {
     case gridLine(grid: Int, row: Int, colStart: Int, runs: [GridCellRun])
     case gridScroll(grid: Int, top: Int, bot: Int, left: Int, right: Int, rows: Int, cols: Int)
     case gridClear(grid: Int)
@@ -37,11 +72,14 @@ enum RedrawEvent: Equatable, Sendable {
     case modeChange(name: String, index: Int)
     case modeInfoSet([ModeInfo])
     case setTitle(String)
+    case popupmenuShow(items: [PopupItem], selected: Int, row: Int, col: Int, grid: Int)
+    case popupmenuSelect(Int)
+    case popupmenuHide
     case flush
     case unknown(name: String)
 }
 
-extension RedrawEvent {
+nonisolated extension RedrawEvent {
     /// Parse the params of a `redraw` notification. Nvim sends a single
     /// argument: a batch of events, each `[name, tuple, tuple, ...]`, where
     /// every parameter tuple is one logical instance of the event. Repeatable
@@ -134,6 +172,24 @@ extension RedrawEvent {
         case "set_title":
             guard let args = firstTuple(tuples), case let .string(title)? = args.first else { return [] }
             return [.setTitle(title)]
+        case "popupmenu_show":
+            guard let args = firstTuple(tuples), args.count >= 4,
+                  case let .array(rawItems) = args[0],
+                  let selected = args[1].intValue,
+                  let row = args[2].intValue,
+                  let col = args[3].intValue else { return [] }
+            return [.popupmenuShow(
+                items: rawItems.compactMap(PopupItem.init(rawValue:)),
+                selected: selected,
+                row: row,
+                col: col,
+                grid: args.count > 4 ? args[4].intValue ?? 1 : 1
+            )]
+        case "popupmenu_select":
+            guard let args = firstTuple(tuples), let selected = args.first?.intValue else { return [] }
+            return [.popupmenuSelect(selected)]
+        case "popupmenu_hide":
+            return [.popupmenuHide]
         case "flush":
             return [.flush]
         default:
@@ -181,7 +237,7 @@ extension RedrawEvent {
     }
 }
 
-extension ModeInfo {
+nonisolated extension ModeInfo {
     init?(rawValue: MsgPackValue) {
         guard case let .map(map) = rawValue else { return nil }
         self.init(

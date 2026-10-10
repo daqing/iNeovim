@@ -12,3 +12,4 @@ DerivedData/
 
 # Test coverage profiles
 *.profraw
+.zcode

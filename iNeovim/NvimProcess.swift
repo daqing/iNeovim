@@ -44,6 +44,7 @@ actor NvimProcess {
         // user's home must happen here (not via RPC) so init.lua already sees
         // the expected `getcwd()` during startup.
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        process.environment = Self.augmentedEnvironment()
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stderr
@@ -56,6 +57,29 @@ actor NvimProcess {
         self.stdoutPipe = stdout
         forwardStandardError(stderr.fileHandleForReading)
         Log.rpc.info("Embedded nvim started (pid \(process.processIdentifier, privacy: .public))")
+    }
+
+    /// The GUI PATH omits version managers (rbenv, asdf) and Homebrew, so
+    /// anything nvim spawns — LSP servers, formatters — silently falls back
+    /// to system binaries (a ruby-lsp on the system Ruby 2.6 dies against a
+    /// modern Gemfile). Prepend the common user tool directories and keep
+    /// the inherited PATH at the end.
+    private static func augmentedEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extra = [
+            "\(home)/.rbenv/shims",
+            "\(home)/.asdf/shims",
+            "\(home)/.local/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+        ]
+        var path = environment["PATH"]?.split(separator: ":").map(String.init) ?? []
+        for directory in extra.reversed() where !path.contains(directory) {
+            path.insert(directory, at: 0)
+        }
+        environment["PATH"] = path.joined(separator: ":")
+        return environment
     }
 
     nonisolated func writeToStandardInput(_ data: Data) throws {

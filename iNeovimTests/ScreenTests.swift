@@ -5,6 +5,13 @@ private final class TitleBox: @unchecked Sendable {
     var value: String?
 }
 
+/// Handlers run as @Sendable closures, so plain captured vars would trip the
+/// data-race warnings; a shared box is the lightweight escape hatch.
+private final class Box<T>: @unchecked Sendable {
+    var value: T
+    init(_ value: T) { self.value = value }
+}
+
 @MainActor
 final class ScreenTests: XCTestCase {
     func testGridEventsBuildPrimaryGrid() async {
@@ -65,12 +72,12 @@ final class ScreenTests: XCTestCase {
         ]))
         await screen.apply(.flush)
 
-        var flushed: (grid: Int, rects: [CellRect])?
-        await screen.setFlushHandler({ grid, rects in flushed = (grid, rects) })
+        let flushed = Box<(grid: Int, rects: [CellRect])?>(nil)
+        await screen.setFlushHandler({ grid, rects in flushed.value = (grid, rects) })
         await screen.apply(.cursorGoto(grid: 1, row: 0, col: 0))
         await screen.apply(.flush)
 
-        XCTAssertEqual(flushed?.rects, [CellRect(minRow: 0, minCol: 0, maxRow: 1, maxCol: 2)])
+        XCTAssertEqual(flushed.value?.rects, [CellRect(minRow: 0, minCol: 0, maxRow: 1, maxCol: 2)])
     }
 
     func testModeInfoAndChangeTrackCursorShape() async {
@@ -131,8 +138,8 @@ final class ScreenTests: XCTestCase {
 
     func testFlushReportsCoalescedDirtyRegion() async {
         let screen = Screen()
-        var flushed: (grid: Int, rects: [CellRect])?
-        await screen.setFlushHandler({ grid, rects in flushed = (grid, rects) })
+        let flushed = Box<(grid: Int, rects: [CellRect])?>(nil)
+        await screen.setFlushHandler({ grid, rects in flushed.value = (grid, rects) })
 
         await screen.apply(.gridResize(grid: 1, width: 4, height: 3))
         await screen.apply(.gridLine(grid: 1, row: 1, colStart: 1, runs: [
@@ -141,26 +148,26 @@ final class ScreenTests: XCTestCase {
         await screen.apply(.flush)
 
         // The resize dirtied the whole grid, so the line's dirt is subsumed.
-        XCTAssertEqual(flushed?.grid, 1)
-        XCTAssertEqual(flushed?.rects, [CellRect(minRow: 0, minCol: 0, maxRow: 3, maxCol: 4)])
+        XCTAssertEqual(flushed.value?.grid, 1)
+        XCTAssertEqual(flushed.value?.rects, [CellRect(minRow: 0, minCol: 0, maxRow: 3, maxCol: 4)])
     }
 
     func testFlushWithoutNewEventsDoesNotNotify() async {
         let screen = Screen()
-        var flushCount = 0
-        await screen.setFlushHandler({ _, _ in flushCount += 1 })
+        let flushCount = Box(0)
+        await screen.setFlushHandler({ _, _ in flushCount.value += 1 })
 
         await screen.apply(.gridResize(grid: 1, width: 2, height: 2))
         await screen.apply(.flush)
         await screen.apply(.flush)
 
-        XCTAssertEqual(flushCount, 1)
+        XCTAssertEqual(flushCount.value, 1)
     }
 
     func testDirtyRectsStaySeparateAcrossDistantEvents() async {
         let screen = Screen()
-        var flushed: (grid: Int, rects: [CellRect])?
-        await screen.setFlushHandler({ grid, rects in flushed = (grid, rects) })
+        let flushed = Box<(grid: Int, rects: [CellRect])?>(nil)
+        await screen.setFlushHandler({ grid, rects in flushed.value = (grid, rects) })
 
         await screen.apply(.gridResize(grid: 1, width: 4, height: 4))
         await screen.apply(.flush)
@@ -174,7 +181,7 @@ final class ScreenTests: XCTestCase {
 
         // Two non-touching edits must not be merged into one bounding box that
         // would span the whole screen.
-        XCTAssertEqual(flushed?.rects, [
+        XCTAssertEqual(flushed.value?.rects, [
             CellRect(minRow: 0, minCol: 0, maxRow: 1, maxCol: 1),
             CellRect(minRow: 2, minCol: 1, maxRow: 3, maxCol: 3),
         ])
@@ -182,15 +189,15 @@ final class ScreenTests: XCTestCase {
 
     func testCursorGotoDirtiesOldAndNewCells() async {
         let screen = Screen()
-        var flushed: (grid: Int, rects: [CellRect])?
-        await screen.setFlushHandler({ grid, rects in flushed = (grid, rects) })
+        let flushed = Box<(grid: Int, rects: [CellRect])?>(nil)
+        await screen.setFlushHandler({ grid, rects in flushed.value = (grid, rects) })
 
         await screen.apply(.gridResize(grid: 1, width: 8, height: 8))
         await screen.apply(.flush)
         await screen.apply(.cursorGoto(grid: 1, row: 2, col: 3))
         await screen.apply(.flush)
 
-        XCTAssertEqual(flushed?.rects, [
+        XCTAssertEqual(flushed.value?.rects, [
             CellRect(minRow: 0, minCol: 0, maxRow: 1, maxCol: 1),
             CellRect(minRow: 2, minCol: 3, maxRow: 3, maxCol: 4),
         ])
@@ -198,23 +205,23 @@ final class ScreenTests: XCTestCase {
 
     func testFlushReportsNetScrollDelta() async {
         let screen = Screen()
-        var reported: (grid: Int, rows: Int, cols: Int)?
-        await screen.setScrollHandler({ grid, rows, cols in reported = (grid, rows, cols) })
+        let reported = Box<(grid: Int, rows: Int, cols: Int)?>(nil)
+        await screen.setScrollHandler({ grid, rows, cols in reported.value = (grid, rows, cols) })
 
         await screen.apply(.gridResize(grid: 1, width: 4, height: 4))
         await screen.apply(.gridScroll(grid: 1, top: 0, bot: 4, left: 0, right: 4, rows: 2, cols: 0))
         await screen.apply(.gridScroll(grid: 1, top: 0, bot: 4, left: 0, right: 4, rows: 1, cols: 0))
         await screen.apply(.flush)
 
-        XCTAssertEqual(reported?.grid, 1)
-        XCTAssertEqual(reported?.rows, 3)
-        XCTAssertEqual(reported?.cols, 0)
+        XCTAssertEqual(reported.value?.grid, 1)
+        XCTAssertEqual(reported.value?.rows, 3)
+        XCTAssertEqual(reported.value?.cols, 0)
     }
 
     func testFlushWithoutScrollReportsNothing() async {
         let screen = Screen()
-        var scrollCount = 0
-        await screen.setScrollHandler({ _, _, _ in scrollCount += 1 })
+        let scrollCount = Box(0)
+        await screen.setScrollHandler({ _, _, _ in scrollCount.value += 1 })
 
         await screen.apply(.gridResize(grid: 1, width: 2, height: 2))
         await screen.apply(.gridLine(grid: 1, row: 0, colStart: 0, runs: [
@@ -222,13 +229,13 @@ final class ScreenTests: XCTestCase {
         ]))
         await screen.apply(.flush)
 
-        XCTAssertEqual(scrollCount, 0)
+        XCTAssertEqual(scrollCount.value, 0)
     }
 
     func testScrollDeltaResetsAfterFlush() async {
         let screen = Screen()
-        var reports: [(rows: Int, cols: Int)] = []
-        await screen.setScrollHandler({ _, rows, cols in reports.append((rows, cols)) })
+        let reports = Box<[(rows: Int, cols: Int)]>([])
+        await screen.setScrollHandler({ _, rows, cols in reports.value.append((rows, cols)) })
 
         await screen.apply(.gridResize(grid: 1, width: 2, height: 2))
         await screen.apply(.gridScroll(grid: 1, top: 0, bot: 2, left: 0, right: 2, rows: 1, cols: 0))
@@ -237,7 +244,38 @@ final class ScreenTests: XCTestCase {
         await screen.apply(.gridScroll(grid: 1, top: 0, bot: 2, left: 0, right: 2, rows: -1, cols: 0))
         await screen.apply(.flush)
 
-        XCTAssertEqual(reports.map(\.rows), [1, -1])
-        XCTAssertEqual(reports.map(\.cols), [0, 0])
+        XCTAssertEqual(reports.value.map(\.rows), [1, -1])
+        XCTAssertEqual(reports.value.map(\.cols), [0, 0])
+    }
+
+    func testPopupmenuStateTransitionsThroughSnapshot() async {
+        let screen = Screen()
+        let items = [
+            PopupItem(word: "alpha"),
+            PopupItem(word: "beta", kind: "Function", menu: "[LSP]"),
+        ]
+        await screen.apply(.popupmenuShow(items: items, selected: 0, row: 3, col: 6, grid: 1))
+        await screen.apply(.popupmenuSelect(1))
+
+        var snapshot = await screen.snapshot()
+        XCTAssertEqual(
+            snapshot.popup,
+            PopupState(items: items, selected: 1, row: 3, col: 6)
+        )
+
+        await screen.apply(.popupmenuHide)
+        snapshot = await screen.snapshot()
+        XCTAssertNil(snapshot.popup)
+    }
+
+    func testPopupmenuIgnoresForeignGridsAndSelectWithoutShow() async {
+        let screen = Screen()
+        await screen.apply(.popupmenuShow(items: [PopupItem(word: "x")], selected: 0, row: 0, col: 0, grid: 2))
+        var snapshot = await screen.snapshot()
+        XCTAssertNil(snapshot.popup)
+
+        await screen.apply(.popupmenuSelect(2))
+        snapshot = await screen.snapshot()
+        XCTAssertNil(snapshot.popup)
     }
 }

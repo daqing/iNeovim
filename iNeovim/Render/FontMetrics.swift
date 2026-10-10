@@ -48,7 +48,7 @@ struct FontMetrics: Equatable {
         guard mapped else { return ceil(CTFontGetSize(font)) }
         var advances = [CGSize](repeating: .zero, count: glyphs.count)
         advances.withUnsafeMutableBufferPointer { buffer in
-            CTFontGetAdvancesForGlyphs(
+            _ = CTFontGetAdvancesForGlyphs(
                 font, .horizontal, glyphs, buffer.baseAddress!, glyphs.count
             )
         }

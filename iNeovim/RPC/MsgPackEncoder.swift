@@ -1,6 +1,6 @@
 import Foundation
 
-enum MsgPackEncoder {
+nonisolated enum MsgPackEncoder {
     static func encode(_ value: MsgPackValue) -> Data {
         var data = Data()
         write(value, to: &data)
