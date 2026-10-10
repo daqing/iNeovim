@@ -3,14 +3,16 @@ import XCTest
 
 @MainActor
 final class FuzzyMatcherTests: XCTestCase {
-    func testFallbackFilterKeepsSubsequencesInOrder() async {
-        let results = await FuzzyMatcher.filter(
+    func testFallbackFilterKeepsSubsequencesInOrder() {
+        // Exercises the in-process scorer directly: fzf (preferred at runtime)
+        // is absent on some machines, and both paths are subsequence matchers.
+        let results = FuzzyMatcher.fallbackFilter(
             "mdl",
             candidates: ["Sources/App/Model.swift", "Sources/App/Modal.swift", "README.md"]
         )
         XCTAssertTrue(results.contains("Sources/App/Model.swift"))
-        XCTAssertFalse(results.contains("Sources/App/Modal.swift"), "l before d must not match")
-        XCTAssertFalse(results.contains("README.md"))
+        XCTAssertTrue(results.contains("Sources/App/Modal.swift"), "m→d→l is a subsequence of modal too")
+        XCTAssertFalse(results.contains("README.md"), "no l after d in readme.md")
     }
 
     func testFallbackFilterPrefersSegmentStartsAndShorterPaths() async {

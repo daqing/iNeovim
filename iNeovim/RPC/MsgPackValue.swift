@@ -3,7 +3,7 @@ import Foundation
 /// Boxed map storage: with MainActor as the module's default actor isolation, a
 /// dictionary associated value directly on the recursive enum triggers a compiler
 /// circular reference; the box lets conformance synthesis resolve normally.
-struct MsgPackValueMap {
+nonisolated struct MsgPackValueMap: Hashable {
     var entries: [MsgPackValue: MsgPackValue]
 
     init(_ entries: [MsgPackValue: MsgPackValue] = [:]) {
@@ -15,7 +15,7 @@ struct MsgPackValueMap {
     }
 }
 
-enum MsgPackValue {
+nonisolated enum MsgPackValue: Hashable {
     case `nil`
     case bool(Bool)
     case int(Int64)
@@ -28,13 +28,11 @@ enum MsgPackValue {
     case ext(type: Int8, data: Data)
 }
 
-// Conformances are declared nonisolated: these value types are passed between
-// actors (RPC layer), and MainActor-isolated conformances cannot satisfy the
-// nonisolated generic contexts they are used from.
-nonisolated extension MsgPackValueMap: Hashable {}
-nonisolated extension MsgPackValue: Hashable {}
+// The value types cross actor boundaries freely (RPC read thread, session
+// actor, main actor), which is why they — and the codec below — are nonisolated
+// instead of picking up the module's MainActor default.
 
-extension MsgPackValue {
+nonisolated extension MsgPackValue {
     /// Numeric payload regardless of whether nvim encoded it as msgpack int or uint.
     var intValue: Int? {
         switch self {

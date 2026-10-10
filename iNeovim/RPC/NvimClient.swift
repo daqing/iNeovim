@@ -1,7 +1,7 @@
 import Foundation
 
 /// One `vim.diagnostic` entry on the clicked line.
-struct LineDiagnostic: Equatable {
+nonisolated struct LineDiagnostic: Equatable {
     enum Severity: Int {
         case error = 1
         case warning

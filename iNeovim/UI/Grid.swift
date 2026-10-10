@@ -1,14 +1,14 @@
 import Foundation
 
 /// One cell of a grid: the text it holds plus its highlight id (0 = default).
-struct GridCell: Equatable, Sendable {
+nonisolated struct GridCell: Equatable, Sendable {
     var text: String = " "
     var attrId: Int = 0
 }
 
 /// Cell storage for a single nvim grid. Grid state is keyed by grid id
 /// throughout (per the multigrid-ready design), even though v1 runs single-grid.
-struct Grid: Equatable, Sendable {
+nonisolated struct Grid: Equatable, Sendable {
     let id: Int
     private(set) var width: Int
     private(set) var height: Int

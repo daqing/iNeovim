@@ -2,7 +2,7 @@ import Foundation
 
 /// A msgpack-RPC frame: request `[0, msgid, method, params]`,
 /// response `[1, msgid, error, result]`, or notification `[2, method, params]`.
-enum RPCMessage {
+nonisolated enum RPCMessage {
     case request(msgid: UInt64, method: String, params: [MsgPackValue])
     case response(msgid: UInt64, error: MsgPackValue, result: MsgPackValue)
     case notification(method: String, params: [MsgPackValue])

@@ -2,7 +2,7 @@ import Foundation
 import os
 
 /// Cursor position in grid coordinates.
-struct CursorState: Equatable, Sendable {
+nonisolated struct CursorState: Equatable, Sendable {
     var grid: Int
     var row: Int
     var col: Int
@@ -10,7 +10,7 @@ struct CursorState: Equatable, Sendable {
 
 /// The ext_popupmenu completion menu state: items, the selected index
 /// (-1 = none), and the grid cell the panel anchors at.
-struct PopupState: Equatable, Sendable {
+nonisolated struct PopupState: Equatable, Sendable {
     var items: [PopupItem]
     var selected: Int
     var row: Int
@@ -18,7 +18,7 @@ struct PopupState: Equatable, Sendable {
 }
 
 /// An immutable copy of the applied UI state for one render pass.
-struct ScreenSnapshot: Equatable, Sendable {
+nonisolated struct ScreenSnapshot: Equatable, Sendable {
     var grid: Grid?
     var highlights: HighlightStore
     var defaultForeground: Int?
@@ -37,7 +37,7 @@ struct ScreenSnapshot: Equatable, Sendable {
 }
 
 /// A half-open rectangle in grid cell coordinates.
-struct CellRect: Equatable, Sendable {
+nonisolated struct CellRect: Equatable, Sendable {
     var minRow: Int
     var minCol: Int
     var maxRow: Int   // exclusive

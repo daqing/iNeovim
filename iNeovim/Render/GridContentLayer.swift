@@ -472,7 +472,7 @@ final class GridContentLayer: CALayer {
     /// cleared, the preedit string is drawn with an accent underline, and a
     /// bar marks the selection position inside it.
     private func drawPreedit(_ dirtyRect: CGRect, context: CGContext) {
-        guard let preedit, let snapshot, let anchor = cursorCellRect() else { return }
+        guard let preedit, snapshot != nil, let anchor = cursorCellRect() else { return }
         let rect = preeditRect(for: preedit, range: NSRange(
             location: 0,
             length: preedit.text.utf16.count
@@ -564,9 +564,9 @@ private struct FontVariants {
     init(_ font: NSFont) {
         let manager = NSFontManager.shared
         regular = font
-        bold = manager.convert(font, toHaveTrait: .boldFontMask) ?? font
-        italic = manager.convert(font, toHaveTrait: .italicFontMask) ?? font
-        boldItalic = manager.convert(font, toHaveTrait: [.boldFontMask, .italicFontMask]) ?? bold
+        bold = manager.convert(font, toHaveTrait: .boldFontMask)
+        italic = manager.convert(font, toHaveTrait: .italicFontMask)
+        boldItalic = manager.convert(font, toHaveTrait: [.boldFontMask, .italicFontMask])
     }
 
     func font(for attr: HlAttr) -> NSFont {

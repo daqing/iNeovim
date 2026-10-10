@@ -57,8 +57,7 @@ final class IMEHandler: NSObject {
         return window.convertToScreen(view.convert(rect, to: nil))
     }
 
-    func doCommand(by selector: Selector?) {
-        guard let selector else { return }
+    func doCommand(by selector: Selector) {
         guard let keys = Self.selectorKeys[selector] else {
             // Unknown selectors (layout-specific keys, editing commands we do
             // not model) are dropped; visible at debug level when diagnosing.
@@ -85,23 +84,25 @@ final class IMEHandler: NSObject {
 
     /// `doCommand(by:)` selectors the input context can send instead of
     /// `insertText` — during composition this is how navigation reaches us.
+    /// Runtime strings (not #selector): several of these (e.g. movePageUp:)
+    /// have no visible @objc declaration in Swift's AppKit interface.
     static let selectorKeys: [Selector: String] = [
-        Selector("insertNewline:"): "<CR>",
-        Selector("insertTab:"): "<Tab>",
-        Selector("insertBacktab:"): "<S-Tab>",
-        Selector("deleteBackward:"): "<BS>",
-        Selector("deleteForward:"): "<Del>",
-        Selector("cancelOperation:"): "<Esc>",
-        Selector("moveUp:"): "<Up>",
-        Selector("moveDown:"): "<Down>",
-        Selector("moveLeft:"): "<Left>",
-        Selector("moveRight:"): "<Right>",
-        Selector("moveToBeginningOfLine:"): "<Home>",
-        Selector("moveToEndOfLine:"): "<End>",
-        Selector("moveToBeginningOfDocument:"): "<C-Home>",
-        Selector("moveToEndOfDocument:"): "<C-End>",
-        Selector("movePageUp:"): "<PageUp>",
-        Selector("movePageDown:"): "<PageDown>",
+        NSSelectorFromString("insertNewline:"): "<CR>",
+        NSSelectorFromString("insertTab:"): "<Tab>",
+        NSSelectorFromString("insertBacktab:"): "<S-Tab>",
+        NSSelectorFromString("deleteBackward:"): "<BS>",
+        NSSelectorFromString("deleteForward:"): "<Del>",
+        NSSelectorFromString("cancelOperation:"): "<Esc>",
+        NSSelectorFromString("moveUp:"): "<Up>",
+        NSSelectorFromString("moveDown:"): "<Down>",
+        NSSelectorFromString("moveLeft:"): "<Left>",
+        NSSelectorFromString("moveRight:"): "<Right>",
+        NSSelectorFromString("moveToBeginningOfLine:"): "<Home>",
+        NSSelectorFromString("moveToEndOfLine:"): "<End>",
+        NSSelectorFromString("moveToBeginningOfDocument:"): "<C-Home>",
+        NSSelectorFromString("moveToEndOfDocument:"): "<C-End>",
+        NSSelectorFromString("movePageUp:"): "<PageUp>",
+        NSSelectorFromString("movePageDown:"): "<PageDown>",
     ]
 }
 
@@ -146,7 +147,7 @@ extension TerminalView: NSTextInputClient {
         NSNotFound
     }
 
-    override func doCommand(by selector: Selector?) {
+    override func doCommand(by selector: Selector) {
         imeHandler.doCommand(by: selector)
     }
 }

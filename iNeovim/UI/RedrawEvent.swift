@@ -2,7 +2,7 @@ import Foundation
 
 /// A run of identical cells from a `grid_line` event: cell text, highlight id,
 /// and the number of consecutive cells it occupies.
-struct GridCellRun: Equatable, Sendable {
+nonisolated struct GridCellRun: Equatable, Sendable {
     var text: String
     var attrId: Int
     var count: Int
@@ -11,7 +11,7 @@ struct GridCellRun: Equatable, Sendable {
 /// One completion entry from a `popupmenu_show` event (ext_popupmenu). The
 /// kind is a string in current nvim ("Function", "Variable", …) but older
 /// revisions sent the protocol's legacy integer codes, so both parse.
-struct PopupItem: Equatable, Sendable {
+nonisolated struct PopupItem: Equatable, Sendable {
     var word: String
     var kind: String
     var menu: String
@@ -44,7 +44,7 @@ struct PopupItem: Equatable, Sendable {
 }
 
 /// Per-mode cursor presentation from a `mode_info_set` event.
-struct ModeInfo: Equatable, Sendable {
+nonisolated struct ModeInfo: Equatable, Sendable {
     enum CursorShape: String, Equatable, Sendable {
         case block
         case horizontal
@@ -60,7 +60,7 @@ struct ModeInfo: Equatable, Sendable {
 }
 
 /// A Neovim UI redraw event (linegrid protocol, `ext_multigrid` off).
-enum RedrawEvent: Equatable, Sendable {
+nonisolated enum RedrawEvent: Equatable, Sendable {
     case gridLine(grid: Int, row: Int, colStart: Int, runs: [GridCellRun])
     case gridScroll(grid: Int, top: Int, bot: Int, left: Int, right: Int, rows: Int, cols: Int)
     case gridClear(grid: Int)
@@ -79,7 +79,7 @@ enum RedrawEvent: Equatable, Sendable {
     case unknown(name: String)
 }
 
-extension RedrawEvent {
+nonisolated extension RedrawEvent {
     /// Parse the params of a `redraw` notification. Nvim sends a single
     /// argument: a batch of events, each `[name, tuple, tuple, ...]`, where
     /// every parameter tuple is one logical instance of the event. Repeatable
@@ -237,7 +237,7 @@ extension RedrawEvent {
     }
 }
 
-extension ModeInfo {
+nonisolated extension ModeInfo {
     init?(rawValue: MsgPackValue) {
         guard case let .map(map) = rawValue else { return nil }
         self.init(

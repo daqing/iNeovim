@@ -1,6 +1,6 @@
 import Foundation
 
-enum MsgPackError: LocalizedError {
+nonisolated enum MsgPackError: LocalizedError {
     case invalidMarker(UInt8)
     case invalidUTF8
 
@@ -14,7 +14,7 @@ enum MsgPackError: LocalizedError {
     }
 }
 
-struct MsgPackDecoder {
+nonisolated struct MsgPackDecoder {
     private var buffer = Data()
 
     var bufferedByteCount: Int { buffer.count }

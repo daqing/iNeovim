@@ -143,7 +143,8 @@ final class AppModel: ObservableObject {
             let stream = await client.makeRedrawEventStream()
             await screen.startConsuming(stream)
             await screen.setTitleHandler { [weak self] title in
-                Task { @MainActor in self?.windowTitle = title }
+                guard let self else { return }
+                Task { @MainActor in self.windowTitle = title }
             }
             try await client.uiAttach(width: 80, height: 24, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),

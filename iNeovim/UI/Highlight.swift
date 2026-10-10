@@ -2,7 +2,7 @@ import Foundation
 
 /// A parsed `hl_attr_define` entry. Colors are packed 0xRRGGBB; nil means nvim
 /// did not set that color for the attribute.
-struct HlAttr: Equatable, Sendable {
+nonisolated struct HlAttr: Equatable, Sendable {
     var foreground: Int?
     var background: Int?
     var special: Int?
@@ -54,7 +54,7 @@ struct HlAttr: Equatable, Sendable {
     }
 }
 
-extension HlAttr {
+nonisolated extension HlAttr {
     /// Effective colors for rendering: per-attribute overrides falling back to
     /// the grid defaults, with `reverse` swapping foreground and background.
     func resolvedColors(
@@ -72,7 +72,7 @@ extension HlAttr {
 }
 
 /// Highlight attributes keyed by nvim's attr id.
-struct HighlightStore: Equatable, Sendable {
+nonisolated struct HighlightStore: Equatable, Sendable {
     private(set) var attrs: [Int: HlAttr] = [:]
 
     mutating func define(_ attr: HlAttr, for id: Int) {

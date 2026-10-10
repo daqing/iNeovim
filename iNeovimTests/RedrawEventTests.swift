@@ -247,7 +247,7 @@ final class RedrawEventTests: XCTestCase {
     func testPopupmenuShowParsesWithoutGridArgument() {
         let items: MsgPackValue = .array([])
         XCTAssertEqual(
-            parse([.array([.string("popupmenu_show"), .array([items, .uint(-1), .uint(0), .uint(2)])])]),
+            parse([.array([.string("popupmenu_show"), .array([items, .int(-1), .uint(0), .uint(2)])])]),
             [.popupmenuShow(items: [], selected: -1, row: 0, col: 2, grid: 1)]
         )
     }
