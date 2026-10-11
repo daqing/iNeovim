@@ -173,14 +173,18 @@ final class TerminalView: NSView {
     /// resize below.
     private func requestResize(to size: CGSize) {
         reconciledViewSize = nil
-        Task { await resizeController.viewDidResize(to: Self.gridAreaSize(size)) }
+        let area = Self.gridAreaSize(size)
+        let cellCount = ResizeController.cellCount(for: area, cellSize: metrics.cellSize)
+        // Record the size so `ui_attach` can use it instead of 80x24.
+        model.noteGridSize(cols: cellCount.cols, rows: cellCount.rows)
+        Task { await resizeController.viewDidResize(to: area) }
     }
 
     /// Neovim rejects a resize that arrives before `ui_attach`, which would
-    /// leave the grid at its initial 80x24 and visibly smaller than the window
-    /// if the window is never resized again. Once a snapshot is applied, compare
-    /// its grid with the size the view needs and re-request when they differ
-    /// (at most once per view size, so a rejected request cannot spin).
+    /// leave the grid at the fallback attach size and visibly smaller than the
+    /// window if the window is never resized again. Once a snapshot is applied,
+    /// compare its grid with the size the view needs and re-request when they
+    /// differ (at most once per view size, so a rejected request cannot spin).
     private func reconcileGridSize(with snapshot: ScreenSnapshot) {
         guard sessionReady, let grid = snapshot.grid, !grid.isEmpty else { return }
         let expected = ResizeController.cellCount(
@@ -697,14 +701,13 @@ final class TerminalView: NSView {
         // Re-assert on the next main-actor turn in case SwiftUI restores focus
         // to another control while the window is being laid out.
         if let window {
-            // Invisible until AppModel.revealWindow fades it in: SwiftUI
-            // presents the window before its preferredColorScheme lands, so
-            // a visible first frame would flash the system appearance.
-            window.alphaValue = 0
             // init resolved the adaptive fallback with no window context,
             // baking the system appearance into the layer's CGColor; paint
             // the seeded theme before the window can first display.
             refreshBackgroundColor(themeIsDark: model.themeIsDark)
+            // `attach` hides a plain window until its theme is known (native
+            // tab windows are revealed at once) so the first frame is never
+            // the system appearance.
             model.attach(to: window)
             observeWindowKeyState(window)
             refreshWindowAppearance()
@@ -820,14 +823,17 @@ final class TerminalView: NSView {
     }
 
     /// The layer background as a resolved CGColor. nvim's packed colors are
-    /// appearance-independent; the adaptive fallback is a dynamic AppKit
-    /// color whose CGColor conversion bakes in whichever appearance is
+    /// appearance-independent; the seeded background (a native tab's host) is
+    /// used until the first flush carries nvim's own, so the new tab paints
+    /// identically to the tab it continues. The adaptive fallback is a dynamic
+    /// AppKit color whose CGColor conversion bakes in whichever appearance is
     /// current at call time — init runs before the window (and its seeded
     /// theme) exists, which painted fresh windows in the system appearance
     /// for their first frames. Resolve under the given theme, else under the
     /// view's live effective appearance.
     private func resolvedBackgroundColor(themeIsDark: Bool?) -> CGColor {
-        if let packed = snapshot?.defaultBackground, let color = NSColor(packedRGB: packed) {
+        if let packed = snapshot?.defaultBackground ?? model.seededBackground,
+           let color = NSColor(packedRGB: packed) {
             return color.cgColor
         }
         let appearance = themeIsDark.flatMap {

@@ -162,20 +162,24 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `NSWindow.appearance` directly: the hosting WindowGroup resets it on its
   next update pass (measured: a freshly created window displays for 1–2
   frames before `preferredColorScheme` reaches it, so no imperative
-  pre-display `window.appearance` set can cover the gap). The light↔dark
-  switch is therefore handled by the reveal: a native-tab request seeds the
-  new window's model with the requesting window's mode
-  (`AppModel.pendingThemeSeed`, consumed by the next `init` — every ⌘T
-  continues from the tab it was pressed on, so ⌘T off a dark tab never runs
-  a light→dark transition), and the new window installs at `alphaValue` 0
-  and OUT of its tab group. `AppModel.revealWindow` then fades it in
-  (0.25 s) on the first theme report — bootstrap failures and a 1.5 s
-  timeout backstop it — matching the host's frame first so the old tab
-  stays composited underneath and the two crossfade; the group join and
-  `makeKeyAndOrderFront` happen only once the fade is done. Two traps are
-  measured, not guessed: joining the tab group at registration orders the
-  requesting tab out immediately (the screen goes blank while nvim starts —
-  reads as "the whole window disappeared"), and the adaptive fallback
+  pre-display `window.appearance` set can cover the gap). A native-tab
+  request therefore seeds the next window's model with the requesting
+  window's mode AND packed default background (`AppModel.pendingThemeSeed`
+  / `pendingBackgroundSeed`, consumed by the next `init` — every ⌘T
+  continues from the tab it was pressed on), and the tab is joined into the
+  requesting window's group immediately in
+  `AppDelegate.registerEditorWindow`. The seeded window already paints the
+  host's exact background, so AppKit's own tab-add transition is the whole
+  animation. Do not fade a standalone window over the tab group and join
+  later (the previous approach): a standalone window has no tab bar, so the
+  chrome changes mid-transition and the grid jumps vertically when the
+  deferred join shifts the content down under it. A plain standalone window
+  (⌘N / first launch) still installs at `alphaValue` 0 and
+  `AppModel.revealWindow` fades it in (0.25 s) on the first theme report —
+  bootstrap failures and a 1.5 s timeout backstop it — because there is no
+  host tab to inherit chrome from and the 1–2 frame system-appearance gap
+  must stay hidden; tab windows are released by
+  `AppModel.revealWindowImmediately` instead. The adaptive fallback
   background is a dynamic `NSColor` whose `cgColor` conversion bakes in the
   appearance current at call time — `TerminalView` resolves it under the
   seeded theme (`resolvedBackgroundColor(themeIsDark:)`) because init runs
@@ -185,6 +189,15 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   and faded out (0.25 s) over the redrawn content; on a first paint the
   seen mode falls back to the seeded theme and then to the window's
   effective appearance (covering ⌘N and first launch).
+- **New-tab first paint:** `ui_attach` uses the view's real grid size
+  (`AppModel.pendingGridSize`, reported from `TerminalView.requestResize`
+  as the window lays out) instead of a placeholder 80x24. The placeholder
+  would be drawn first and then resized a debounce interval later, so a new
+  tab appeared to wipe in from the top; attaching at the target size paints
+  the first frame full. `AppModel.attach` also sets
+  `window.animationBehavior = .none` so AppKit contributes no order-in or
+  tab-bar-entrance motion on top of the redraw. The 80x24 fallback only
+  applies if bootstrap beats the first layout.
 - **Content inset & cmdline gap:** the grid is inset `TerminalView.contentInset`
   (6 pt) from the view on all sides, and the last grid row (nvim's
   cmdline/message area) is drawn `TerminalView.cmdlineGap` (4 pt) below the
@@ -356,7 +369,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   first pane opens) mirrors the editor font and nvim's default colors and
   sets `shell-integration = none` — Ghostty's shell-integration scripts
   are GPLv3 and must not ship in this MIT app. Menu "Toggle Terminal
-  Pane" / ⌃` toggles regardless of focus; the settings toggle
+  Pane" / ⌃` toggles regardless of focus, and so does ⌥T — a local keyDown
+  monitor in `AppDelegate` (SwiftUI menu items can carry only one shortcut)
+  claims the exact ⌥T chord before dispatch; when "Option as Meta" is on the
+  chord goes to nvim as `<M-t>` and the pane stays on ⌃` alone; the settings
+  toggle
   "Open :terminal in native pane" only gates the cmdline interception
   (mappings/plugins/RPC `:terminal` bypass `sendKeys` and keep nvim's
   in-buffer terminal, exactly like the fzf gate's known edges).

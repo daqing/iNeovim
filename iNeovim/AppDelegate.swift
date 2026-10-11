@@ -100,27 +100,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingTabHost = host?.tabbingIdentifier == Self.editorTabbingIdentifier ? host : nil
         pendingTabFile = file
         // The new session reports its colorscheme only after the first flush;
-        // seed the next model with the host's mode so the tab appears in the
-        // host's theme and the real report crossfades instead of snapping.
-        AppModel.pendingThemeSeed = pendingTabHost != nil
-            ? AppModel.live.first { $0.hostWindow === pendingTabHost }?.themeIsDark
-            : nil
+        // seed the next model with the host's mode and background so the tab
+        // appears in the host's exact look and the real report does not snap.
+        if let pendingTabHost,
+           let hostModel = AppModel.live.first(where: { $0.hostWindow === pendingTabHost }) {
+            AppModel.pendingThemeSeed = hostModel.themeIsDark
+            AppModel.pendingBackgroundSeed = hostModel.terminalColors.background
+        } else {
+            AppModel.pendingThemeSeed = nil
+            AppModel.pendingBackgroundSeed = nil
+        }
         openEditorWindow()
     }
 
     /// Called from `AppModel.attach(to:)` as a new editor window's content is
     /// installed: enable tabbing, consume any pending tab placement, and hand
     /// over a pending file. Safe to call for plain ⌘N windows (no pending tab).
-    /// The tab-group join itself is deferred to the reveal
-    /// (`AppModel.revealWindow`): joining here would order this requesting
-    /// tab off the screen while the new session is still starting.
+    /// A tab joins its host's group here, at once — the seeded window is
+    /// already painted in the host's theme, so AppKit's own tab-add transition
+    /// is the whole animation. Deferring the join to reveal time would expose
+    /// a standalone window whose chrome (no tab bar) and content geometry
+    /// disagree with the group's, which read as the transition jumping.
     func registerEditorWindow(_ window: NSWindow, model: AppModel) {
         window.tabbingIdentifier = Self.editorTabbingIdentifier
         let host = pendingTabHost
         let file = pendingTabFile
         pendingTabHost = nil
         pendingTabFile = nil
-        model.deferTabJoin(to: host !== window ? host : nil)
+        if let host, host !== window {
+            // Match the host's frame while the window is still invisible so
+            // the group cannot adopt the new window's cascaded position.
+            window.setFrame(host.frame, display: false)
+            model.revealWindowImmediately()
+            // The system may already have tabbed the window itself (tabbing
+            // preference "Always"); join only when it is still standalone.
+            if window.tabGroup == nil || window.tabGroup !== host.tabGroup {
+                host.addTabbedWindow(window, ordered: .above)
+            }
+            window.makeKeyAndOrderFront(nil)
+        }
         if let file {
             model.open([file])
         }

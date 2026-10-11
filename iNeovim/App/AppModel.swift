@@ -63,18 +63,25 @@ final class AppModel: ObservableObject {
     /// reports default colors). Drives the window chrome color scheme.
     @Published private(set) var themeIsDark: Bool?
 
-    /// Theme seed for the next window a native-tab request creates (the
-    /// requesting window's mode): consumed by the following `init`, so the
-    /// new tab renders in its host's theme from its first frame instead of
-    /// flashing the system appearance until nvim reports. Self-clearing.
+    /// Theme mode and packed default background to seed the next window a
+    /// native-tab request creates (the requesting window's): consumed by the
+    /// following `init`, so the new tab paints its host's exact look from its
+    /// first frame instead of flashing the system appearance until nvim
+    /// reports. Both self-clearing.
     static var pendingThemeSeed: Bool?
+    static var pendingBackgroundSeed: Int?
+
+    /// The seeded packed default background, used to paint this window until
+    /// nvim reports its own (the first flush replaces it in the snapshot).
+    private(set) var seededBackground: Int?
 
     func setThemeIsDark(_ isDark: Bool?) {
         if themeIsDark != isDark {
             themeIsDark = isDark
         }
         // The first report is the reveal trigger: the window fades in with
-        // its real theme and its content already drawn.
+        // its real theme and its content already drawn. Native tab windows
+        // are already revealed, so this is a no-op for them.
         if isDark != nil {
             revealWindow()
         }
@@ -107,6 +114,16 @@ final class AppModel: ObservableObject {
     /// Window hosting this session; set when the terminal view is installed.
     weak var hostWindow: NSWindow?
 
+    /// The grid size the hosting view needs, reported as it lays out. nvim is
+    /// attached at this size instead of the 80x24 placeholder, which would
+    /// otherwise be drawn and then resized a debounce interval later — on a
+    /// new tab that reads as the content wiping in from the top.
+    private(set) var pendingGridSize: (cols: Int, rows: Int)?
+
+    func noteGridSize(cols: Int, rows: Int) {
+        pendingGridSize = (max(1, cols), max(1, rows))
+    }
+
     /// Diagnostics pushed by the embedded nvim's language servers (see
     /// `NvimClient.installDiagnosticsHook`); the problems panel renders it.
     let diagnosticsStore = DiagnosticsStore()
@@ -134,6 +151,8 @@ final class AppModel: ObservableObject {
             Self.pendingThemeSeed = nil
             themeIsDark = seed
         }
+        seededBackground = Self.pendingBackgroundSeed
+        Self.pendingBackgroundSeed = nil
         self.session = session
         self.screen = screen
         self.inputDispatcher = inputDispatcher
@@ -164,7 +183,19 @@ final class AppModel: ObservableObject {
     func attach(to window: NSWindow) {
         hostWindow = window
         becameActive()
+        // AppKit's inferred window animations (the order-in drop and the
+        // tab-bar entrance that shifts the grid down) only add motion on top
+        // of a redraw the view already handles itself; suppress them so a new
+        // tab lands instantly.
+        window.animationBehavior = .none
         if !hasRevealedWindow {
+            // Hide until the theme is known (or the reveal timeout) so the
+            // first frame is never the system appearance before
+            // `preferredColorScheme` lands. Native tab windows are released
+            // at once by `registerEditorWindow`. Setting alpha here (rather
+            // than in the view) keeps a re-added view from re-hiding a
+            // window that has already been revealed.
+            window.alphaValue = 0
             scheduleWindowRevealFallback()
         }
         AppDelegate.shared?.registerEditorWindow(window, model: self)
@@ -172,13 +203,11 @@ final class AppModel: ObservableObject {
 
     // MARK: - Window reveal
 
-    /// A new editor window is created invisible (its view sets alpha 0 as it
-    /// installs) and stays out of its tab group until its session reports a
-    /// theme: joining immediately would order the requesting tab off the
-    /// screen while nvim starts, which read as the whole window
-    /// disappearing. The reveal fades the window in over its host — the old
-    /// tab stays composited underneath, so the two crossfade — and joins the
-    /// group once opaque.
+    /// A plain editor window (⌘N / first launch) is created invisible and
+    /// fades in once its theme is known: a fresh standalone window displays
+    /// for 1–2 frames before `preferredColorScheme` reaches it and would
+    /// otherwise flash the system appearance. Native tab windows do not use
+    /// this path (see `revealWindowImmediately`).
     static let windowRevealDuration: TimeInterval = 0.25
 
     /// How long a window may stay hidden waiting for its first theme report
@@ -187,13 +216,19 @@ final class AppModel: ObservableObject {
 
     private var hasRevealedWindow = false
     private var windowRevealTask: Task<Void, Never>?
-    /// The tab group host this window must join at reveal time.
-    private weak var pendingTabJoinHost: NSWindow?
 
-    /// Remember where a native-tab window must join once revealed; called
-    /// from `registerEditorWindow` in place of the immediate join.
-    func deferTabJoin(to host: NSWindow?) {
-        pendingTabJoinHost = host
+    /// Release a window that must not use the standalone fade: a native tab
+    /// joining its host's group. The seeded theme is already painted, so the
+    /// window is ordered front at once and AppKit's own tab-add transition is
+    /// the whole animation. A standalone fade would instead expose a window
+    /// without the group's tab bar, then jump the grid vertically when the
+    /// deferred join shifted the content down under it.
+    func revealWindowImmediately() {
+        guard !hasRevealedWindow else { return }
+        hasRevealedWindow = true
+        windowRevealTask?.cancel()
+        windowRevealTask = nil
+        hostWindow?.alphaValue = 1
     }
 
     /// Fade the hosting window in; idempotent. Runs on the first known
@@ -205,30 +240,11 @@ final class AppModel: ObservableObject {
         windowRevealTask?.cancel()
         windowRevealTask = nil
         guard let window = hostWindow else { return }
-        let joinHost = pendingTabJoinHost
-        pendingTabJoinHost = nil
-        // Match the host's frame so the fade composites the two tabs in
-        // place — SwiftUI cascades new windows — while alpha is still 0 and
-        // the reposition is invisible.
-        if let joinHost, joinHost !== window {
-            window.setFrame(joinHost.frame, display: false)
-        }
         window.orderFront(nil)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.windowRevealDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             window.animator().alphaValue = 1
-        }
-        guard let joinHost, joinHost !== window else { return }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(Self.windowRevealDuration))
-            guard let self, self.hostWindow === window else { return }
-            // The system may have tabbed the window itself (tabbing
-            // preference "Always"); join only when it is still standalone.
-            if window.tabGroup == nil || window.tabGroup !== joinHost.tabGroup {
-                joinHost.addTabbedWindow(window, ordered: .above)
-            }
-            window.makeKeyAndOrderFront(nil)
         }
     }
 
@@ -269,11 +285,12 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 Task { @MainActor in self.handleDiagnosticUpdate(update) }
             }
-            try await client.uiAttach(width: 80, height: 24, options: .map(MsgPackValueMap([
+            let attach = pendingGridSize ?? (cols: 80, rows: 24)
+            try await client.uiAttach(width: attach.cols, height: attach.rows, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
                 .string("ext_popupmenu"): .bool(true),
             ])))
-            Log.render.info("UI attached 80x24 (ext_linegrid, ext_popupmenu)")
+            Log.render.info("UI attached \(attach.cols)x\(attach.rows) (ext_linegrid, ext_popupmenu)")
             // One wheel event scrolls exactly one line so the visual lead
             // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
             try await client.command("set mousescroll=ver:1,hor:1")
