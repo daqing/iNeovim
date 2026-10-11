@@ -63,11 +63,18 @@ final class AppModel: ObservableObject {
     /// reports default colors). Drives the window chrome color scheme.
     @Published private(set) var themeIsDark: Bool?
 
+    /// Theme seed for the next window a native-tab request creates (the
+    /// requesting window's mode): consumed by the following `init`, so the
+    /// new tab renders in its host's theme from its first frame instead of
+    /// flashing the system appearance until nvim reports. Self-clearing.
+    static var pendingThemeSeed: Bool?
+
     func setThemeIsDark(_ isDark: Bool?) {
         if themeIsDark != isDark {
             themeIsDark = isDark
         }
-        // The first report is the new window's reveal trigger (see revealWindow).
+        // The first report is the reveal trigger: the window fades in with
+        // its real theme and its content already drawn.
         if isDark != nil {
             revealWindow()
         }
@@ -123,6 +130,10 @@ final class AppModel: ObservableObject {
         commandHandler: @escaping @MainActor (String, NvimClient) -> Void = AppModel.commandInNeovim,
         cleanExitHandler: (@MainActor () -> Void)? = nil
     ) {
+        if let seed = Self.pendingThemeSeed {
+            Self.pendingThemeSeed = nil
+            themeIsDark = seed
+        }
         self.session = session
         self.screen = screen
         self.inputDispatcher = inputDispatcher
@@ -154,10 +165,6 @@ final class AppModel: ObservableObject {
         hostWindow = window
         becameActive()
         if !hasRevealedWindow {
-            // Hold the window invisible until its theme is known so it can
-            // fade in with the right look instead of showing the system
-            // appearance and snapping when nvim reports (see revealWindow).
-            window.alphaValue = 0
             scheduleWindowRevealFallback()
         }
         AppDelegate.shared?.registerEditorWindow(window, model: self)
@@ -165,33 +172,63 @@ final class AppModel: ObservableObject {
 
     // MARK: - Window reveal
 
-    /// A new editor window starts invisible (`attach` sets alpha 0) and
-    /// fades in once its theme is known, so a dark-themed nvim in a
-    /// light-system window never flashes the empty light state and then
-    /// snaps dark. With native tabs the previous tab shows through until
-    /// the fade, so the new tab reads as a soft crossfade over it.
-    static let windowRevealDuration: TimeInterval = 0.3
+    /// A new editor window is created invisible (its view sets alpha 0 as it
+    /// installs) and stays out of its tab group until its session reports a
+    /// theme: joining immediately would order the requesting tab off the
+    /// screen while nvim starts, which read as the whole window
+    /// disappearing. The reveal fades the window in over its host — the old
+    /// tab stays composited underneath, so the two crossfade — and joins the
+    /// group once opaque.
+    static let windowRevealDuration: TimeInterval = 0.25
 
     /// How long a window may stay hidden waiting for its first theme report
-    /// before it is faded in regardless (bootstrap failures reveal sooner).
+    /// before it is revealed regardless (bootstrap failures reveal sooner).
     static let windowRevealTimeout: Duration = .seconds(1.5)
 
     private var hasRevealedWindow = false
     private var windowRevealTask: Task<Void, Never>?
+    /// The tab group host this window must join at reveal time.
+    private weak var pendingTabJoinHost: NSWindow?
+
+    /// Remember where a native-tab window must join once revealed; called
+    /// from `registerEditorWindow` in place of the immediate join.
+    func deferTabJoin(to host: NSWindow?) {
+        pendingTabJoinHost = host
+    }
 
     /// Fade the hosting window in; idempotent. Runs on the first known
     /// theme, on a bootstrap failure (the setup/error UI must be visible),
-    /// or on the timeout started in `attach`.
+    /// or on the timeout scheduled in `attach`.
     private func revealWindow() {
         guard !hasRevealedWindow else { return }
         hasRevealedWindow = true
         windowRevealTask?.cancel()
         windowRevealTask = nil
         guard let window = hostWindow else { return }
+        let joinHost = pendingTabJoinHost
+        pendingTabJoinHost = nil
+        // Match the host's frame so the fade composites the two tabs in
+        // place — SwiftUI cascades new windows — while alpha is still 0 and
+        // the reposition is invisible.
+        if let joinHost, joinHost !== window {
+            window.setFrame(joinHost.frame, display: false)
+        }
+        window.orderFront(nil)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.windowRevealDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             window.animator().alphaValue = 1
+        }
+        guard let joinHost, joinHost !== window else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.windowRevealDuration))
+            guard let self, self.hostWindow === window else { return }
+            // The system may have tabbed the window itself (tabbing
+            // preference "Always"); join only when it is still standalone.
+            if window.tabGroup == nil || window.tabGroup !== joinHost.tabGroup {
+                joinHost.addTabbedWindow(window, ordered: .above)
+            }
+            window.makeKeyAndOrderFront(nil)
         }
     }
 

@@ -79,28 +79,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pendingTabHost = host?.tabbingIdentifier == Self.editorTabbingIdentifier ? host : nil
         pendingTabFile = file
+        // The new session reports its colorscheme only after the first flush;
+        // seed the next model with the host's mode so the tab appears in the
+        // host's theme and the real report crossfades instead of snapping.
+        AppModel.pendingThemeSeed = pendingTabHost != nil
+            ? AppModel.live.first { $0.hostWindow === pendingTabHost }?.themeIsDark
+            : nil
         openEditorWindow()
     }
 
     /// Called from `AppModel.attach(to:)` as a new editor window's content is
     /// installed: enable tabbing, consume any pending tab placement, and hand
     /// over a pending file. Safe to call for plain ⌘N windows (no pending tab).
+    /// The tab-group join itself is deferred to the reveal
+    /// (`AppModel.revealWindow`): joining here would order this requesting
+    /// tab off the screen while the new session is still starting.
     func registerEditorWindow(_ window: NSWindow, model: AppModel) {
         window.tabbingIdentifier = Self.editorTabbingIdentifier
         let host = pendingTabHost
         let file = pendingTabFile
         pendingTabHost = nil
         pendingTabFile = nil
-        if let host, host !== window {
-            // Join the host's group unless the system already tabbed the new
-            // window there (user tabbing preference "Always") — at this point
-            // neither window has a group yet, so plain inequality would skip
-            // the join.
-            if window.tabGroup == nil || window.tabGroup !== host.tabGroup {
-                host.addTabbedWindow(window, ordered: .above)
-            }
-            window.makeKeyAndOrderFront(nil)
-        }
+        model.deferTabJoin(to: host !== window ? host : nil)
         if let file {
             model.open([file])
         }

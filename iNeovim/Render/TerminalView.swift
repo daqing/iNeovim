@@ -697,6 +697,14 @@ final class TerminalView: NSView {
         // Re-assert on the next main-actor turn in case SwiftUI restores focus
         // to another control while the window is being laid out.
         if let window {
+            // Invisible until AppModel.revealWindow fades it in: SwiftUI
+            // presents the window before its preferredColorScheme lands, so
+            // a visible first frame would flash the system appearance.
+            window.alphaValue = 0
+            // init resolved the adaptive fallback with no window context,
+            // baking the system appearance into the layer's CGColor; paint
+            // the seeded theme before the window can first display.
+            refreshBackgroundColor(themeIsDark: model.themeIsDark)
             model.attach(to: window)
             observeWindowKeyState(window)
             refreshWindowAppearance()
@@ -804,11 +812,32 @@ final class TerminalView: NSView {
         }
     }
 
-    private func refreshBackgroundColor() {
+    private func refreshBackgroundColor(themeIsDark: Bool? = nil) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer?.backgroundColor = backgroundColor.cgColor
+        layer?.backgroundColor = resolvedBackgroundColor(themeIsDark: themeIsDark)
         CATransaction.commit()
+    }
+
+    /// The layer background as a resolved CGColor. nvim's packed colors are
+    /// appearance-independent; the adaptive fallback is a dynamic AppKit
+    /// color whose CGColor conversion bakes in whichever appearance is
+    /// current at call time — init runs before the window (and its seeded
+    /// theme) exists, which painted fresh windows in the system appearance
+    /// for their first frames. Resolve under the given theme, else under the
+    /// view's live effective appearance.
+    private func resolvedBackgroundColor(themeIsDark: Bool?) -> CGColor {
+        if let packed = snapshot?.defaultBackground, let color = NSColor(packedRGB: packed) {
+            return color.cgColor
+        }
+        let appearance = themeIsDark.flatMap {
+            NSAppearance(named: $0 ? .darkAqua : .aqua)
+        } ?? effectiveAppearance
+        var resolved: CGColor?
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = NSColor.textBackgroundColor.cgColor
+        }
+        return resolved ?? NSColor.textBackgroundColor.cgColor
     }
 
     /// Paint the statusline row with the opposite theme mode's default
@@ -889,24 +918,24 @@ final class TerminalView: NSView {
     }
 
     /// Soften a theme-mode change the user can already see: when a flush
-    /// flips the light↔dark mode of a shown window (`:colorscheme`), the
-    /// previous rendering is snapshotted and faded out over the redrawn
-    /// content. The first paint on a window the reveal timeout already
-    /// exposed fades the same way (its empty system-appearance state is what
-    /// fades out); a still-hidden window needs no overlay — `AppModel
-    /// .revealWindow` fades the whole window in instead.
+    /// reports a light↔dark mode different from the one on screen, the
+    /// current rendering is snapshotted and faded out over the redrawn
+    /// content. On a first paint the seen mode is the seeded theme (a new
+    /// tab inherits its host's) or the window's effective appearance, so
+    /// even the initial fill fades when it changes the look; an in-place
+    /// `:colorscheme` flip crossfades through the previous snapshot.
     private func crossfadeThemeTransition(from previous: ScreenSnapshot?, to next: ScreenSnapshot) {
         guard let window, window.isVisible else { return }
         guard let to = Self.hasDarkBackground(next.defaultBackground) else { return }
-        let seenModeIsStale: Bool
-        if let previous {
-            seenModeIsStale = Self.hasDarkBackground(previous.defaultBackground) != to
+        let seenMode: Bool?
+        if let previous, let seen = Self.hasDarkBackground(previous.defaultBackground) {
+            seenMode = seen
+        } else if let seeded = model.themeIsDark {
+            seenMode = seeded
         } else {
-            // No prior snapshot: fade only when the window was revealed by
-            // the timeout before this first paint (alpha > 0 means it ran).
-            seenModeIsStale = window.alphaValue > 0
+            seenMode = window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         }
-        guard seenModeIsStale, let contents = snapshotContents() else { return }
+        guard let seenMode, seenMode != to, let contents = snapshotContents() else { return }
         // A flip while a fade is in flight swaps in a fresh overlay.
         themeCrossfadeView?.removeFromSuperview()
         let overlay = NSImageView(frame: bounds)
@@ -981,14 +1010,4 @@ final class TerminalView: NSView {
         cursorAnimator.glide(from: oldRect, to: newRect, distanceInCells: CGFloat(distance))
     }
 
-    /// Colors for when nvim leaves a default unset (-1): adaptive AppKit
-    /// colors, so the surface follows dark/light mode.
-    private var fallbackBackground: NSColor { .textBackgroundColor }
-
-    private var backgroundColor: NSColor {
-        if let packed = snapshot?.defaultBackground, let color = NSColor(packedRGB: packed) {
-            return color
-        }
-        return fallbackBackground
-    }
 }
