@@ -159,6 +159,71 @@ struct NvimClient {
         return { lnum = lnum, items = items }
         """
 
+    /// Install the diagnostics hook in the embedded nvim: autocmds broadcast
+    /// every `vim.diagnostic` change — from any language server, for any
+    /// buffer — back to this GUI as `NvimDiagnosticUpdate.rpcMethod`
+    /// notifications, plus an initial sweep over buffers that already carry
+    /// diagnostics. Idempotent per nvim instance.
+    func installDiagnosticsHook() async throws -> Bool {
+        let value = try await execLua(Self.diagnosticsHookLua, args: [])
+        return value.boolValue ?? false
+    }
+
+    /// Move the cursor in the active window (problems-sheet jump target).
+    /// `line` is 1-based, `column` the zero-based byte offset nvim reports.
+    func moveCursor(line: Int, column: Int) async throws {
+        _ = try await execLua(
+            "local lnum, col = ...; vim.api.nvim_win_set_cursor(0, { lnum, col }); return true",
+            args: [.int(Int64(line)), .int(Int64(column))]
+        )
+    }
+
+    /// The diagnostics hook: re-collects the full per-buffer snapshot through
+    /// `vim.diagnostic.get` inside the autocmd (instead of trusting the event
+    /// payload) so the shape is canonical across nvim versions, and notifies
+    /// the attached UI channel. `vim.diagnostic.set` fires `DiagnosticChanged`
+    /// even when the new list is empty, which is how the GUI learns a buffer
+    /// went clean.
+    private static let diagnosticsHookLua = """
+        if vim.g.ineovim_diagnostics_hooked then return true end
+        vim.g.ineovim_diagnostics_hooked = true
+        local group = vim.api.nvim_create_augroup('ineovim_diagnostics', { clear = true })
+        local function payload(bufnr)
+          local ok, diags = pcall(vim.diagnostic.get, bufnr)
+          if not ok then diags = {} end
+          local items = {}
+          for _, d in ipairs(diags) do
+            items[#items + 1] = {
+              lnum = d.lnum, col = d.col,
+              end_lnum = d.end_lnum, end_col = d.end_col,
+              severity = d.severity,
+              message = d.message or '',
+              source = d.source,
+              code = d.code and tostring(d.code) or nil,
+            }
+          end
+          local uis = vim.api.nvim_list_uis()
+          local chan = uis and uis[1] and uis[1].chan or 0
+          local name = ''
+          if vim.api.nvim_buf_is_valid(bufnr) then name = vim.api.nvim_buf_get_name(bufnr) end
+          vim.rpcnotify(chan, 'ineovim:diagnostics', { buf = bufnr, name = name, diagnostics = items })
+        end
+        vim.api.nvim_create_autocmd('DiagnosticChanged', {
+          group = group,
+          callback = function(args) vim.schedule(function() payload(args.buf) end) end,
+        })
+        vim.api.nvim_create_autocmd({ 'BufUnload', 'BufWipeout' }, {
+          group = group,
+          callback = function(args) vim.schedule(function() payload(args.buf) end) end,
+        })
+        for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+          if vim.api.nvim_buf_is_loaded(bufnr) and #vim.diagnostic.get(bufnr) > 0 then
+            payload(bufnr)
+          end
+        end
+        return true
+        """
+
     private func callFunction(_ name: String, args: [MsgPackValue]) async throws -> String {
         let value = try await session.call("nvim_call_function", params: [
             .string(name), .array(args),

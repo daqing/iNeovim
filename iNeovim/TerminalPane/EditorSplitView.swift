@@ -1,23 +1,29 @@
 import AppKit
 import Combine
 
-/// Window content container: the nvim editor fills the view until the
-/// native terminal pane opens, then the editor narrows, a divider appears,
-/// and the pane takes the right side. The pane follows the intents
-/// published by `AppModel`; actual visibility is reported back through
-/// `setTerminalPaneVisible`. Narrowing the editor reflows the nvim grid
-/// through the normal resize pipeline.
+/// Window content container: the nvim editor fills the view, flanked left by
+/// the optional problems panel (docked issues sidebar, driven by
+/// `isProblemsPanelVisible`) and right by the native terminal pane once it
+/// opens. The pane follows the intents published by `AppModel`; actual pane
+/// visibility is reported back through `setTerminalPaneVisible`. Narrowing
+/// the editor reflows the nvim grid through the normal resize pipeline.
 final class EditorSplitView: NSView {
     static let defaultPaneWidth: CGFloat = 420
     static let minPaneWidth: CGFloat = 280
+    static let defaultPanelWidth: CGFloat = 280
+    static let minPanelWidth: CGFloat = 200
+    static let minEditorWidth: CGFloat = 160
     static let dividerThickness: CGFloat = 5
 
     let terminalView: TerminalView
 
     private let model: AppModel
     private let divider = PaneDividerView()
+    private let problemsDivider = PaneDividerView()
     private var pane: TerminalPaneView?
+    private var problemsPanel: ProblemsPanelController?
     private var paneWidth: CGFloat = EditorSplitView.defaultPaneWidth
+    private var panelWidth: CGFloat = EditorSplitView.defaultPanelWidth
     private var cancellables: Set<AnyCancellable> = []
     private var willCloseObserver: NSObjectProtocol?
 
@@ -33,11 +39,23 @@ final class EditorSplitView: NSView {
             setPaneWidth(paneWidth - deltaX, animated: false)
         }
         addSubview(divider)
+        problemsDivider.isHidden = true
+        problemsDivider.onDrag = { [weak self] deltaX in
+            guard let self else { return }
+            setPanelWidth(panelWidth + deltaX, animated: false)
+        }
+        addSubview(problemsDivider)
         model.$terminalPaneIntent
             .receive(on: DispatchQueue.main)
             .sink { [weak self] intent in
                 guard let intent else { return }
                 self?.apply(intent)
+            }
+            .store(in: &cancellables)
+        model.$isProblemsPanelVisible
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] visible in
+                self?.setProblemsPanelVisible(visible, animated: true)
             }
             .store(in: &cancellables)
     }
@@ -76,6 +94,54 @@ final class EditorSplitView: NSView {
 
     func sessionDidChangeReady(_ ready: Bool) {
         terminalView.sessionDidChangeReady(ready)
+    }
+
+    // MARK: Problems panel
+
+    private func setProblemsPanelVisible(_ visible: Bool, animated: Bool) {
+        if visible {
+            let panel = problemsPanel ?? makeProblemsPanel()
+            if panel.view.superview == nil {
+                addSubview(panel.view)
+            }
+            problemsDivider.isHidden = false
+            placeSubviews(animated: animated)
+        } else {
+            guard let panel = problemsPanel, panel.view.superview != nil else { return }
+            panel.view.removeFromSuperview()
+            problemsDivider.isHidden = true
+            placeSubviews(animated: animated)
+        }
+    }
+
+    /// The panel is cheap and must keep its subscription while hidden, so it
+    /// is created once and kept for the window's lifetime.
+    private func makeProblemsPanel() -> ProblemsPanelController {
+        let panel = ProblemsPanelController(
+            store: model.diagnosticsStore,
+            onJump: { [weak self] problem in
+                self?.model.jumpToProblem(problem)
+            },
+            onClose: { [weak self] in
+                self?.model.setProblemsPanelVisible(false)
+            }
+        )
+        problemsPanel = panel
+        return panel
+    }
+
+    private func setPanelWidth(_ width: CGFloat, animated: Bool) {
+        panelWidth = Self.clampedPanelWidth(width, containerWidth: bounds.width, otherSpans: paneSpans())
+        placeSubviews(animated: animated)
+    }
+
+    private func paneSpans() -> CGFloat {
+        pane != nil ? Self.dividerThickness + paneWidth : 0
+    }
+
+    static func clampedPanelWidth(_ width: CGFloat, containerWidth: CGFloat, otherSpans: CGFloat) -> CGFloat {
+        let maxPanel = max(minPanelWidth, containerWidth - otherSpans - minEditorWidth)
+        return min(max(width, minPanelWidth), maxPanel)
     }
 
     // MARK: Pane state
@@ -164,27 +230,34 @@ final class EditorSplitView: NSView {
 
     private func placeSubviews(animated: Bool = false) {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        let paneWidth = pane != nil ? paneWidth : 0
-        let dividerX = bounds.width - paneWidth - Self.dividerThickness
+        let panelVisible = problemsPanel?.view.superview != nil
+        let paneWidth = pane != nil ? self.paneWidth : 0
+        let paneSpan = paneWidth > 0 ? Self.dividerThickness + paneWidth : 0
+        let panelWidth = panelVisible
+            ? min(self.panelWidth, max(0, bounds.width - paneSpan - Self.minEditorWidth))
+            : 0
+        let panelSpan = panelVisible ? panelWidth + Self.dividerThickness : 0
+        let editorWidth = max(0, bounds.width - panelSpan - paneSpan)
         let frames = (
-            editor: NSRect(x: 0, y: 0, width: dividerX, height: bounds.height),
-            divider: NSRect(x: dividerX, y: 0, width: Self.dividerThickness, height: bounds.height),
-            pane: NSRect(
-                x: dividerX + Self.dividerThickness,
-                y: 0,
-                width: paneWidth,
-                height: bounds.height
-            )
+            panel: NSRect(x: 0, y: 0, width: panelWidth, height: bounds.height),
+            problemsDivider: NSRect(x: panelWidth, y: 0, width: Self.dividerThickness, height: bounds.height),
+            editor: NSRect(x: panelSpan, y: 0, width: editorWidth, height: bounds.height),
+            divider: NSRect(x: panelSpan + editorWidth, y: 0, width: Self.dividerThickness, height: bounds.height),
+            pane: NSRect(x: panelSpan + editorWidth + Self.dividerThickness, y: 0, width: paneWidth, height: bounds.height)
         )
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                problemsPanel?.view.animator().frame = frames.panel
+                problemsDivider.animator().frame = frames.problemsDivider
                 terminalView.animator().frame = frames.editor
                 divider.animator().frame = frames.divider
                 pane?.animator().frame = frames.pane
             }
         } else {
+            problemsPanel?.view.frame = frames.panel
+            problemsDivider.frame = frames.problemsDivider
             terminalView.frame = frames.editor
             divider.frame = frames.divider
             pane?.frame = frames.pane

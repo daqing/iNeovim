@@ -96,6 +96,10 @@ final class AppModel: ObservableObject {
     /// Window hosting this session; set when the terminal view is installed.
     weak var hostWindow: NSWindow?
 
+    /// Diagnostics pushed by the embedded nvim's language servers (see
+    /// `NvimClient.installDiagnosticsHook`); the problems panel renders it.
+    let diagnosticsStore = DiagnosticsStore()
+
     private let openHandler: @MainActor ([URL], NvimClient) -> Void
     private let commandHandler: @MainActor (String, NvimClient) -> Void
     private let cleanExitHandler: (@MainActor () -> Void)?
@@ -166,6 +170,14 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 Task { @MainActor in self.windowTitle = title }
             }
+            // Diagnostics from every language server arrive as
+            // `ineovim:diagnostics` notifications; subscribe before attaching,
+            // like the redraw stream, so early publishes are not dropped.
+            await session.addNotificationHandler(for: NvimDiagnosticUpdate.rpcMethod) { [weak self] params in
+                guard let update = NvimDiagnosticUpdate.parse(params) else { return }
+                guard let self else { return }
+                Task { @MainActor in self.handleDiagnosticUpdate(update) }
+            }
             try await client.uiAttach(width: 80, height: 24, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
                 .string("ext_popupmenu"): .bool(true),
@@ -174,6 +186,13 @@ final class AppModel: ObservableObject {
             // One wheel event scrolls exactly one line so the visual lead
             // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
             try await client.command("set mousescroll=ver:1,hor:1")
+            do {
+                if try await client.installDiagnosticsHook() != true {
+                    Log.app.warning("Diagnostics hook did not install; the problems sheet stays empty")
+                }
+            } catch {
+                Log.app.error("Failed to install diagnostics hook: \(error.localizedDescription, privacy: .public)")
+            }
             await inputDispatcher.startConsuming(with: client)
             startObservingTermination()
             isReady = true
@@ -258,6 +277,7 @@ final class AppModel: ObservableObject {
         await screen.resetState()
         await session.redrawBus.reset()
         await inputDispatcher.reset()
+        diagnosticsStore.clear()
         await session.reset()
         await bootstrap()
     }
@@ -392,6 +412,54 @@ final class AppModel: ObservableObject {
             terminalPaneIntent = .close
         } else {
             requestTerminalPane(command: "")
+        }
+    }
+
+    // MARK: - Diagnostics panel
+
+    /// Whether the docked problems panel is shown in this window; the split
+    /// container mirrors the flag into the layout.
+    @Published private(set) var isProblemsPanelVisible = false
+
+    /// Deliver one per-buffer diagnostics snapshot from the embedded nvim.
+    /// The panel refreshes through the store's `onChange`; it opens only on
+    /// demand (⌘I / Neovim menu / header ✕), never automatically.
+    func handleDiagnosticUpdate(_ update: NvimDiagnosticUpdate) {
+        diagnosticsStore.apply(update)
+    }
+
+    /// Menu action: show the docked problems panel, or hide it.
+    func toggleProblemsPanel() {
+        isProblemsPanelVisible.toggle()
+    }
+
+    /// Header close button (and any future explicit show/hide) in the panel.
+    func setProblemsPanelVisible(_ visible: Bool) {
+        isProblemsPanelVisible = visible
+    }
+
+    /// Jump the editor to a problem row from the panel: `:edit` the file when
+    /// it is not the current buffer, then move the cursor. The panel keeps
+    /// focus, so the arrow keys keep walking the list.
+    func jumpToProblem(_ problem: DiagnosticsStore.Problem) {
+        Task { @MainActor in
+            do {
+                if !problem.path.isEmpty {
+                    let current = try await client.evaluate("expand('%:p')")
+                    if current != problem.path {
+                        let escaped = try await client.fnameescape(problem.path)
+                        try await client.command("edit \(escaped)")
+                    }
+                }
+                try await client.moveCursor(
+                    line: problem.diagnostic.line + 1,
+                    column: problem.diagnostic.column
+                )
+            } catch {
+                Log.app.error(
+                    "Failed to jump to \(problem.path, privacy: .public):\(problem.diagnostic.line + 1, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
 
