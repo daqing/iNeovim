@@ -175,12 +175,23 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent.
 - **Full-width statusline bar:** the statusline row (the one above the cmdline
   row) gets a backdrop layer (`TerminalView.statuslineLayer`, below the
-  content layer) that fills the row's leftmost run's resolved background from
+  content layer) filled with the OPPOSITE theme mode's default background — a
+  dark editor draws the light default (#E0E2EA), a light editor the dark
+  default (#14161B), probed from nvim 0.12.5's built-in colorscheme — from
   window edge to window edge, so the bar runs full width while the cells stay
-  inset. `updateStatuslineLayer()` keeps its frame/color in sync from the
+  inset and stays visible against dark themes, whose own statusline background
+  is nearly indistinguishable from the editor background (monokai pro dark:
+  #2E323C on #26292C). The bar composites at 75% opacity
+  (`TerminalView.statuslineBarOpacity`), blending toward the editor background
+  — the user found the full-strength inversion glaring at night. The content
+  layer skips per-run background fills on
+  that row and draws its text in the opposite mode's default foreground — the
+  theme's statusline text matches its editor background and would vanish on
+  the inverted bar. An unknown nvim background (nil) follows the window
+  appearance. `updateStatuslineLayer()` keeps its frame/color in sync from the
   flush, initial-snapshot, metrics-, resize-, and appearance-change paths;
-  like the cmdline gap it assumes the last row is the cmdline area and the
-  row above it the statusline (`laststatus` >= 2, `cmdheight` 1).
+  like the cmdline gap it assumes the last row is the cmdline area and the row
+  above it the statusline (`laststatus` >= 2, `cmdheight` 1).
 - **RPC read path:** nvim's stdout is drained by a dedicated blocking-read
   thread (POSIX `read(2)` loop → `AsyncStream<Data>` → a single consumer task
   feeding `RPCSession.feed`), **not** by `FileHandle.readabilityHandler` (can

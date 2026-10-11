@@ -58,13 +58,55 @@ final class TerminalView: NSView {
         return luma < 0.5
     }
 
+    /// nvim's built-in default colorscheme `Normal` pair per `background`
+    /// mode (probed on nvim 0.12.5); the two modes are exact inverses. The
+    /// statusline row is drawn in the opposite mode's pair so the bar
+    /// contrasts with the editor background — themes pick statusline
+    /// backgrounds nearly identical to it (monokai pro dark: #2E323C on
+    /// #26292C).
+    static let lightDefaultBackground = 0xE0E2EA
+    static let lightDefaultForeground = 0x14161B
+    static let darkDefaultBackground = 0x14161B
+    static let darkDefaultForeground = 0xE0E2EA
+
+    /// Translucency of the statusline bar: it composites over the editor
+    /// background, softening the inverted default colors' contrast (a
+    /// full-strength bar glares at night).
+    static let statuslineBarOpacity: Float = 0.5
+
+    /// The statusline row's bar/text colors: the opposite theme mode's
+    /// default pair; an unknown theme (nil) follows the window appearance.
+    static func statuslineColors(themeIsDark: Bool?) -> (background: NSColor, foreground: NSColor) {
+        let light = (
+            background: NSColor(packedRGB: lightDefaultBackground) ?? .textBackgroundColor,
+            foreground: NSColor(packedRGB: lightDefaultForeground) ?? .textColor
+        )
+        let dark = (
+            background: NSColor(packedRGB: darkDefaultBackground) ?? .textBackgroundColor,
+            foreground: NSColor(packedRGB: darkDefaultForeground) ?? .textColor
+        )
+        switch themeIsDark {
+        case .some(true): return light
+        case .some(false): return dark
+        case .none:
+            let isDark = { (appearance: NSAppearance) in
+                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            }
+            return (
+                background: NSColor(name: nil) { isDark($0) ? light.background : dark.background },
+                foreground: NSColor(name: nil) { isDark($0) ? light.foreground : dark.foreground }
+            )
+        }
+    }
+
     let model: AppModel
     private(set) var metrics: FontMetrics
     private var snapshot: ScreenSnapshot?
     private let contentLayer: GridContentLayer
-    /// Backdrop stretching the statusline row's background to the window
-    /// edges; the content layer draws over it, so only the side bands the
-    /// content inset leaves open actually show.
+    /// Backdrop painting the statusline row with the opposite theme mode's
+    /// default background, stretched to the window edges. The content layer
+    /// keeps that row's cells transparent, so the backdrop shows across the
+    /// whole row; the side bands are the part the grid itself can't reach.
     private let statuslineLayer = CALayer()
     /// Native ext_popupmenu completion panel, placed above the content layer
     /// at the anchor nvim reports.
@@ -191,6 +233,7 @@ final class TerminalView: NSView {
         contentLayer.anchorPoint = .zero
         contentLayer.position = CGPoint(x: Self.contentInset, y: Self.contentInset)
         CATransaction.commit()
+        statuslineLayer.opacity = Self.statuslineBarOpacity
         layer?.addSublayer(statuslineLayer)
         layer?.addSublayer(contentLayer)
         completionPanel.onSelect = { [weak self] index in
@@ -759,12 +802,15 @@ final class TerminalView: NSView {
         CATransaction.commit()
     }
 
-    /// Stretch the statusline row's background to the full window width.
-    /// The row above the last grid row is the statusline — the same layout
-    /// the cmdline gap assumes (last row = cmdline area, `laststatus` >= 2).
-    /// The layer sits below the content layer, so the row's own in-grid fill
-    /// (same color) covers the overlap; the edges are snapped to the same
-    /// pixels that fill snaps to inside the content layer.
+    /// Paint the statusline row with the opposite theme mode's default
+    /// background, stretched to the full window width: themes pick statusline
+    /// backgrounds nearly identical to the editor background (monokai pro
+    /// dark: #2E323C on #26292C), so the row itself can't be told apart. The
+    /// row above the last grid row is the statusline — the same layout the
+    /// cmdline gap assumes (last row = cmdline area, `laststatus` >= 2). The
+    /// layer sits below the content layer, whose statusline-row cells stay
+    /// transparent so this fill shows through; the edges are snapped to the
+    /// same pixels the content layer snaps its fills to.
     private func updateStatuslineLayer() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -786,7 +832,9 @@ final class TerminalView: NSView {
             width: bounds.width,
             height: max(0, snappedBottom - snappedTop)
         )
-        statuslineLayer.backgroundColor = statuslineBackgroundColor(row: row).cgColor
+        statuslineLayer.backgroundColor = Self.statuslineColors(
+            themeIsDark: Self.hasDarkBackground(snapshot.defaultBackground)
+        ).background.cgColor
     }
 
     /// Place and update the native completion panel from the popup state in
@@ -817,21 +865,6 @@ final class TerminalView: NSView {
         let clampedX = min(max(x, 0), max(0, bounds.width - size.width))
         completionPanel.setFrameOrigin(CGPoint(x: clampedX, y: y))
         completionPanel.isHidden = false
-    }
-
-    /// The statusline row's background: its leftmost run's resolved color,
-    /// falling back to the view's background when the row leaves it unset.
-    private func statuslineBackgroundColor(row: Int) -> NSColor {        guard let snapshot, let grid = snapshot.grid,
-              let run = CellRenderer.runs(forRow: grid.rowSlice(row)).first else {
-            return backgroundColor
-        }
-        let attr = snapshot.highlights[run.attrId] ?? HlAttr()
-        let resolved = attr.resolvedColors(
-            defaultForeground: snapshot.defaultForeground,
-            defaultBackground: snapshot.defaultBackground,
-            defaultSpecial: snapshot.defaultSpecial
-        )
-        return resolved.background.flatMap(NSColor.init(packedRGB:)) ?? backgroundColor
     }
 
     /// Push the nvim theme into the window chrome through SwiftUI: setting

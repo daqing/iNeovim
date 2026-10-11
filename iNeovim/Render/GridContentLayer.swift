@@ -156,6 +156,14 @@ final class GridContentLayer: CALayer {
 
         // Resolve each highlight id once per frame instead of once per run.
         var colorCache: [Int: ResolvedColors] = [:]
+        // The statusline row sits on the view's opposite-mode bar: its cells
+        // stay transparent so the bar shows through, and its text draws in
+        // the opposite mode's default foreground — the theme's per-run colors
+        // match the editor background, not the bar.
+        let statuslineRow = grid.height >= 2 ? grid.height - 2 : -1
+        let statuslineText = TerminalView.statuslineColors(
+            themeIsDark: TerminalView.hasDarkBackground(snapshot.defaultBackground)
+        ).foreground
         for row in firstRow...lastRow {
             let runs = CellRenderer.runs(forRow: grid.rowSlice(row))
 
@@ -165,7 +173,8 @@ final class GridContentLayer: CALayer {
             for run in runs {
                 let runRect = rect(for: run, row: row)
                 guard dirtyRects.contains(where: { $0.intersects(runRect) }) else { continue }
-                guard let background = color(for: run.attrId, cache: &colorCache).background else { continue }
+                guard row != statuslineRow,
+                      let background = color(for: run.attrId, cache: &colorCache).background else { continue }
                 context.setFillColor(background.cgColor)
                 context.fill(snappedToPixels(runRect))
             }
@@ -179,7 +188,13 @@ final class GridContentLayer: CALayer {
                 drawText(
                     run: run,
                     row: row,
-                    colors: color(for: run.attrId, cache: &colorCache),
+                    colors: row == statuslineRow
+                        ? ResolvedColors(
+                            foreground: statuslineText,
+                            background: nil,
+                            special: statuslineText
+                        )
+                        : color(for: run.attrId, cache: &colorCache),
                     context: context
                 )
             }
