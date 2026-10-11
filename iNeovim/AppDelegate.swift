@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var pendingTabHost: NSWindow?
     private var pendingTabFile: URL?
 
+    private var keyDownMonitor: Any?
+
     override init() {
         super.init()
         Self.shared = self
@@ -37,7 +39,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if UserDefaults.standard.object(forKey: "ApplePressAndHoldEnabled") == nil {
             UserDefaults.standard.set(false, forKey: "ApplePressAndHoldEnabled")
         }
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let modifiers = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask)
+                .subtracting([.capsLock, .function])
+            guard modifiers == .option,
+                  event.charactersIgnoringModifiers?.lowercased() == "t" else { return event }
+            return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
+        }
         Log.app.info("Application did finish launching")
+    }
+
+    /// ⌥T toggles the terminal pane like the menu's ⌃`, from any focused view
+    /// (a local monitor sees the keydown before the responder chain). Returns
+    /// whether the chord was claimed; a modal session owning the app, or
+    /// "Option as Meta" dedicating Option to nvim (`<M-t>`), leaves it alone.
+    private static func claimTerminalPaneChord() -> Bool {
+        guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
+        AppModel.active?.toggleTerminalPane()
+        return true
     }
 
     /// "Open With", Dock-icon drops, and `open -a` all arrive here; the model
