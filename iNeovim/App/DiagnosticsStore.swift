@@ -28,7 +28,10 @@ final class DiagnosticsStore {
     }
 
     func clear() {
-        guard !buffers.isEmpty else { return }
+        // Empty-diagnostic snapshots keep their buffer entry (apply replaces
+        // the snapshot wholesale), so "already empty" means no problems, not
+        // no entries.
+        guard buffers.contains(where: { !$0.value.diagnostics.isEmpty }) else { return }
         buffers.removeAll()
         onChange?()
     }
