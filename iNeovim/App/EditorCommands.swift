@@ -75,9 +75,11 @@ struct EditorCommands: Commands {
         group.windows[next].makeKey()
     }
 
+    /// ⌘1…⌘9 select the first…ninth tab; `NSWindowTabGroup.windows` is
+    /// 0-indexed in visual (leading to trailing) order, so subtract one.
     private static func selectNativeTab(_ index: Int) {
-        guard let group = NSApp.keyWindow?.tabGroup, group.windows.indices.contains(index) else { return }
-        group.windows[index].makeKey()
+        guard let group = NSApp.keyWindow?.tabGroup, index >= 1, index <= group.windows.count else { return }
+        group.windows[index - 1].makeKey()
     }
 
     /// ⌘P acts on the key window's editor view — the terminal is normally
