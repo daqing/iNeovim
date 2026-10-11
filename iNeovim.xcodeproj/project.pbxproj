@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		9B1B77D8307A9C5A00391FA6 /* GhosttySupport in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000031000000 /* GhosttySupport */; };
-		9B1B77D9307A9C5A00391FA6 /* GhosttyKit in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000032000000 /* GhosttyKit */; };
 		9B1B77DA307A9C5A00391FA6 /* GhosttySupport in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000031000000 /* GhosttySupport */; };
 /* End PBXBuildFile section */
 
@@ -44,7 +43,6 @@
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
-				9B1B77D9307A9C5A00391FA6 /* GhosttyKit in Frameworks */,
 				9B1B77D8307A9C5A00391FA6 /* GhosttySupport in Frameworks */,
 			);
 		};
