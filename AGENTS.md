@@ -242,6 +242,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   walking either tree has frozen the machine (625k+ entries under `$HOME`).
   Commands triggered by mappings/plugins bypass the cmdline and are not
   gated; the native Open Quickly panel is the safe replacement.
+- **Key repeat over press-and-hold:** printable keys reach nvim through the
+  text input system (the `keyDown` → `interpretKeyEvents` path), where macOS
+  "press and hold" (the accent popup) replaces system key repeat — letters
+  without accent alternates (j, k, …) get no repeats at all. At launch the
+  app persists `ApplePressAndHoldEnabled = false` in its own defaults domain
+  (the standard terminal-emulator opt-out), skipping the write when the user
+  has set the key explicitly in the app or global domain. Named keys (arrows,
+  Esc, …) bypass the text input system and repeat regardless.
 - **Native completion panel (ext_popupmenu):** the UI attaches with
   `ext_popupmenu: true`, so nvim stops drawing the popupmenu into the grid
   and sends `popupmenu_show/select/hide` instead. `Screen` keeps a
