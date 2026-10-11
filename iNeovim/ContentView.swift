@@ -32,13 +32,16 @@ struct ContentView: View {
             }
     }
 
-    /// The window backdrop. A native-tab window is seeded with the requesting
-    /// tab's nvim background, so the area behind the terminal surface never
-    /// shows a light frame while the hosting WindowGroup is still applying the
-    /// seeded `preferredColorScheme`; only then does it fall back to the
-    /// adaptive system background (⌘N / first launch, before nvim reports).
+    /// The window backdrop. Prefer nvim's reported default background once it
+    /// arrives, so transparent chrome (the terminal pane header, the splitters)
+    /// matches the editor after a `:colorscheme` flip instead of holding the
+    /// window's original theme. Before the first report it uses the seeded
+    /// background (a native tab's host), then the adaptive system color
+    /// (⌘N / first launch), so no light frame shows while the hosting
+    /// WindowGroup is still applying the seeded `preferredColorScheme`.
     private var seededBackground: Color {
-        if let packed = model.seededBackground, let color = NSColor(packedRGB: packed) {
+        if let packed = model.terminalColors.background ?? model.seededBackground,
+           let color = NSColor(packedRGB: packed) {
             return Color(color)
         }
         return Color(nsColor: .textBackgroundColor)

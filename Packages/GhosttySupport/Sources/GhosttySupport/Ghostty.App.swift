@@ -130,8 +130,10 @@ extension Ghostty {
             ghostty_app_tick(app)
         }
 
-        /// Reload the configuration from the configured path.
-        func reloadConfig() {
+        /// Reload the configuration from the configured path. Public so an
+        /// embedding host can rewrite its generated config (e.g. to follow
+        /// the editor's theme) and push it into the running app.
+        public func reloadConfig() {
             guard let app = self.app else { return }
             let newConfig = Config(at: configPath)
             guard newConfig.loaded else {

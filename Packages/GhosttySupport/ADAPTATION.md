@@ -41,7 +41,9 @@ which this embedding does not have. Adaptations, per file:
   pwd, cell size, mouse shape/visibility/links, bell, key tables,
   config/color change, open URL). Window-management actions (new
   window/tab/split, fullscreen, quit, notifications, inspector, quick
-  terminal) return "not performed".
+  terminal) return "not performed". `reloadConfig()` is `public` (upstream
+  it is internal) so the embedding can rewrite its generated config on a
+  theme change and push it into the running app.
 - `SurfaceView_AppKit.swift` — kept nearly verbatim (NSTextInputClient,
   key translation, mouse handling, drag & drop, context menus). Pruned:
   search overlay state, key-sequence indicator, progress reports, user

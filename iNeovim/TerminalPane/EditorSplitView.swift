@@ -58,6 +58,27 @@ final class EditorSplitView: NSView {
                 self?.setProblemsPanelVisible(visible, animated: true)
             }
             .store(in: &cancellables)
+        // Keep the native terminal pane's background in step with the
+        // editor: when nvim reports a new default background (a dark↔light
+        // colorscheme flip), rewrite the shared Ghostty config and reload it
+        // so open panes repaint. The controller ignores empty color sets, so
+        // a session that has not reported yet cannot reset the shared config.
+        model.$terminalColors
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] colors in
+                self?.syncTerminalPaneColors(colors)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Rewrite and reload the shared Ghostty config so an open pane follows the
+    /// editor's dark↔light theme change (see
+    /// `GhosttyTerminalController.updateColors`).
+    private func syncTerminalPaneColors(_ colors: AppModel.TerminalColors) {
+        GhosttyTerminalController.shared.updateColors(
+            font: AppSettings.shared.resolvedFont(),
+            colors: colors
+        )
     }
 
     required init?(coder: NSCoder) {
@@ -272,11 +293,25 @@ final class PaneDividerView: NSView {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.separatorColor.cgColor
+        updateBackground()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// `separatorColor` is appearance-dependent, so a `cgColor` captured once
+    /// would keep the divider light after the editor flips to a dark theme;
+    /// re-resolve it whenever the window appearance follows the theme.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateBackground()
+    }
+
+    private func updateBackground() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.separatorColor.cgColor
+        }
     }
 
     override func resetCursorRects() {

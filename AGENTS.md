@@ -178,8 +178,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   background is a dynamic `NSColor` whose `cgColor` conversion bakes in the
   appearance current at call time; `TerminalView` resolves it under the
   seeded theme (`resolvedBackgroundColor(themeIsDark:)`), and
-  `ContentView`'s window backdrop uses the same seed (`seededBackground`),
-  so neither the AppKit surface nor the SwiftUI layer behind it shows a
+  `ContentView`'s window backdrop uses the same seed (`seededBackground`)
+  until nvim reports, then prefers the reported `terminalColors.background`
+  so transparent chrome (the terminal pane header, the splitters) follows a
+  `:colorscheme` flip instead of holding the window's original theme and
+  neither the AppKit surface nor the SwiftUI layer behind it shows a
   light frame. A native tab additionally joins the requesting window's
   group in `AppDelegate.registerEditorWindow`, waiting (`joinTabWhenThemed`)
   with the window invisible until its `effectiveAppearance` matches the seed
@@ -374,10 +377,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `Ghostty.App` per process (`GhosttyTerminalController`) hosts every
   window's surface; per-surface `SurfaceConfiguration` sets the cwd from
   nvim's `getcwd()` and the command parsed off the cmdline. The generated
-  app config (Application Support/iNeovim/ghostty.conf, frozen when the
-  first pane opens) mirrors the editor font and nvim's default colors and
-  sets `shell-integration = none` — Ghostty's shell-integration scripts
-  are GPLv3 and must not ship in this MIT app. Menu "Toggle Terminal
+  app config (Application Support/iNeovim/ghostty.conf) mirrors the editor
+  font and nvim's default colors and sets `shell-integration = none` —
+  Ghostty's shell-integration scripts are GPLv3 and must not ship in this
+  MIT app. It is written when the first pane opens and rewritten + reloaded
+  (`GhosttyTerminalController.updateColors` → `Ghostty.App.reloadConfig`,
+  driven by `AppModel.$terminalColors`) whenever a session reports a new
+  default background, so an open pane follows a dark↔light colorscheme flip
+  instead of keeping its original theme. Menu "Toggle Terminal
   Pane" / ⌃` toggles regardless of focus, and so does ⌥T — a local keyDown
   monitor in `AppDelegate` (SwiftUI menu items can carry only one shortcut)
   claims the exact ⌥T chord before dispatch; when "Option as Meta" is on the

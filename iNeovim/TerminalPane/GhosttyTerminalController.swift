@@ -39,6 +39,19 @@ final class GhosttyTerminalController {
         return Ghostty.SurfaceView(handle, baseConfig: config)
     }
 
+    /// Rewrite the shared config with the editor's current font and nvim
+    /// default colors and push it into the running app, so panes that are
+    /// already open repaint when the editor flips between a dark and a light
+    /// colorscheme. A no-op before the first pane creates the shared app (its
+    /// config is written with the current colors at that point) and when the
+    /// caller has no colors yet (a fresh session before nvim reports), which
+    /// must not clobber a config another window already synced.
+    func updateColors(font: NSFont, colors: AppModel.TerminalColors) {
+        guard let app, colors.foreground != nil || colors.background != nil else { return }
+        guard Self.writeConfig(font: font, colors: colors) != nil else { return }
+        app.reloadConfig()
+    }
+
     /// Begin the surface close cycle: libghostty asks the child to exit,
     /// then reports back through the close-surface notification.
     func requestClose(_ surfaceView: Ghostty.SurfaceView) {
