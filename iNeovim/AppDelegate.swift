@@ -116,21 +116,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Called from `AppModel.attach(to:)` as a new editor window's content is
     /// installed: enable tabbing, consume any pending tab placement, and hand
     /// over a pending file. Safe to call for plain ⌘N windows (no pending tab).
-    /// A tab joins its host's group here, at once — the seeded window is
-    /// already painted in the host's theme, so AppKit's own tab-add transition
-    /// is the whole animation. Deferring the join to reveal time would expose
-    /// a standalone window whose chrome (no tab bar) and content geometry
-    /// disagree with the group's, which read as the transition jumping.
+    /// A tab joins its host's group here — the seeded window already paints
+    /// the host's theme, so AppKit's own tab-add transition is the whole
+    /// animation. Deferring the join in a *visible* standalone window would
+    /// expose chrome (no tab bar) and content geometry that disagree with the
+    /// group's; the join is only deferred across the invisible appearance
+    /// gap, never while the window can be seen.
     func registerEditorWindow(_ window: NSWindow, model: AppModel) {
-        window.tabbingIdentifier = Self.editorTabbingIdentifier
         let host = pendingTabHost
         let file = pendingTabFile
         pendingTabHost = nil
         pendingTabFile = nil
         if let host, host !== window {
+            // Give the window a unique identifier while it waits (invisible)
+            // for its seeded appearance: a unique identifier disables the
+            // system's automatic tabbing, so it cannot slip into the host's
+            // group as the selected (transparent) tab mid-wait. The explicit
+            // join below installs the shared editor identifier.
+            window.tabbingIdentifier = "com.mzevo.iNeovim.pending.\(UUID().uuidString)"
             // Match the host's frame while the window is still invisible so
             // the group cannot adopt the new window's cascaded position.
             window.setFrame(host.frame, display: false)
+            joinTabWhenThemed(window, host: host, model: model)
+        } else {
+            window.tabbingIdentifier = Self.editorTabbingIdentifier
+        }
+        if let file {
+            model.open([file])
+        }
+    }
+
+    /// Join `window` into `host`'s group and reveal it once the seeded
+    /// `preferredColorScheme` has actually reached the window. The hosting
+    /// WindowGroup installs that scheme a couple of frames after the window
+    /// is created; revealing earlier showed those system-appearance frames as
+    /// a white flash on a dark tab. The window stays invisible here, so the
+    /// host tab remains on screen until the new tab appears already themed.
+    private func joinTabWhenThemed(_ window: NSWindow, host: NSWindow, model: AppModel) {
+        let desired: NSAppearance.Name? = model.themeIsDark.map { $0 ? .darkAqua : .aqua }
+        Task { @MainActor in
+            if let desired {
+                // Bounded wait: if the scheme never lands, reveal anyway rather
+                // than leaving the window hidden.
+                for _ in 0..<12 {
+                    let current = window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+                    if current == desired { break }
+                    try? await Task.sleep(for: .milliseconds(8))
+                }
+            }
+            window.tabbingIdentifier = Self.editorTabbingIdentifier
             model.revealWindowImmediately()
             // The system may already have tabbed the window itself (tabbing
             // preference "Always"); join only when it is still standalone.
@@ -138,9 +172,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 host.addTabbedWindow(window, ordered: .above)
             }
             window.makeKeyAndOrderFront(nil)
-        }
-        if let file {
-            model.open([file])
         }
     }
 }

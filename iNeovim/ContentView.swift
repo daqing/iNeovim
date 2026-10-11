@@ -11,7 +11,7 @@ struct ContentView: View {
     var body: some View {
         EditorSplitRepresentable(settings: settings, model: model)
             .frame(minWidth: 480, minHeight: 320)
-            .background(.background)
+            .background(seededBackground)
             .overlay { statusOverlay }
             .preferredColorScheme(model.themeIsDark.map { $0 ? .dark : .light })
             .navigationTitle(model.windowTitle ?? "iNeovim")
@@ -30,6 +30,18 @@ struct ContentView: View {
             } message: { crash in
                 Text("The embedded Neovim process exited unexpectedly (status \(crash.status)).")
             }
+    }
+
+    /// The window backdrop. A native-tab window is seeded with the requesting
+    /// tab's nvim background, so the area behind the terminal surface never
+    /// shows a light frame while the hosting WindowGroup is still applying the
+    /// seeded `preferredColorScheme`; only then does it fall back to the
+    /// adaptive system background (⌘N / first launch, before nvim reports).
+    private var seededBackground: Color {
+        if let packed = model.seededBackground, let color = NSColor(packedRGB: packed) {
+            return Color(color)
+        }
+        return Color(nsColor: .textBackgroundColor)
     }
 
     /// Hand SwiftUI's openWindow action to the app delegate so ⌘T and the

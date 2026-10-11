@@ -228,7 +228,15 @@ final class AppModel: ObservableObject {
         hasRevealedWindow = true
         windowRevealTask?.cancel()
         windowRevealTask = nil
-        hostWindow?.alphaValue = 1
+        guard let window = hostWindow else { return }
+        // Pin the seeded scheme on the window as well: the hosting WindowGroup
+        // resets `window.appearance` on its next update pass, but by then the
+        // seeded `preferredColorScheme` is what it resets to, so the dark look
+        // holds through the first frames instead of flashing the system mode.
+        if let dark = themeIsDark {
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        }
+        window.alphaValue = 1
     }
 
     /// Fade the hosting window in; idempotent. Runs on the first known

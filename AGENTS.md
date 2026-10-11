@@ -167,8 +167,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   window's mode AND packed default background (`AppModel.pendingThemeSeed`
   / `pendingBackgroundSeed`, consumed by the next `init` — every ⌘T
   continues from the tab it was pressed on), and the tab is joined into the
-  requesting window's group immediately in
-  `AppDelegate.registerEditorWindow`. The seeded window already paints the
+  requesting window's group in `AppDelegate.registerEditorWindow`. The join
+  waits (`joinTabWhenThemed`) until the window's `effectiveAppearance`
+  actually matches the seeded scheme before it is revealed: the hosting
+  WindowGroup installs `preferredColorScheme` a couple of frames after the
+  window is created, and showing the tab before then exposed those
+  system-appearance frames as a white flash on a dark tab. The window is
+  still invisible during that wait, so the host tab stays on screen and the
+  new tab appears already themed. The seeded window already paints the
   host's exact background, so AppKit's own tab-add transition is the whole
   animation. Do not fade a standalone window over the tab group and join
   later (the previous approach): a standalone window has no tab bar, so the
@@ -183,7 +189,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   background is a dynamic `NSColor` whose `cgColor` conversion bakes in the
   appearance current at call time — `TerminalView` resolves it under the
   seeded theme (`resolvedBackgroundColor(themeIsDark:)`) because init runs
-  before any window exists and otherwise paints fresh windows white. An
+  before any window exists and otherwise paints fresh windows white, and
+  `ContentView`'s window backdrop uses the same seed (`seededBackground`)
+  so the SwiftUI layer behind the surface never shows a light frame while
+  `preferredColorScheme` is still landing. An
   in-place mode flip on a shown window (`:colorscheme`) crossfades via
   `TerminalView.crossfadeThemeTransition`: the old rendering is snapshotted
   and faded out (0.25 s) over the redrawn content; on a first paint the
