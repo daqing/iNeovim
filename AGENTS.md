@@ -184,7 +184,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `AppModel.revealWindow` fades it in (0.25 s) on the first theme report —
   bootstrap failures and a 1.5 s timeout backstop it — because there is no
   host tab to inherit chrome from and the 1–2 frame system-appearance gap
-  must stay hidden; tab windows are released by
+  must stay hidden. `revealWindow` waits (bounded) for the window's
+  `effectiveAppearance` to take the reported scheme and then pins
+  `window.appearance` before the fade, so the titlebar does not start light
+  and darken mid-flight. Tab windows are released by
   `AppModel.revealWindowImmediately` instead. The adaptive fallback
   background is a dynamic `NSColor` whose `cgColor` conversion bakes in the
   appearance current at call time — `TerminalView` resolves it under the

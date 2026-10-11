@@ -248,6 +248,31 @@ final class AppModel: ObservableObject {
         windowRevealTask?.cancel()
         windowRevealTask = nil
         guard let window = hostWindow else { return }
+        let desired: NSAppearance.Name? = themeIsDark.map { $0 ? .darkAqua : .aqua }
+        windowRevealTask = Task { @MainActor [weak self] in
+            if let desired {
+                // The hosting WindowGroup installs `preferredColorScheme` a
+                // frame or two after `themeIsDark` changes; fading before then
+                // showed a light titlebar that darkened mid-flight. Wait
+                // (bounded) for the window to actually take the scheme, then
+                // pin it so the chrome is themed before the first visible
+                // frame.
+                for _ in 0..<12 {
+                    let current = window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+                    if current == desired { break }
+                    try? await Task.sleep(for: .milliseconds(8))
+                }
+                window.appearance = NSAppearance(named: desired)
+            }
+            guard let self, self.hostWindow === window else { return }
+            self.fadeIn(window)
+        }
+    }
+
+    /// Order the window front and fade it in. Kept synchronous so
+    /// `NSAnimationContext.runAnimationGroup` resolves to its non-async
+    /// overload rather than the Swift-concurrency one.
+    private func fadeIn(_ window: NSWindow) {
         window.orderFront(nil)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.windowRevealDuration
