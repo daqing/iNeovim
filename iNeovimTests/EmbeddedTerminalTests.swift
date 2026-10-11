@@ -72,6 +72,60 @@ final class EmbeddedTerminalTests: XCTestCase {
         )
     }
 
+    /// The diagnostics hook installed at bootstrap forwards every
+    /// `vim.diagnostic` change (any language server, any buffer) to the app
+    /// as `ineovim:diagnostics` notifications; both a set and its clear must
+    /// land in the session's store.
+    func testDiagnosticsHookPushesSetAndClear() async throws {
+        guard let model = await readyModel() else {
+            throw XCTSkip("Embedded nvim session did not start (nvim missing or handshake failed)")
+        }
+        // Auto-show would open the panel in the test host's window; the store
+        // is what this test exercises.
+        let autoShow = AppSettings.shared.autoShowProblems
+        AppSettings.shared.autoShowProblems = false
+        defer { AppSettings.shared.autoShowProblems = autoShow }
+
+        func probeProblems() -> [DiagnosticsStore.Problem] {
+            model.diagnosticsStore.problems.filter { $0.diagnostic.source == "ineovim-tests" }
+        }
+
+        _ = try await model.client.execLua(Self.setProbeDiagnosticsLua, args: [])
+        let appeared = await waitUntil(timeout: 5) { !probeProblems().isEmpty }
+        XCTAssertTrue(appeared, "diagnostics set in nvim never reached the app store")
+        let problems = probeProblems()
+        XCTAssertEqual(problems.map(\.diagnostic.severity), [.error, .warning])
+        XCTAssertEqual(problems.map(\.diagnostic.line), [3, 5])
+
+        _ = try await model.client.execLua(Self.clearProbeDiagnosticsLua, args: [])
+        let cleared = await waitUntil(timeout: 5) { probeProblems().isEmpty }
+        XCTAssertTrue(cleared, "clearing diagnostics in nvim never reached the app store")
+    }
+
+    private func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return condition()
+    }
+
+    private static let setProbeDiagnosticsLua = """
+        local ns = vim.api.nvim_create_namespace('ineovim_tests')
+        vim.diagnostic.set(ns, 0, {
+          { lnum = 3, col = 0, severity = 1, message = 'probe error', source = 'ineovim-tests' },
+          { lnum = 5, col = 0, severity = 2, message = 'probe warning', source = 'ineovim-tests' },
+        }, {})
+        return true
+        """
+
+    private static let clearProbeDiagnosticsLua = """
+        local ns = vim.api.nvim_get_namespaces()['ineovim_tests']
+        vim.diagnostic.set(ns, 0, {}, {})
+        return true
+        """
+
     private func readyModel(timeout: TimeInterval = 15) async -> AppModel? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

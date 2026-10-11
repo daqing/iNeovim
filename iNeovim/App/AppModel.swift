@@ -96,6 +96,13 @@ final class AppModel: ObservableObject {
     /// Window hosting this session; set when the terminal view is installed.
     weak var hostWindow: NSWindow?
 
+    /// Diagnostics pushed by the embedded nvim's language servers (see
+    /// `NvimClient.installDiagnosticsHook`); the problems panel renders it.
+    let diagnosticsStore = DiagnosticsStore()
+    /// Panel auto-show state: one opening per clean→dirty cycle, debounced.
+    private var problemsArmed = true
+    private var problemsDebounce: Task<Void, Never>?
+
     private let openHandler: @MainActor ([URL], NvimClient) -> Void
     private let commandHandler: @MainActor (String, NvimClient) -> Void
     private let cleanExitHandler: (@MainActor () -> Void)?
@@ -166,6 +173,14 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 Task { @MainActor in self.windowTitle = title }
             }
+            // Diagnostics from every language server arrive as
+            // `ineovim:diagnostics` notifications; subscribe before attaching,
+            // like the redraw stream, so early publishes are not dropped.
+            await session.addNotificationHandler(for: NvimDiagnosticUpdate.rpcMethod) { [weak self] params in
+                guard let update = NvimDiagnosticUpdate.parse(params) else { return }
+                guard let self else { return }
+                Task { @MainActor in self.handleDiagnosticUpdate(update) }
+            }
             try await client.uiAttach(width: 80, height: 24, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
                 .string("ext_popupmenu"): .bool(true),
@@ -174,6 +189,13 @@ final class AppModel: ObservableObject {
             // One wheel event scrolls exactly one line so the visual lead
             // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
             try await client.command("set mousescroll=ver:1,hor:1")
+            do {
+                if try await client.installDiagnosticsHook() != true {
+                    Log.app.warning("Diagnostics hook did not install; the problems sheet stays empty")
+                }
+            } catch {
+                Log.app.error("Failed to install diagnostics hook: \(error.localizedDescription, privacy: .public)")
+            }
             await inputDispatcher.startConsuming(with: client)
             startObservingTermination()
             isReady = true
@@ -258,6 +280,9 @@ final class AppModel: ObservableObject {
         await screen.resetState()
         await session.redrawBus.reset()
         await inputDispatcher.reset()
+        diagnosticsStore.clear()
+        problemsDebounce?.cancel()
+        problemsArmed = true
         await session.reset()
         await bootstrap()
     }
@@ -392,6 +417,75 @@ final class AppModel: ObservableObject {
             terminalPaneIntent = .close
         } else {
             requestTerminalPane(command: "")
+        }
+    }
+
+    // MARK: - Diagnostics panel
+
+    /// Whether the docked problems panel is shown in this window; the split
+    /// container mirrors the flag into the layout.
+    @Published private(set) var isProblemsPanelVisible = false
+
+    /// Deliver one per-buffer diagnostics snapshot from the embedded nvim:
+    /// update the store, then schedule the auto-show when issues exist and
+    /// re-arm the moment the project goes clean again.
+    func handleDiagnosticUpdate(_ update: NvimDiagnosticUpdate) {
+        diagnosticsStore.apply(update)
+        guard diagnosticsStore.problemCount > 0 else {
+            problemsArmed = true
+            return
+        }
+        scheduleProblemsAutoShow()
+    }
+
+    /// LSP republishes diagnostics while the user types, so the auto-show is
+    /// debounced to let the burst settle. One opening per clean→dirty cycle
+    /// keeps the panel from re-appearing after the user dismissed it.
+    private func scheduleProblemsAutoShow() {
+        guard AppSettings.shared.autoShowProblems, problemsArmed else { return }
+        problemsDebounce?.cancel()
+        problemsDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            self?.autoShowProblemsIfArmed()
+        }
+    }
+
+    private func autoShowProblemsIfArmed() {
+        guard problemsArmed, diagnosticsStore.problemCount > 0 else { return }
+        problemsArmed = false
+        if !isProblemsPanelVisible {
+            isProblemsPanelVisible = true
+        }
+    }
+
+    /// Menu action: show the docked problems panel, or hide it.
+    func toggleProblemsPanel() {
+        isProblemsPanelVisible.toggle()
+    }
+
+    /// Jump the editor to a problem row from the panel: `:edit` the file when
+    /// it is not the current buffer, then move the cursor. The panel keeps
+    /// focus, so the arrow keys keep walking the list.
+    func jumpToProblem(_ problem: DiagnosticsStore.Problem) {
+        Task { @MainActor in
+            do {
+                if !problem.path.isEmpty {
+                    let current = try await client.evaluate("expand('%:p')")
+                    if current != problem.path {
+                        let escaped = try await client.fnameescape(problem.path)
+                        try await client.command("edit \(escaped)")
+                    }
+                }
+                try await client.moveCursor(
+                    line: problem.diagnostic.line + 1,
+                    column: problem.diagnostic.column
+                )
+            } catch {
+                Log.app.error(
+                    "Failed to jump to \(problem.path, privacy: .public):\(problem.diagnostic.line + 1, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+            }
         }
     }
 

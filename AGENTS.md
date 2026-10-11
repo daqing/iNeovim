@@ -46,6 +46,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── EditorCommands.swift  File + Neovim menu commands
 │   ├── OpenQuicklyPanel.swift  native ⌘P file finder panel
 │   ├── QuicklyFileSource.swift  first-level directory listing for the panel
+│   ├── DiagnosticsStore.swift  per-session aggregated LSP diagnostics
+│   ├── ProblemsPanel.swift   docked non-modal issues sidebar
 │   └── FuzzyMatcher.swift    fzf --filter front end with in-process fallback
 ├── Logging.swift         os.Logger categories (rpc, render, input, app)
 ├── NvimDiscovery.swift   Locates the nvim binary and checks its version
@@ -267,6 +269,29 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   unchanged. The rest of the intercepted gesture (drag/release) is always
   swallowed so nvim never sees orphan events. The popover is a transient
   `NSPopover` (click-outside dismissal); typing or scrolling closes it too.
+- **Problems panel (LSP diagnostics):** the app listens to every language
+  server through one nvim-side hook, not per-language plumbing. At bootstrap
+  `NvimClient.installDiagnosticsHook` execs Lua that registers
+  `DiagnosticChanged` (plus `BufUnload`/`BufWipeout`) autocmds; each event
+  re-collects the full per-buffer snapshot via `vim.diagnostic.get` and
+  `vim.rpcnotify`s it to the attached UI channel as `ineovim:diagnostics`
+  (`NvimDiagnosticUpdate.parse` decodes it; nvim's msgpack encoder drops
+  nil-valued map keys, so parsing tolerates missing fields). nvim 0.12
+  fires `DiagnosticChanged` even when `vim.diagnostic.set` gets an empty
+  list — that is how the app learns a buffer went clean (probed against
+  0.12.5 with the repo's own codec). `DiagnosticsStore` (one per session)
+  aggregates the snapshots and feeds the native `ProblemsPanelController`,
+  a non-modal issues sidebar docked at the window's left edge like Xcode's
+  issue navigator (`EditorSplitView`: panel | editor | divider | terminal
+  pane). The list live-updates while shown; selecting a row jumps the
+  editor (`:edit` when the path differs from the current buffer →
+  `nvim_win_set_cursor`) and the panel keeps focus, so the arrow keys walk
+  the list. The panel is created once per window and stays subscribed while
+  hidden. The auto-show opens the panel once per clean→dirty cycle, debounced
+  800 ms (it must not flap on every keystroke publish); the settings toggle
+  "Show problems panel when diagnostics appear" gates only the auto-show,
+  while the Neovim menu's "Toggle Problems" opens/closes the panel on
+  demand.
 - **Native terminal pane (Ghostty):** a typed `:terminal` (and its `term`…
   `terminal` abbreviations, optional `vert[ical]` modifier, optional `!`,
   optional trailing command) never reaches nvim: `TerminalView.sendKeys`
@@ -274,9 +299,9 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   fzf gate), swallows the Enter, sends `<Esc>` to cancel the cmdline, and
   asks `AppModel.requestTerminalPane(command:)` to open the native pane
   instead. The pane is an in-window right-hand split (`EditorSplitView`:
-  editor | draggable divider | `TerminalPaneView`) whose width drives the
-  normal resize pipeline — narrowing the editor simply reflows the nvim
-  grid through `ResizeController`. The pane hosts a real libghostty
+  optional problems sidebar | editor | draggable divider | `TerminalPaneView`)
+  whose width drives the normal resize pipeline — narrowing the editor simply
+  reflows the nvim grid through `ResizeController`. The pane hosts a real libghostty
   surface: `Packages/GhosttySupport` (local Swift package) wraps a
   self-built `GhosttyKit.xcframework` (ghostty 1.3.2-main+246f702, Zig
   0.16.0, macOS-universal slice only — iOS slices pruned; provenance and

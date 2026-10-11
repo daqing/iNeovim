@@ -41,6 +41,10 @@ struct SettingsView: View {
                 Toggle("Open :terminal in native pane", isOn: $settings.nativeTerminalPane)
             }
 
+            Section("Problems") {
+                Toggle("Show problems panel when diagnostics appear", isOn: $settings.autoShowProblems)
+            }
+
             HStack {
                 Spacer()
                 Button("Reset to Defaults") { settings.resetToDefaults() }
