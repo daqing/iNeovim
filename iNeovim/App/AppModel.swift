@@ -71,11 +71,38 @@ final class AppModel: ObservableObject {
     static var pendingThemeSeed: Bool?
     static var pendingBackgroundSeed: Int?
 
+    /// Last scheme/background any session reported, persisted so a brand-new
+    /// window (launch / ⌘N) is created with the right look before its nvim
+    /// starts. Without it the window is born in the system appearance and
+    /// flashes light on a dark theme until the first report.
+    private static let persistedThemeKey = "lastThemeIsDark"
+    private static let persistedBackgroundKey = "lastDefaultBackground"
+
+    static var persistedThemeIsDark: Bool? {
+        UserDefaults.standard.object(forKey: persistedThemeKey) as? Bool
+    }
+
+    static var persistedBackground: Int? {
+        UserDefaults.standard.object(forKey: persistedBackgroundKey) as? Int
+    }
+
     /// The seeded packed default background, used to paint this window until
     /// nvim reports its own (the first flush replaces it in the snapshot).
     private(set) var seededBackground: Int?
 
+    /// True once a snapshot actually carried a scheme. Until then a `nil` from
+    /// `refreshWindowAppearance` (no snapshot yet) must not clear the seed.
+    private var hasReportedTheme = false
+
     func setThemeIsDark(_ isDark: Bool?) {
+        if let isDark {
+            hasReportedTheme = true
+            UserDefaults.standard.set(isDark, forKey: Self.persistedThemeKey)
+        } else if !hasReportedTheme && themeIsDark != nil {
+            // Pre-report `nil` from the empty snapshot: keep the seeded scheme
+            // so the window is not reverted to the system appearance.
+            return
+        }
         if themeIsDark != isDark {
             themeIsDark = isDark
         }
@@ -102,6 +129,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var terminalColors = TerminalColors()
 
     func setTerminalColors(_ colors: TerminalColors) {
+        if let background = colors.background {
+            UserDefaults.standard.set(background, forKey: Self.persistedBackgroundKey)
+        }
         if terminalColors != colors {
             terminalColors = colors
         }
@@ -150,8 +180,15 @@ final class AppModel: ObservableObject {
         if let seed = Self.pendingThemeSeed {
             Self.pendingThemeSeed = nil
             themeIsDark = seed
+        } else {
+            // A fresh window has no host to inherit from; fall back to the
+            // active session, then the last persisted scheme, so SwiftUI
+            // builds the window already themed.
+            themeIsDark = AppModel.active?.themeIsDark ?? Self.persistedThemeIsDark
         }
         seededBackground = Self.pendingBackgroundSeed
+            ?? AppModel.active?.terminalColors.background
+            ?? Self.persistedBackground
         Self.pendingBackgroundSeed = nil
         self.session = session
         self.screen = screen

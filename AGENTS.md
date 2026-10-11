@@ -160,47 +160,44 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   system. The titlebar, traffic lights, title text, and the adaptive
   fallback colors then match the editor instead of the OS mode. Do not set
   `NSWindow.appearance` directly: the hosting WindowGroup resets it on its
-  next update pass (measured: a freshly created window displays for 1–2
-  frames before `preferredColorScheme` reaches it, so no imperative
-  pre-display `window.appearance` set can cover the gap). A native-tab
-  request therefore seeds the next window's model with the requesting
-  window's mode AND packed default background (`AppModel.pendingThemeSeed`
-  / `pendingBackgroundSeed`, consumed by the next `init` — every ⌘T
-  continues from the tab it was pressed on), and the tab is joined into the
-  requesting window's group in `AppDelegate.registerEditorWindow`. The join
-  waits (`joinTabWhenThemed`) until the window's `effectiveAppearance`
-  actually matches the seeded scheme before it is revealed: the hosting
-  WindowGroup installs `preferredColorScheme` a couple of frames after the
-  window is created, and showing the tab before then exposed those
-  system-appearance frames as a white flash on a dark tab. The window is
-  still invisible during that wait, so the host tab stays on screen and the
-  new tab appears already themed. The seeded window already paints the
-  host's exact background, so AppKit's own tab-add transition is the whole
-  animation. Do not fade a standalone window over the tab group and join
-  later (the previous approach): a standalone window has no tab bar, so the
-  chrome changes mid-transition and the grid jumps vertically when the
-  deferred join shifts the content down under it. A plain standalone window
-  (⌘N / first launch) still installs at `alphaValue` 0 and
-  `AppModel.revealWindow` fades it in (0.25 s) on the first theme report —
-  bootstrap failures and a 1.5 s timeout backstop it — because there is no
-  host tab to inherit chrome from and the 1–2 frame system-appearance gap
-  must stay hidden. `revealWindow` waits (bounded) for the window's
-  `effectiveAppearance` to take the reported scheme and then pins
-  `window.appearance` before the fade, so the titlebar does not start light
-  and darken mid-flight. Tab windows are released by
-  `AppModel.revealWindowImmediately` instead. The adaptive fallback
+  next update pass. A fresh window is *born* in the system appearance and
+  SwiftUI orders it front, fully opaque, before
+  `TerminalView.viewDidMoveToWindow` / `AppModel.attach` can set
+  `alphaValue` to 0 (measured with a ⌘N screen capture: at attach the new
+  window was already `visible=true alpha=1.0 appr=Aqua` and stayed light
+  ~160 ms until nvim reported). No post-creation hook can hide those frames;
+  the only lever is to give the window the right scheme at `init`. So every
+  model — not just a tab — is seeded with a scheme and packed background:
+  the requesting tab's (`pendingThemeSeed` / `pendingBackgroundSeed`), else
+  the active session's (`AppModel.active`), else the last value any session
+  reported, persisted in UserDefaults (`lastThemeIsDark` /
+  `lastDefaultBackground`). A pre-report `nil` from
+  `refreshWindowAppearance` must not clear that seed — `setThemeIsDark`
+  ignores it until a snapshot actually carries a scheme — or the window
+  reverts to the system appearance and flashes again. The adaptive fallback
   background is a dynamic `NSColor` whose `cgColor` conversion bakes in the
-  appearance current at call time — `TerminalView` resolves it under the
-  seeded theme (`resolvedBackgroundColor(themeIsDark:)`) because init runs
-  before any window exists and otherwise paints fresh windows white, and
-  `ContentView`'s window backdrop uses the same seed (`seededBackground`)
-  so the SwiftUI layer behind the surface never shows a light frame while
-  `preferredColorScheme` is still landing. An
-  in-place mode flip on a shown window (`:colorscheme`) crossfades via
+  appearance current at call time; `TerminalView` resolves it under the
+  seeded theme (`resolvedBackgroundColor(themeIsDark:)`), and
+  `ContentView`'s window backdrop uses the same seed (`seededBackground`),
+  so neither the AppKit surface nor the SwiftUI layer behind it shows a
+  light frame. A native tab additionally joins the requesting window's
+  group in `AppDelegate.registerEditorWindow`, waiting (`joinTabWhenThemed`)
+  with the window invisible until its `effectiveAppearance` matches the seed
+  so it appears already themed. Do not fade a *visible* standalone window
+  over the group and join later: a standalone window has no tab bar, so the
+  chrome changes mid-transition and the grid jumps vertically when the
+  deferred join shifts the content down. A plain window (⌘N / first launch)
+  installs at `alphaValue` 0 and `AppModel.revealWindow` fades it in
+  (0.25 s) on the first report — bootstrap failures and a 1.5 s timeout
+  backstop it; `revealWindow` also waits (bounded) for `effectiveAppearance`
+  to take the reported scheme and pins `window.appearance` before the fade.
+  The first launch after a fresh install has no persisted seed, so only that
+  one window can still flash; every window after it is seeded. A
+  `:colorscheme` flip on a shown window crossfades via
   `TerminalView.crossfadeThemeTransition`: the old rendering is snapshotted
   and faded out (0.25 s) over the redrawn content; on a first paint the
   seen mode falls back to the seeded theme and then to the window's
-  effective appearance (covering ⌘N and first launch).
+  effective appearance.
 - **New-tab first paint:** `ui_attach` uses the view's real grid size
   (`AppModel.pendingGridSize`, reported from `TerminalView.requestResize`
   as the window lays out) instead of a placeholder 80x24. The placeholder
