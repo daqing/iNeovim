@@ -52,19 +52,27 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(opened, [[url]])
     }
 
-    func testTabCommandsRouteToNeovim() {
-        var commands: [String] = []
-        let model = AppModel(openHandler: { _, _ in }, commandHandler: { command, _ in commands.append(command) })
-
-        model.newTab()
-        model.closeTab()
-        model.nextTab()
-        model.previousTab()
-        model.goToTab(3)
-
+    func testResolveTabFileAgainstNvimWorkingDirectory() {
         XCTAssertEqual(
-            commands,
-            ["tabnew", "tabclose", "tabnext", "tabprevious", "tabnext 3"]
+            AppModel.resolveTabFile("src/main.go", workingDirectory: "/work/repo"),
+            URL(fileURLWithPath: "/work/repo/src/main.go")
+        )
+        // Absolute paths and ~ pass through unchanged.
+        XCTAssertEqual(
+            AppModel.resolveTabFile("/etc/hosts", workingDirectory: "/work/repo"),
+            URL(fileURLWithPath: "/etc/hosts")
+        )
+        XCTAssertEqual(
+            AppModel.resolveTabFile("~/notes.md", workingDirectory: "/work/repo"),
+            URL(fileURLWithPath: NSString(string: "~/notes.md").expandingTildeInPath)
+        )
+        // A bare :tabnew opens no file; an empty working directory falls back
+        // to the process cwd.
+        XCTAssertNil(AppModel.resolveTabFile("", workingDirectory: "/work/repo"))
+        XCTAssertNil(AppModel.resolveTabFile("   ", workingDirectory: ""))
+        XCTAssertEqual(
+            AppModel.resolveTabFile("a.txt", workingDirectory: ""),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("a.txt").standardized
         )
     }
 

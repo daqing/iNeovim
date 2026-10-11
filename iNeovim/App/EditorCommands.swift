@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Native menu commands for Neovim-relevant actions. Neovim owns the
-/// buffer/window/tab model, so each command routes to the embedded instance
-/// rather than duplicating state in the shell.
+/// Native menu commands for editor actions. Splits, buffers, and the cmdline
+/// route to the embedded nvim, which owns that model; tabs are native macOS
+/// window tabs (one window and nvim session per tab).
 struct EditorCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -21,18 +21,18 @@ struct EditorCommands: Commands {
         }
 
         CommandMenu("Neovim") {
-            Button("New Tab") { AppModel.active?.newTab() }
+            Button("New Tab") { Self.requestNewTab() }
                 .keyboardShortcut("t", modifiers: .command)
-            Button("Close Tab") { AppModel.active?.closeTab() }
+            Button("Close Tab") { Self.closeKeyWindow() }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
             Divider()
-            Button("Next Tab") { AppModel.active?.nextTab() }
+            Button("Next Tab") { Self.cycleNativeTab(1) }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-            Button("Previous Tab") { AppModel.active?.previousTab() }
+            Button("Previous Tab") { Self.cycleNativeTab(-1) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
             Menu("Go to Tab") {
                 ForEach(1...9, id: \.self) { index in
-                    Button("Tab \(index)") { AppModel.active?.goToTab(index) }
+                    Button("Tab \(index)") { Self.selectNativeTab(index) }
                         .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
                 }
             }
@@ -56,6 +56,28 @@ struct EditorCommands: Commands {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
         AppModel.openFromSystem(panel.urls)
+    }
+
+    // MARK: Native tabs
+
+    /// ⌘T / New Tab: a new editor window joined to the key window's tab
+    /// group, routed through the app delegate so the tab bar's + button
+    /// (system `newWindowForTab:`) shares one path.
+    private static func requestNewTab() {
+        AppDelegate.shared?.requestNewTab(from: NSApp.keyWindow)
+    }
+
+    private static func cycleNativeTab(_ offset: Int) {
+        guard let group = NSApp.keyWindow?.tabGroup, let selected = group.selectedWindow,
+              let index = group.windows.firstIndex(of: selected) else { return }
+        let next = index + offset
+        guard group.windows.indices.contains(next) else { return }
+        group.windows[next].makeKey()
+    }
+
+    private static func selectNativeTab(_ index: Int) {
+        guard let group = NSApp.keyWindow?.tabGroup, group.windows.indices.contains(index) else { return }
+        group.windows[index].makeKey()
     }
 
     /// ⌘P acts on the key window's editor view — the terminal is normally

@@ -339,11 +339,32 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   fallback (PingFang for CJK, Apple Color Emoji) advances by its own metrics
   and drifts text off the cell grid. `grid_line` entries with `repeat` 0 are
   chunk markers and must not overwrite cells.
-- **Tabs (T8.2):** tabs are **Neovim tabpages**, not native macOS window tabs.
-  Each window's embedded nvim already draws the tabline and owns the
-  buffer/window/tab model, so a tab is a tabpage inside that window's session.
-  Editor commands route to `:tab*` (`EditorCommands` → `AppModel.active`), and
-  `gt`/`gT` keep working through normal key input.
+- **Tabs are native macOS window tabs:** ⌘T — and a typed
+  `:tabnew [file]` / `:tabe[dit] [file]`, intercepted in `TerminalView.sendKeys`
+  with the same cmdline-buffer mechanism as the `:terminal` gate — opens a new
+  editor window joined to the requesting window's tab group: one window, one
+  embedded nvim session per tab (like ⌘N, except grouped). `AppDelegate` owns
+  the plumbing: it implements `newWindowForTab:` (the tab bar's + button and
+  the system New Tab action), holds the SwiftUI `openWindow` action captured
+  by the first `ContentView` (`WindowGroup` carries `id: "editor"` for it),
+  and `registerEditorWindow` — called from `AppModel.attach(to:)` as the new
+  window's content installs — assigns the shared
+  `tabbingIdentifier com.mzevo.iNeovim.editor`, consumes the pending tab
+  placement (`addTabbedWindow` unless the system auto-tabbed the window under
+  the user's tabbing preference — at registration time neither window has a
+  group yet, so plain `tabGroup` inequality would skip the join), and routes a
+  pending file through the model's pre-ready queue (paths resolved against
+  nvim's cwd via `AppModel.resolveTabFile`). Reach the delegate through
+  `AppDelegate.shared` (set in `init`), never `NSApp.delegate as? AppDelegate`:
+  `@NSApplicationDelegateAdaptor` installs a `SwiftUI.AppDelegate` wrapper as
+  the real `NSApp.delegate` that only forwards protocol methods and `@objc`
+  selectors, so that cast silently fails and menu actions become no-ops. All editor windows must share one
+  `tabbingIdentifier`; the default per-scene identifier could auto-group
+  editors with Settings under the "Always" tabbing preference. ⌘1–9,
+  ⌘⇧[ / ⌘⇧] walk `NSWindow.tabGroup` (`EditorCommands`); nvim's own tabpages
+  stay reachable through `gt`/`gT` and un-intercepted `:tab*` commands
+  (ranges, `+cmd`/`++opt` modifiers, and `|` bars pass through, as do
+  `:tabclose`/`:tabnext` etc.).
 - **Windows — one session per window (⌘N):** every window owns its own
   `AppModel` and its own embedded stack (`NvimProcess` → `RPCSession`, plus
   that session's `RedrawEventStream`/`Screen`/`InputDispatcher`); nothing

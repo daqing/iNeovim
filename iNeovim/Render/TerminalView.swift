@@ -284,6 +284,16 @@ final class TerminalView: NSView {
             model.requestTerminalPane(command: shellCommand)
             return
         }
+        // A typed `:tabnew [file]` opens a native tab (its own window and
+        // nvim session) instead of an in-grid tabpage; same shape as the
+        // `:terminal` interception above.
+        if keys == "<CR>", let file = Self.nativeTabRequest(from: cmdlineBuffer) {
+            Log.input.notice("Intercepted typed :\(self.cmdlineBuffer, privacy: .public), opening a native tab")
+            cmdlineBuffer = ""
+            model.inputDispatcher.send(.keys("<Esc>"))
+            model.requestNativeTab(file: file)
+            return
+        }
         // Hard gate: the tree-walking fzf commands must not run in / or
         // $HOME — walking either tree can freeze the machine.
         if keys == "<CR>", Self.isFzfWalkCommand(cmdlineBuffer) {
@@ -345,6 +355,32 @@ final class TerminalView: NSView {
         let bare = name.hasSuffix("!") ? name.dropLast() : name
         guard bare.count >= 4, "terminal".hasPrefix(bare) else { return nil }
         return words.dropFirst().joined(separator: " ")
+    }
+
+    /// Whether a typed cmdline names a tab-creating command that should open
+    /// a native tab instead of an in-grid tabpage.
+    static func isNativeTabCommand(_ command: String) -> Bool {
+        nativeTabRequest(from: command) != nil
+    }
+
+    /// Parse the cmdline text of a tab-creating command into the file to open
+    /// in the new native tab ("" for a bare `:tabnew`); nil when the command
+    /// is anything else. Matching mirrors nvim: built-in commands are
+    /// case-sensitive, `:tabe[dit]` accepts its four-letter abbreviation and
+    /// `:tabnew` needs all six letters (`tabne…` is ambiguous with
+    /// `:tabnext`). A trailing `|` bar or a `+cmd`/`++opt` modifier stays
+    /// with nvim, as do ranges (`:$tabnew` never matches — the range makes
+    /// the first word unparseable).
+    static func nativeTabRequest(from command: String) -> String? {
+        let words = command.trimmingCharacters(in: .whitespaces)
+            .split(separator: " ", omittingEmptySubsequences: true)
+        guard let name = words.first else { return nil }
+        let bare = name.hasSuffix("!") ? name.dropLast() : name
+        guard (bare.count >= 6 && "tabnew".hasPrefix(bare))
+            || (bare.count >= 4 && "tabedit".hasPrefix(bare)) else { return nil }
+        let file = words.dropFirst().joined(separator: " ")
+        guard !file.contains("|"), !file.hasPrefix("+") else { return nil }
+        return file
     }
 
     /// Cmdline text accumulated while nvim reports cmdline mode.

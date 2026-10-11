@@ -5,7 +5,9 @@ import SwiftUI
     @StateObject private var settings = AppSettings.shared
 
     var body: some Scene {
-        WindowGroup {
+        // The id lets the app delegate's openWindow capture create the
+        // windows behind native tabs (⌘T / the tab bar's + button).
+        WindowGroup(id: "editor") {
             ContentView(settings: settings)
         }
         .commands {

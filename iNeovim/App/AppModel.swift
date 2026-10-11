@@ -144,10 +144,12 @@ final class AppModel: ObservableObject {
     }
 
     /// Remember the window hosting this session (used by the clean-exit
-    /// close) and make this the active session.
+    /// close), make this the active session, and register the window for
+    /// native tabbing.
     func attach(to window: NSWindow) {
         hostWindow = window
         becameActive()
+        AppDelegate.shared?.registerEditorWindow(window, model: self)
     }
 
     /// Start the embedded Neovim, attach the UI, and begin consuming the
@@ -307,31 +309,37 @@ final class AppModel: ObservableObject {
         commandHandler(command, client)
     }
 
-    // MARK: - Tabs
+    // MARK: - Native tabs
 
-    // T8.2 decision: tabs are Neovim tabpages, not native window tabs. Each
-    // window's embedded nvim already draws the tabline and owns the
-    // buffer/window/tab model. Editor commands below route to `:tab*`, and
-    // `gt`/`gT` keep working through normal key input.
+    // Tabs are native macOS window tabs (Terminal/Ghostty style): each tab is
+    // its own window with its own embedded nvim session, joined through
+    // NSWindow's tab group. nvim's own tabpages stay reachable through
+    // `gt`/`gT` and un-intercepted `:tab*` commands for configs that use them.
 
-    func newTab() {
-        command("tabnew")
+    /// ⌘T / a typed `:tabnew [file]`: open a new editor window as a tab of
+    /// this window's tab group, opening `file` (typed cmdline text, resolved
+    /// against nvim's cwd) in it once the new session is ready.
+    func requestNativeTab(file: String) {
+        Task { @MainActor in
+            let directory = (try? await client.currentDirectory()) ?? ""
+            AppDelegate.shared?.requestNewTab(
+                from: hostWindow,
+                file: Self.resolveTabFile(file, workingDirectory: directory)
+            )
+        }
     }
 
-    func closeTab() {
-        command("tabclose")
-    }
-
-    func nextTab() {
-        command("tabnext")
-    }
-
-    func previousTab() {
-        command("tabprevious")
-    }
-
-    func goToTab(_ index: Int) {
-        command("tabnext \(index)")
+    /// Resolve a typed `:tabnew` file name against nvim's working directory;
+    /// nil for a bare `:tabnew` (the new session starts in $HOME).
+    static func resolveTabFile(_ file: String, workingDirectory: String) -> URL? {
+        let name = file.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return nil }
+        let path = NSString(string: name).expandingTildeInPath
+        guard !path.hasPrefix("/") else { return URL(fileURLWithPath: path) }
+        let base = workingDirectory.isEmpty
+            ? FileManager.default.currentDirectoryPath
+            : workingDirectory
+        return URL(fileURLWithPath: base).appendingPathComponent(path).standardized
     }
 
     // MARK: - Windows and files

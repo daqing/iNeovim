@@ -6,6 +6,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var settings: AppSettings
     @StateObject private var model = AppModel()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         EditorSplitRepresentable(settings: settings, model: model)
@@ -15,6 +16,7 @@ struct ContentView: View {
             .preferredColorScheme(model.themeIsDark.map { $0 ? .dark : .light })
             .navigationTitle(model.windowTitle ?? "iNeovim")
             .task { await model.bootstrap() }
+            .onAppear { registerWindowOpener() }
             .alert(
                 "Neovim exited",
                 isPresented: Binding(
@@ -28,6 +30,14 @@ struct ContentView: View {
             } message: { crash in
                 Text("The embedded Neovim process exited unexpectedly (status \(crash.status)).")
             }
+    }
+
+    /// Hand SwiftUI's openWindow action to the app delegate so ⌘T and the
+    /// tab bar's + button can open editor windows from AppKit.
+    private func registerWindowOpener() {
+        AppDelegate.shared?.registerWindowOpener { [openWindow] in
+            openWindow(id: "editor")
+        }
     }
 
     /// A blank grid can mean Neovim is still starting or failed to start; show

@@ -2,6 +2,31 @@ import AppKit
 import os
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The adaptor instance. `NSApp.delegate` cannot be cast to this class —
+    /// SwiftUI installs its own `SwiftUI.AppDelegate` wrapper that only
+    /// forwards `NSApplicationDelegate` protocol methods and `@objc` selectors,
+    /// so every `NSApp.delegate as? AppDelegate` silently fails. Route direct
+    /// calls through here instead.
+    static private(set) weak var shared: AppDelegate?
+
+    /// All editor windows share one tabbing identifier so native tabs
+    /// (⌘T, the tab bar's + button) can group them, and so editor windows
+    /// never auto-group with SwiftUI scenes like Settings.
+    static let editorTabbingIdentifier: NSWindow.TabbingIdentifier = "com.mzevo.iNeovim.editor"
+
+    /// Opens one more editor window; captured from SwiftUI's `openWindow`
+    /// action by the first window, since tabs are created from AppKit.
+    private var openEditorWindow: (() -> Void)?
+
+    /// Tab placement waiting for the next editor window to register.
+    private weak var pendingTabHost: NSWindow?
+    private var pendingTabFile: URL?
+
+    override init() {
+        super.init()
+        Self.shared = self
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Printable keys reach nvim through the text input system (the
         // TerminalView interpretKeyEvents path), where macOS "press and hold"
@@ -27,6 +52,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for model in AppModel.live {
             model.beginShutdown()
             Task { await model.shutdownSession() }
+        }
+    }
+
+    // MARK: - Native tabs
+
+    /// Hand SwiftUI's `openWindow` action over to AppKit; called by the first
+    /// editor window's content, which exists before any tab can be requested.
+    func registerWindowOpener(_ opener: @escaping () -> Void) {
+        guard openEditorWindow == nil else { return }
+        openEditorWindow = opener
+    }
+
+    /// The tab bar's + button and the system New Tab action both land here.
+    @objc func newWindowForTab(_ sender: Any?) {
+        requestNewTab(from: NSApp.keyWindow)
+    }
+
+    /// Open a new editor window joined as a tab to `host`'s tab group, with
+    /// `file` opened in it once its session is ready. A host that is not an
+    /// editor window (e.g. Settings) yields a standalone window.
+    func requestNewTab(from host: NSWindow?, file: URL? = nil) {
+        guard let openEditorWindow else {
+            Log.app.notice("New tab requested before any editor window existed; ignored")
+            return
+        }
+        pendingTabHost = host?.tabbingIdentifier == Self.editorTabbingIdentifier ? host : nil
+        pendingTabFile = file
+        openEditorWindow()
+    }
+
+    /// Called from `AppModel.attach(to:)` as a new editor window's content is
+    /// installed: enable tabbing, consume any pending tab placement, and hand
+    /// over a pending file. Safe to call for plain ⌘N windows (no pending tab).
+    func registerEditorWindow(_ window: NSWindow, model: AppModel) {
+        window.tabbingIdentifier = Self.editorTabbingIdentifier
+        let host = pendingTabHost
+        let file = pendingTabFile
+        pendingTabHost = nil
+        pendingTabFile = nil
+        if let host, host !== window {
+            // Join the host's group unless the system already tabbed the new
+            // window there (user tabbing preference "Always") — at this point
+            // neither window has a group yet, so plain inequality would skip
+            // the join.
+            if window.tabGroup == nil || window.tabGroup !== host.tabGroup {
+                host.addTabbedWindow(window, ordered: .above)
+            }
+            window.makeKeyAndOrderFront(nil)
+        }
+        if let file {
+            model.open([file])
         }
     }
 }

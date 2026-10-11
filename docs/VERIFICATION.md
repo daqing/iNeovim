@@ -58,9 +58,13 @@ aligned.
 
 ## App shell checks
 
-- **Tabs (T8.2):** **Neovim ▸ New Tab** opens a tabpage and the tabline shows
-  it; ⌘T creates a tab without leaving the keyboard; **Next/Previous Tab** and
-  `gt`/`gT` move between tabpages; ⌘1…⌘9 jump straight to the Nth tab.
+- **Tabs (native window tabs):** ⌘T opens a new editor window as a native
+  macOS tab of the current window's tab group (own embedded nvim; the tab bar
+  appears with two or more tabs); the tab bar's **+** button does the same;
+  typed `:tabnew [file]` / `:tabe[dit] [file]` also open a native tab and
+  resolve the file against nvim's cwd; **Next/Previous Tab** and ⌘1…⌘9 switch
+  native tabs; **Close Tab** (⌘⇧W) closes the current tab; nvim tabpages stay
+  reachable through `gt`/`gT` and `:tabnext`-style commands.
 - **Settings (T8.3):** ⌘, opens Settings. Changing font/size reflows the grid;
   Option-as-Meta and Command passthrough change key behavior immediately.
 - **Window title (T8.5):** opening a file updates the window title from
