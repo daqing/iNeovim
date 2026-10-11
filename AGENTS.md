@@ -160,7 +160,19 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   system. The titlebar, traffic lights, title text, and the adaptive
   fallback colors then match the editor instead of the OS mode. Do not set
   `NSWindow.appearance` directly: the hosting WindowGroup resets it on its
-  next update pass.
+  next update pass. The light↔dark switch itself is softened, not snapped: a
+  new editor window opens at `alphaValue` 0 (set in `AppModel.attach`) and
+  fades in (`AppModel.revealWindow`, 0.3 s) once its theme is known — first
+  non-nil `themeIsDark`, a bootstrap failure, or a 1.5 s timeout backstop —
+  so a dark-themed nvim never shows the system-appearance empty state and
+  then flips; with native tabs the previous tab shows through until the
+  fade, which reads as a soft crossfade between the two. An in-place mode
+  flip on an already shown window (`:colorscheme`) crossfades instead via
+  `TerminalView.crossfadeThemeTransition`: the old rendering is snapshotted
+  and faded out (0.25 s) over the redrawn content; the first paint on a
+  window the timeout already revealed fades the same way
+  (`window.alphaValue > 0`), while a still-hidden window is left to the
+  window-level fade.
 - **Content inset & cmdline gap:** the grid is inset `TerminalView.contentInset`
   (6 pt) from the view on all sides, and the last grid row (nvim's
   cmdline/message area) is drawn `TerminalView.cmdlineGap` (4 pt) below the

@@ -74,6 +74,11 @@ final class TerminalView: NSView {
     /// full-strength bar glares at night).
     static let statuslineBarOpacity: Float = 0.5
 
+    /// Duration of the fade that softens a light↔dark theme flip seen in
+    /// place (`:colorscheme`): the previous rendering fades out over the
+    /// redrawn content instead of the whole grid popping to the new colors.
+    static let themeCrossfadeDuration: TimeInterval = 0.25
+
     /// The statusline row's bar/text colors: the opposite theme mode's
     /// default pair; an unknown theme (nil) follows the window appearance.
     static func statuslineColors(themeIsDark: Bool?) -> (background: NSColor, foreground: NSColor) {
@@ -102,6 +107,9 @@ final class TerminalView: NSView {
     let model: AppModel
     private(set) var metrics: FontMetrics
     private var snapshot: ScreenSnapshot?
+    /// Overlay fading the previous theme's rendering out during a light↔dark
+    /// flip seen in place (see `crossfadeThemeTransition`).
+    private var themeCrossfadeView: NSView?
     private let contentLayer: GridContentLayer
     /// Backdrop painting the statusline row with the opposite theme mode's
     /// default background, stretched to the window edges. The content layer
@@ -765,6 +773,7 @@ final class TerminalView: NSView {
                     let snapshot = await screen.snapshot()
                     let previous = self.snapshot
                     self.updateCursorGlide(previous: previous, next: snapshot)
+                    self.crossfadeThemeTransition(from: previous, to: snapshot)
                     self.snapshot = snapshot
                     self.contentLayer.update(snapshot: snapshot)
                     self.contentLayer.invalidate(cellRects: cellRects)
@@ -877,6 +886,64 @@ final class TerminalView: NSView {
             foreground: snapshot?.defaultForeground,
             background: snapshot?.defaultBackground
         ))
+    }
+
+    /// Soften a theme-mode change the user can already see: when a flush
+    /// flips the light↔dark mode of a shown window (`:colorscheme`), the
+    /// previous rendering is snapshotted and faded out over the redrawn
+    /// content. The first paint on a window the reveal timeout already
+    /// exposed fades the same way (its empty system-appearance state is what
+    /// fades out); a still-hidden window needs no overlay — `AppModel
+    /// .revealWindow` fades the whole window in instead.
+    private func crossfadeThemeTransition(from previous: ScreenSnapshot?, to next: ScreenSnapshot) {
+        guard let window, window.isVisible else { return }
+        guard let to = Self.hasDarkBackground(next.defaultBackground) else { return }
+        let seenModeIsStale: Bool
+        if let previous {
+            seenModeIsStale = Self.hasDarkBackground(previous.defaultBackground) != to
+        } else {
+            // No prior snapshot: fade only when the window was revealed by
+            // the timeout before this first paint (alpha > 0 means it ran).
+            seenModeIsStale = window.alphaValue > 0
+        }
+        guard seenModeIsStale, let contents = snapshotContents() else { return }
+        // A flip while a fade is in flight swaps in a fresh overlay.
+        themeCrossfadeView?.removeFromSuperview()
+        let overlay = NSImageView(frame: bounds)
+        overlay.image = NSImage(cgImage: contents, size: bounds.size)
+        overlay.autoresizingMask = [.width, .height]
+        addSubview(overlay)
+        themeCrossfadeView = overlay
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.themeCrossfadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            overlay.animator().alphaValue = 0
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.themeCrossfadeDuration))
+            guard let self, self.themeCrossfadeView === overlay else { return }
+            overlay.removeFromSuperview()
+            self.themeCrossfadeView = nil
+        }
+    }
+
+    /// Render the current layer tree (grid content, statusline bar, cursor)
+    /// into a bitmap for the theme crossfade overlay.
+    private func snapshotContents() -> CGImage? {
+        guard let layer, bounds.width > 0, bounds.height > 0 else { return nil }
+        let scale = backingScale
+        guard let context = CGContext(
+            data: nil,
+            width: max(1, Int(bounds.width * scale)),
+            height: max(1, Int(bounds.height * scale)),
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        layer.render(in: context)
+        return context.makeImage()
     }
 
     /// Slide the cursor to its new cell instead of jumping; runs before the

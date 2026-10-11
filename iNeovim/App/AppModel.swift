@@ -67,6 +67,10 @@ final class AppModel: ObservableObject {
         if themeIsDark != isDark {
             themeIsDark = isDark
         }
+        // The first report is the new window's reveal trigger (see revealWindow).
+        if isDark != nil {
+            revealWindow()
+        }
     }
 
     /// nvim's default fg/bg (0xRRGGBB), mirrored so the native terminal
@@ -149,7 +153,55 @@ final class AppModel: ObservableObject {
     func attach(to window: NSWindow) {
         hostWindow = window
         becameActive()
+        if !hasRevealedWindow {
+            // Hold the window invisible until its theme is known so it can
+            // fade in with the right look instead of showing the system
+            // appearance and snapping when nvim reports (see revealWindow).
+            window.alphaValue = 0
+            scheduleWindowRevealFallback()
+        }
         AppDelegate.shared?.registerEditorWindow(window, model: self)
+    }
+
+    // MARK: - Window reveal
+
+    /// A new editor window starts invisible (`attach` sets alpha 0) and
+    /// fades in once its theme is known, so a dark-themed nvim in a
+    /// light-system window never flashes the empty light state and then
+    /// snaps dark. With native tabs the previous tab shows through until
+    /// the fade, so the new tab reads as a soft crossfade over it.
+    static let windowRevealDuration: TimeInterval = 0.3
+
+    /// How long a window may stay hidden waiting for its first theme report
+    /// before it is faded in regardless (bootstrap failures reveal sooner).
+    static let windowRevealTimeout: Duration = .seconds(1.5)
+
+    private var hasRevealedWindow = false
+    private var windowRevealTask: Task<Void, Never>?
+
+    /// Fade the hosting window in; idempotent. Runs on the first known
+    /// theme, on a bootstrap failure (the setup/error UI must be visible),
+    /// or on the timeout started in `attach`.
+    private func revealWindow() {
+        guard !hasRevealedWindow else { return }
+        hasRevealedWindow = true
+        windowRevealTask?.cancel()
+        windowRevealTask = nil
+        guard let window = hostWindow else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.windowRevealDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().alphaValue = 1
+        }
+    }
+
+    private func scheduleWindowRevealFallback() {
+        windowRevealTask?.cancel()
+        windowRevealTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.windowRevealTimeout)
+            guard !Task.isCancelled else { return }
+            self?.revealWindow()
+        }
     }
 
     /// Start the embedded Neovim, attach the UI, and begin consuming the
@@ -293,6 +345,8 @@ final class AppModel: ObservableObject {
     /// Route a failed bootstrap: a missing nvim enters the setup flow;
     /// anything else surfaces as a generic error.
     func handleBootstrapFailure(_ error: Error) {
+        // The setup/error UI replaces the theme as the reveal trigger.
+        revealWindow()
         guard case NvimDiscoveryError.notFound = error else {
             bootstrapError = error.localizedDescription
             Log.rpc.error("Failed to connect to embedded nvim: \(error.localizedDescription, privacy: .public)")
