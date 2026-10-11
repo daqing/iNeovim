@@ -80,11 +80,6 @@ final class EmbeddedTerminalTests: XCTestCase {
         guard let model = await readyModel() else {
             throw XCTSkip("Embedded nvim session did not start (nvim missing or handshake failed)")
         }
-        // Auto-show would open the panel in the test host's window; the store
-        // is what this test exercises.
-        let autoShow = AppSettings.shared.autoShowProblems
-        AppSettings.shared.autoShowProblems = false
-        defer { AppSettings.shared.autoShowProblems = autoShow }
 
         func probeProblems() -> [DiagnosticsStore.Problem] {
             model.diagnosticsStore.problems.filter { $0.diagnostic.source == "ineovim-tests" }

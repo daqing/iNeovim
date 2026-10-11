@@ -33,20 +33,20 @@ final class DiagnosticsStore {
         onChange?()
     }
 
-    /// Every error and warning across buffers, errors first, then by path and
-    /// position. Info and hint entries are kept in `buffers` but not listed.
+    /// Every diagnostic across buffers, most severe first (error, warning,
+    /// info, hint), then by path and position. Info and hint rows render
+    /// dimmed in the panel.
     var problems: [Problem] {
         var list: [Problem] = []
         for buffer in buffers.values {
-            for diagnostic in buffer.diagnostics
-            where diagnostic.severity == .error || diagnostic.severity == .warning {
+            for diagnostic in buffer.diagnostics {
                 list.append(Problem(diagnostic: diagnostic, path: buffer.path))
             }
         }
         return list.sorted { lhs, rhs in
-            let lhsRank = lhs.diagnostic.severity == .error ? 0 : 1
-            let rhsRank = rhs.diagnostic.severity == .error ? 0 : 1
-            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            if lhs.diagnostic.severity.rawValue != rhs.diagnostic.severity.rawValue {
+                return lhs.diagnostic.severity.rawValue < rhs.diagnostic.severity.rawValue
+            }
             if lhs.path != rhs.path { return lhs.path < rhs.path }
             if lhs.diagnostic.line != rhs.diagnostic.line {
                 return lhs.diagnostic.line < rhs.diagnostic.line
@@ -55,14 +55,6 @@ final class DiagnosticsStore {
                 return lhs.diagnostic.column < rhs.diagnostic.column
             }
             return lhs.diagnostic.message < rhs.diagnostic.message
-        }
-    }
-
-    var problemCount: Int {
-        buffers.values.reduce(0) { count, buffer in
-            count + buffer.diagnostics.filter {
-                $0.severity == .error || $0.severity == .warning
-            }.count
         }
     }
 }

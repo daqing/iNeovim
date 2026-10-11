@@ -108,12 +108,11 @@ final class NvimDiagnosticsTests: XCTestCase {
         ))
 
         XCTAssertEqual(changes, 2)
-        XCTAssertEqual(store.problemCount, 3)
         let problems = store.problems
-        XCTAssertEqual(problems.map(\.diagnostic.message), ["e1", "e2", "w2"])
+        // Severity first (error, warning, hint), then path and line.
+        XCTAssertEqual(problems.map(\.diagnostic.message), ["e1", "e2", "w2", "h"])
         XCTAssertEqual(problems[0].path, "/a/first.go")
-        // Hints are kept in the buffer snapshot but never listed.
-        XCTAssertFalse(problems.contains { $0.diagnostic.severity == .hint })
+        XCTAssertEqual(problems[3].diagnostic.severity, .hint)
     }
 
     func testStoreClearsBufferOnEmptyUpdateAndOnClear() {
@@ -132,7 +131,7 @@ final class NvimDiagnosticsTests: XCTestCase {
         store.onChange = { changes += 1 }
 
         store.apply(NvimDiagnosticUpdate(bufferId: 1, path: "/x.go", diagnostics: []))
-        XCTAssertEqual(store.problemCount, 0)
+        XCTAssertEqual(store.problems.count, 0)
         XCTAssertEqual(changes, 1)
 
         store.clear()

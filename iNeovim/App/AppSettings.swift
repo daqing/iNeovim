@@ -32,11 +32,6 @@ final class AppSettings: ObservableObject {
     @Published var nativeTerminalPane: Bool {
         didSet { defaults.set(nativeTerminalPane, forKey: Keys.nativeTerminalPane) }
     }
-    /// Pop the problems sheet automatically when the language servers report
-    /// errors or warnings (one appearance per clean→dirty cycle).
-    @Published var autoShowProblems: Bool {
-        didSet { defaults.set(autoShowProblems, forKey: Keys.autoShowProblems) }
-    }
 
     private let defaults: UserDefaults
 
@@ -48,7 +43,6 @@ final class AppSettings: ObservableObject {
         static let scrollAnimationEnabled = "settings.scrollAnimationEnabled"
         static let cursorAnimationEnabled = "settings.cursorAnimationEnabled"
         static let nativeTerminalPane = "settings.nativeTerminalPane"
-        static let autoShowProblems = "settings.autoShowProblems"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -61,7 +55,6 @@ final class AppSettings: ObservableObject {
             Keys.scrollAnimationEnabled: true,
             Keys.cursorAnimationEnabled: true,
             Keys.nativeTerminalPane: true,
-            Keys.autoShowProblems: true,
         ])
         fontFamily = defaults.string(forKey: Keys.fontFamily) ?? ""
         fontSize = defaults.double(forKey: Keys.fontSize)
@@ -70,7 +63,6 @@ final class AppSettings: ObservableObject {
         scrollAnimationEnabled = defaults.bool(forKey: Keys.scrollAnimationEnabled)
         cursorAnimationEnabled = defaults.bool(forKey: Keys.cursorAnimationEnabled)
         nativeTerminalPane = defaults.bool(forKey: Keys.nativeTerminalPane)
-        autoShowProblems = defaults.bool(forKey: Keys.autoShowProblems)
     }
 
     var inputSettings: InputSettings {
@@ -118,6 +110,5 @@ final class AppSettings: ObservableObject {
         scrollAnimationEnabled = true
         cursorAnimationEnabled = true
         nativeTerminalPane = true
-        autoShowProblems = true
     }
 }

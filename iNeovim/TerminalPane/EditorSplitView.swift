@@ -117,9 +117,15 @@ final class EditorSplitView: NSView {
     /// The panel is cheap and must keep its subscription while hidden, so it
     /// is created once and kept for the window's lifetime.
     private func makeProblemsPanel() -> ProblemsPanelController {
-        let panel = ProblemsPanelController(store: model.diagnosticsStore) { [weak self] problem in
-            self?.model.jumpToProblem(problem)
-        }
+        let panel = ProblemsPanelController(
+            store: model.diagnosticsStore,
+            onJump: { [weak self] problem in
+                self?.model.jumpToProblem(problem)
+            },
+            onClose: { [weak self] in
+                self?.model.setProblemsPanelVisible(false)
+            }
+        )
         problemsPanel = panel
         return panel
     }

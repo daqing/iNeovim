@@ -45,6 +45,7 @@ struct EditorCommands: Commands {
                 .keyboardShortcut("`", modifiers: .control)
             Divider()
             Button("Toggle Problems") { AppModel.active?.toggleProblemsPanel() }
+                .keyboardShortcut("i", modifiers: .command)
         }
     }
 

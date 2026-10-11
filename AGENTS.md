@@ -283,15 +283,15 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   aggregates the snapshots and feeds the native `ProblemsPanelController`,
   a non-modal issues sidebar docked at the window's left edge like Xcode's
   issue navigator (`EditorSplitView`: panel | editor | divider | terminal
-  pane). The list live-updates while shown; selecting a row jumps the
-  editor (`:edit` when the path differs from the current buffer →
+  pane). The list live-updates while shown and lists every severity —
+  errors and warnings at full strength, info/hint dimmed, with per-severity
+  counts in the header; selecting a row jumps the editor
+  (`:edit` when the path differs from the current buffer →
   `nvim_win_set_cursor`) and the panel keeps focus, so the arrow keys walk
   the list. The panel is created once per window and stays subscribed while
-  hidden. The auto-show opens the panel once per clean→dirty cycle, debounced
-  800 ms (it must not flap on every keystroke publish); the settings toggle
-  "Show problems panel when diagnostics appear" gates only the auto-show,
-  while the Neovim menu's "Toggle Problems" opens/closes the panel on
-  demand.
+  hidden. It opens only on demand — ⌘I or the Neovim menu's "Toggle
+  Problems" — and closes via the header ✕ or the same toggle; nothing pops
+  it open automatically and no settings gate exists.
 - **Native terminal pane (Ghostty):** a typed `:terminal` (and its `term`…
   `terminal` abbreviations, optional `vert[ical]` modifier, optional `!`,
   optional trailing command) never reaches nvim: `TerminalView.sendKeys`

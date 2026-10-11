@@ -99,9 +99,6 @@ final class AppModel: ObservableObject {
     /// Diagnostics pushed by the embedded nvim's language servers (see
     /// `NvimClient.installDiagnosticsHook`); the problems panel renders it.
     let diagnosticsStore = DiagnosticsStore()
-    /// Panel auto-show state: one opening per clean→dirty cycle, debounced.
-    private var problemsArmed = true
-    private var problemsDebounce: Task<Void, Never>?
 
     private let openHandler: @MainActor ([URL], NvimClient) -> Void
     private let commandHandler: @MainActor (String, NvimClient) -> Void
@@ -281,8 +278,6 @@ final class AppModel: ObservableObject {
         await session.redrawBus.reset()
         await inputDispatcher.reset()
         diagnosticsStore.clear()
-        problemsDebounce?.cancel()
-        problemsArmed = true
         await session.reset()
         await bootstrap()
     }
@@ -426,42 +421,21 @@ final class AppModel: ObservableObject {
     /// container mirrors the flag into the layout.
     @Published private(set) var isProblemsPanelVisible = false
 
-    /// Deliver one per-buffer diagnostics snapshot from the embedded nvim:
-    /// update the store, then schedule the auto-show when issues exist and
-    /// re-arm the moment the project goes clean again.
+    /// Deliver one per-buffer diagnostics snapshot from the embedded nvim.
+    /// The panel refreshes through the store's `onChange`; it opens only on
+    /// demand (⌘I / Neovim menu / header ✕), never automatically.
     func handleDiagnosticUpdate(_ update: NvimDiagnosticUpdate) {
         diagnosticsStore.apply(update)
-        guard diagnosticsStore.problemCount > 0 else {
-            problemsArmed = true
-            return
-        }
-        scheduleProblemsAutoShow()
-    }
-
-    /// LSP republishes diagnostics while the user types, so the auto-show is
-    /// debounced to let the burst settle. One opening per clean→dirty cycle
-    /// keeps the panel from re-appearing after the user dismissed it.
-    private func scheduleProblemsAutoShow() {
-        guard AppSettings.shared.autoShowProblems, problemsArmed else { return }
-        problemsDebounce?.cancel()
-        problemsDebounce = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(800))
-            guard !Task.isCancelled else { return }
-            self?.autoShowProblemsIfArmed()
-        }
-    }
-
-    private func autoShowProblemsIfArmed() {
-        guard problemsArmed, diagnosticsStore.problemCount > 0 else { return }
-        problemsArmed = false
-        if !isProblemsPanelVisible {
-            isProblemsPanelVisible = true
-        }
     }
 
     /// Menu action: show the docked problems panel, or hide it.
     func toggleProblemsPanel() {
         isProblemsPanelVisible.toggle()
+    }
+
+    /// Header close button (and any future explicit show/hide) in the panel.
+    func setProblemsPanelVisible(_ visible: Bool) {
+        isProblemsPanelVisible = visible
     }
 
     /// Jump the editor to a problem row from the panel: `:edit` the file when

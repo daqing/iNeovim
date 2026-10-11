@@ -11,15 +11,21 @@ final class ProblemsPanelController: NSViewController {
 
     private let store: DiagnosticsStore
     private let onJump: (DiagnosticsStore.Problem) -> Void
+    private let onClose: () -> Void
 
     private var problems: [DiagnosticsStore.Problem] = []
     private let tableView = NSTableView()
     private let countsLabel = NSTextField(labelWithString: "")
-    private let emptyLabel = NSTextField(labelWithString: "No errors or warnings")
+    private let emptyLabel = NSTextField(labelWithString: "No problems")
 
-    init(store: DiagnosticsStore, onJump: @escaping (DiagnosticsStore.Problem) -> Void) {
+    init(
+        store: DiagnosticsStore,
+        onJump: @escaping (DiagnosticsStore.Problem) -> Void,
+        onClose: @escaping () -> Void
+    ) {
         self.store = store
         self.onJump = onJump
+        self.onClose = onClose
         super.init(nibName: nil, bundle: nil)
         store.onChange = { [weak self] in self?.rebuild() }
         rebuild()
@@ -36,6 +42,18 @@ final class ProblemsPanelController: NSViewController {
         title.font = .systemFont(ofSize: 11, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(title)
+
+        let closeButton = NSButton()
+        closeButton.image = NSImage(
+            systemSymbolName: "xmark",
+            accessibilityDescription: "Close problems panel"
+        )?.withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+        closeButton.isBordered = false
+        closeButton.contentTintColor = .secondaryLabelColor
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(closeButton)
 
         countsLabel.font = .systemFont(ofSize: 11)
         countsLabel.textColor = .secondaryLabelColor
@@ -75,8 +93,13 @@ final class ProblemsPanelController: NSViewController {
             title.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             title.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
 
+            closeButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
+            closeButton.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 20),
+            closeButton.heightAnchor.constraint(equalToConstant: 20),
+
             countsLabel.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
-            countsLabel.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            countsLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
             countsLabel.centerYAnchor.constraint(equalTo: title.centerYAnchor),
 
             separator.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
@@ -99,6 +122,10 @@ final class ProblemsPanelController: NSViewController {
         view = root
     }
 
+    @objc private func closeClicked() {
+        onClose()
+    }
+
     private func rebuild() {
         problems = store.problems
         countsLabel.stringValue = Self.countsText(problems)
@@ -107,11 +134,20 @@ final class ProblemsPanelController: NSViewController {
     }
 
     private static func countsText(_ problems: [DiagnosticsStore.Problem]) -> String {
-        let errors = problems.filter { $0.diagnostic.severity == .error }.count
-        let warnings = problems.count - errors
-        var parts: [String] = []
-        if errors > 0 { parts.append(errors == 1 ? "1 error" : "\(errors) errors") }
-        if warnings > 0 { parts.append(warnings == 1 ? "1 warning" : "\(warnings) warnings") }
+        var counts = [NvimDiagnostic.Severity: Int]()
+        for problem in problems {
+            counts[problem.diagnostic.severity, default: 0] += 1
+        }
+        func part(_ n: Int, _ singular: String, _ plural: String) -> String? {
+            guard n > 0 else { return nil }
+            return n == 1 ? "1 \(singular)" : "\(n) \(plural)"
+        }
+        let parts = [
+            part(counts[.error] ?? 0, "error", "errors"),
+            part(counts[.warning] ?? 0, "warning", "warnings"),
+            part(counts[.info] ?? 0, "info", "info"),
+            part(counts[.hint] ?? 0, "hint", "hints"),
+        ].compactMap { $0 }
         return parts.joined(separator: ", ")
     }
 
@@ -164,6 +200,10 @@ extension ProblemsPanelController: NSTableViewDataSource, NSTableViewDelegate {
         message.translatesAutoresizingMaskIntoConstraints = false
         // The message gives way first so a long location never pushes it out.
         message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Info and hint rows read dimmed, Xcode-style.
+        message.textColor = diagnostic.severity == .info || diagnostic.severity == .hint
+            ? .secondaryLabelColor
+            : .labelColor
         cell.addSubview(message)
 
         let location = NSTextField(labelWithString: Self.locationText(problem))
