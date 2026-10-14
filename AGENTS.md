@@ -15,7 +15,9 @@ Key facts from `iNeovim.xcodeproj/project.pbxproj`:
 
 - **Platform:** macOS only (`SUPPORTED_PLATFORMS = macosx`, `SUPPORTS_MACCATALYST = NO`).
   The iOS-orientation keys in the target settings are unused template leftovers.
-- **Deployment target:** macOS 14.6 (`MACOSX_DEPLOYMENT_TARGET = 14.6`).
+- **Deployment target:** macOS 14 (`MACOSX_DEPLOYMENT_TARGET =
+  "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)"`, which the macOS 27 SDK resolves to
+  14.0; the `iNeovimTests` target still pins 14.6).
 - **Created with:** Xcode 26.3 (`CreatedOnToolsVersion = 26.3`).
 - **Swift:** `SWIFT_VERSION = 5.0`, approachable concurrency enabled
   (`SWIFT_APPROACHABLE_CONCURRENCY = YES`), default actor isolation is `MainActor`
@@ -439,7 +441,16 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   toggle
   "Open :terminal in native pane" only gates the cmdline interception
   (mappings/plugins/RPC `:terminal` bypass `sendKeys` and keep nvim's
-  in-buffer terminal, exactly like the fzf gate's known edges).
+  in-buffer terminal, exactly like the fzf gate's known edges). GhosttySupport
+  is a **dynamic** package product (`Package.swift` keeps it dynamic so the app
+  and the XCTest bundle share one copy of libghostty's global state), so the
+  app target's "Embed Frameworks" copy phase must keep it: publishing the
+  product into `Contents/Frameworks` is the only thing that makes
+  `@rpath/GhosttySupport.framework/…` resolvable. Running from Xcode hides a
+  missing embed phase (the run action injects `DYLD_FRAMEWORK_PATH`, pointing
+  at `$(BUILT_PRODUCTS_DIR)/PackageFrameworks`), and the symptom of losing it
+  is a dyld abort at launch — before `main` — on the exported app: "Library
+  not loaded: @rpath/GhosttySupport.framework/Versions/A/GhosttySupport".
 - **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
   (`ext_multigrid` off). All redraw and grid handling must still carry grid
   IDs from day one — event cases take a `grid` identifier and grid state is

@@ -66,7 +66,14 @@ xcrun stapler staple build/export/iNeovim.app
 ```
 spctl -a -vvv -t exec build/export/iNeovim.app   # expect "accepted, source=Notarized Developer ID"
 xcrun stapler validate build/export/iNeovim.app
+ls build/export/iNeovim.app/Contents/Frameworks   # expect GhosttySupport.framework
 ```
+
+The last check guards the failure that build 2 shipped with: `GhosttySupport`
+is a dynamic package product and nothing copies it into the bundle unless the
+app target keeps its "Embed Frameworks" phase, so the app dies in dyld at
+launch ("Library not loaded: @rpath/GhosttySupport.framework/…") even though
+it ran fine from Xcode.
 
 Optionally package a DMG for distribution:
 
