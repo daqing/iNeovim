@@ -72,6 +72,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── FontMetrics.swift     NSFont → cell size/ascent/baseline metrics
 │   ├── CellRenderer.swift    grid rows → styled runs for CTLine shaping
 │   ├── GridContentLayer.swift  cells/cursor/preedit in a scrollable CALayer
+│   │                           (one row slice per layer: the scrolling
+│   │                           region and the frozen footer)
 │   ├── TerminalView.swift    layer-backed NSView hosting the content layer
 │   ├── CompletionPanelView.swift  native ext_popupmenu completion list
 │   ├── DiagnosticPopover.swift  native vim.diagnostic popover for gutter clicks
@@ -223,8 +225,8 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   subtract the inset, and row↔y math everywhere goes through
   `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent.
 - **Full-width statusline bar:** the statusline row (the one above the cmdline
-  row) gets a backdrop layer (`TerminalView.statuslineLayer`, below the
-  content layer) filled with the OPPOSITE theme mode's default background — a
+  row) gets a backdrop layer (`TerminalView.statuslineLayer`, below the grid
+  layers) filled with the OPPOSITE theme mode's default background — a
   dark editor draws the light default (#E0E2EA), a light editor the dark
   default (#14161B), probed from nvim 0.12.5's built-in colorscheme — from
   window edge to window edge, so the bar runs full width while the cells stay
@@ -232,15 +234,34 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   is nearly indistinguishable from the editor background (monokai pro dark:
   #2E323C on #26292C). The bar composites at 75% opacity
   (`TerminalView.statuslineBarOpacity`), blending toward the editor background
-  — the user found the full-strength inversion glaring at night. The content
-  layer skips per-run background fills on
-  that row and draws its text in the opposite mode's default foreground — the
-  theme's statusline text matches its editor background and would vanish on
-  the inverted bar. An unknown nvim background (nil) follows the window
-  appearance. `updateStatuslineLayer()` keeps its frame/color in sync from the
-  flush, initial-snapshot, metrics-, resize-, and appearance-change paths;
-  like the cmdline gap it assumes the last row is the cmdline area and the row
-  above it the statusline (`laststatus` >= 2, `cmdheight` 1).
+  — the user found the full-strength inversion glaring at night. The footer
+  layer skips per-run background fills on that row and draws its text in the
+  opposite mode's default foreground — the theme's statusline text matches its
+  editor background and would vanish on the inverted bar. An unknown nvim
+  background (nil) follows the window appearance. `updateStatuslineLayer()`
+  keeps its frame/color in sync from the flush, initial-snapshot, metrics-,
+  resize-, and appearance-change paths; like the cmdline gap it assumes the
+  last row is the cmdline area and the row above it the statusline
+  (`laststatus` >= 2, `cmdheight` 1).
+- **Frozen footer (statusline + cmdline rows):** nvim never scrolls the last
+  two rows, so the app must not either. The grid is therefore drawn as two
+  `GridContentLayer`s — the scrolling region (`.head(excludingTrailing:
+  TerminalView.frozenFooterRows)`) and the frozen footer (`.tail(count:)`),
+  which share one snapshot and split `CellRect` invalidations by row — and
+  only the scrolling region takes the scroll lead's transform. The scrolling
+  region lives inside `scrollClipLayer` (`masksToBounds`), because a lead that
+  moves it *down* would otherwise paint the last text rows over the statusline
+  bar; the clip band ends exactly where the footer begins. Doing this in one
+  layer (the original design) dragged the statusline text off its bar mid-drag
+  while the sibling bar stayed put, which read as a style error. Because both
+  layers keep grid coordinates internally (`GridRowSlice` + `sliceOriginY`),
+  the cursor, the IME preedit, and the cursor glide were re-routed by row
+  (`TerminalView.cursorLayer`) but their geometry math is unchanged; the
+  footer is positioned by `updateFooterGeometry()`, which every snapshot,
+  metrics, resize, and appearance path calls next to `updateStatuslineLayer()`.
+  At most a sub-cell band of blank background opens between the last text row
+  and the footer while the lead lasts — the same sub-line blank the top edge
+  shows, and the price of leading Neovim at all (T7.4).
 - **RPC read path:** nvim's stdout is drained by a dedicated blocking-read
   thread (POSIX `read(2)` loop → `AsyncStream<Data>` → a single consumer task
   feeding `RPCSession.feed`), **not** by `FileHandle.readabilityHandler` (can
@@ -468,7 +489,9 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   where nothing is ever confirmed — and the content then moves with Neovim's
   confirmations alone until a confirmation proves the backlog is gone.
   Deltas are never dropped: the old cap throttled requests past it, which made
-  the content fall behind the wheel *and* left up to a screen of blank.
+  the content fall behind the wheel *and* left up to a screen of blank. The
+  lead translates the scrolling grid layer only — never the frozen footer, and
+  never past the clip band above it (see "Frozen footer" above).
 - **Animation pacing (T7.6):** all easing is time-based (elapsed/duration,
   sampled from `CVDisplayLink` frame timestamps), so animation speed is
   identical at 60 Hz and 120 Hz ProMotion; ProMotion just samples the curve

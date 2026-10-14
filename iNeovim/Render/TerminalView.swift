@@ -17,6 +17,11 @@ final class TerminalView: NSView {
     /// statusline.
     static let cmdlineGap: CGFloat = 5
 
+    /// Grid rows nvim never scrolls: the statusline row and the cmdline row
+    /// below it. They are drawn by the frozen footer layer, which the scroll
+    /// lead never translates — nvim does not scroll them either.
+    static let frozenFooterRows = 2
+
     /// View size minus the content inset on both sides and the cmdline gap:
     /// the area the grid (rows plus gap) may occupy. Grid cell counts must
     /// always be derived from this, never from the raw bounds, or the grid
@@ -110,9 +115,20 @@ final class TerminalView: NSView {
     /// Overlay fading the previous theme's rendering out during a light↔dark
     /// flip seen in place (see `crossfadeThemeTransition`).
     private var themeCrossfadeView: NSView?
+    /// The scrolling region: the grid rows above the frozen footer, drawn in
+    /// a layer the scroll lead translates inside `scrollClipLayer`.
     private let contentLayer: GridContentLayer
+    /// The grid rows nvim never scrolls — the statusline row and the
+    /// cmdline/message row below it — in a layer of their own. Only the
+    /// scrolling region takes the scroll lead, so the statusline text stays
+    /// on its bar instead of sliding off it mid-gesture.
+    private let footerLayer: GridContentLayer
+    /// Clips the scrolling region to the rows above the frozen footer: the
+    /// lead translates that layer, and without this clip a downward lead
+    /// would draw the last text rows over the statusline bar.
+    private let scrollClipLayer = CALayer()
     /// Backdrop painting the statusline row with the opposite theme mode's
-    /// default background, stretched to the window edges. The content layer
+    /// default background, stretched to the window edges. The footer layer
     /// keeps that row's cells transparent, so the backdrop shows across the
     /// whole row; the side bands are the part the grid itself can't reach.
     private let statuslineLayer = CALayer()
@@ -143,6 +159,11 @@ final class TerminalView: NSView {
     }
     /// Whether a typed `:terminal` opens the native pane; from settings.
     var nativeTerminalPaneEnabled = true
+
+    /// Both grid layers: the scrolling region and the frozen footer. They are
+    /// fed the same snapshot so the split stays invisible; only the scrolling
+    /// region is translated by the scroll lead.
+    private var gridLayers: [GridContentLayer] { [contentLayer, footerLayer] }
 
     /// Apply user settings: font metrics, input switches, and animation
     /// toggles. Changing the font reflows the grid at the new cell size.
@@ -199,11 +220,14 @@ final class TerminalView: NSView {
 
     private func applyMetrics(_ newMetrics: FontMetrics) {
         metrics = newMetrics
-        contentLayer.updateMetrics(newMetrics)
-        if let snapshot {
-            contentLayer.update(snapshot: snapshot)
+        for gridLayer in gridLayers {
+            gridLayer.updateMetrics(newMetrics)
+            if let snapshot {
+                gridLayer.update(snapshot: snapshot)
+            }
+            gridLayer.setNeedsDisplay()
         }
-        contentLayer.setNeedsDisplay()
+        updateFooterGeometry()
         updateStatuslineLayer()
         updateCompletionPanel()
         let size = bounds.size
@@ -224,6 +248,7 @@ final class TerminalView: NSView {
         self.model = model
         self.metrics = metrics
         self.contentLayer = GridContentLayer(metrics: metrics)
+        self.footerLayer = GridContentLayer(metrics: metrics)
         self.mouseHandler = MouseHandler(dispatcher: model.inputDispatcher)
         self.scrollController = ScrollController(dispatcher: model.inputDispatcher)
         self.resizeController = ResizeController(cellSize: metrics.cellSize, client: model.client)
@@ -237,17 +262,25 @@ final class TerminalView: NSView {
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layer?.masksToBounds = true
-        // Anchor the content layer's top-left to the inset origin. Its own
-        // bounds grow to the full grid (for scrolling); without this the layer
-        // is centered on the origin and clipped out of view.
+        // Anchor the scrolling region's top-left to the inset origin, inside
+        // the clip layer that bounds it to the rows above the frozen footer.
+        // Without the anchor the layer is centered on its origin and clipped
+        // out of view; the footer layer is placed by `updateFooterGeometry`
+        // from the grid height.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        contentLayer.rowSlice = .head(excludingTrailing: Self.frozenFooterRows)
+        footerLayer.rowSlice = .tail(count: Self.frozenFooterRows)
         contentLayer.anchorPoint = .zero
-        contentLayer.position = CGPoint(x: Self.contentInset, y: Self.contentInset)
+        contentLayer.position = .zero
+        footerLayer.anchorPoint = .zero
+        scrollClipLayer.masksToBounds = true
         CATransaction.commit()
         statuslineLayer.opacity = Self.statuslineBarOpacity
         layer?.addSublayer(statuslineLayer)
-        layer?.addSublayer(contentLayer)
+        layer?.addSublayer(scrollClipLayer)
+        scrollClipLayer.addSublayer(contentLayer)
+        layer?.addSublayer(footerLayer)
         completionPanel.onSelect = { [weak self] index in
             guard let self else { return }
             Task { try? await self.model.client.selectPopupmenuItem(index) }
@@ -275,7 +308,12 @@ final class TerminalView: NSView {
         }
         cursorAnimator.onUpdate = { [weak self] in
             guard let self else { return }
-            self.contentLayer.cursorGlideOffset = self.cursorAnimator.offset
+            // The cursor glides across the footer boundary when `:` moves it
+            // into the cmdline row, so both layers carry the offset; only the
+            // layer drawing the cursor uses it.
+            let offset = self.cursorAnimator.offset
+            self.contentLayer.cursorGlideOffset = offset
+            self.footerLayer.cursorGlideOffset = offset
         }
         imeHandler.onMarkedTextChange = { [weak self] in
             self?.invalidatePreeditRegion()
@@ -552,27 +590,51 @@ final class TerminalView: NSView {
 
     /// View-space rect for a character range of the marked text, anchored at
     /// the cursor cell and wide as the covered cells, plus the content inset
-    /// and the live scroll offset. IME candidate windows anchor to this (see
-    /// `firstRect(forCharacterRange:)`).
+    /// and the live scroll offset (the frozen footer is not translated, so a
+    /// cursor in the cmdline row anchors at the statusline row instead). IME
+    /// candidate windows anchor to this (see `firstRect(forCharacterRange:)`).
     func preeditRect(forCharacterRange range: NSRange) -> CGRect {
-        preeditLayerRect(forCharacterRange: range)
-            .offsetBy(
-                dx: Self.contentInset,
-                dy: Self.contentInset + scrollAnimator.presentationOffset
-            )
+        guard let (layer, rect) = preeditLayerRect(forCharacterRange: range) else { return .zero }
+        return rect.offsetBy(dx: Self.contentInset, dy: layerOriginY(layer))
     }
 
-    private func preeditLayerRect(forCharacterRange range: NSRange) -> CGRect {
-        guard imeHandler.hasMarkedText, let anchor = contentLayer.cursorAnchorRect() else { return .zero }
+    /// The layer drawing the marked text plus the preedit rect within it; nil
+    /// when there is nothing to anchor to.
+    private func preeditLayerRect(forCharacterRange range: NSRange) -> (GridContentLayer, CGRect)? {
+        guard imeHandler.hasMarkedText, let host = cursorHost() else { return nil }
+        let anchor = host.rect
         let cellWidth = metrics.cellSize.width
         let start = Self.cellOffset(of: imeHandler.markedText, upToUTF16: range.location)
         let end = Self.cellOffset(of: imeHandler.markedText, upToUTF16: range.location + range.length)
-        return CGRect(
+        return (host.layer, CGRect(
             x: anchor.minX + CGFloat(start) * cellWidth,
             y: anchor.minY,
             width: CGFloat(max(end - start, 1)) * cellWidth,
             height: anchor.height
-        )
+        ))
+    }
+
+    /// The layer drawing the cursor and the cursor's rect within it, so the
+    /// preedit is drawn by whichever layer owns the cursor's row.
+    private func cursorHost() -> (layer: GridContentLayer, rect: CGRect)? {
+        guard let snapshot, let grid = snapshot.grid, !grid.isEmpty else { return nil }
+        let layer = cursorLayer(for: snapshot.cursor, in: snapshot)
+        guard let rect = layer.cursorAnchorRect() else { return nil }
+        return (layer, rect)
+    }
+
+    /// The layer that draws a cursor: the frozen footer owns the rows nvim
+    /// never scrolls, everything above lives in the scrolling region.
+    private func cursorLayer(for cursor: CursorState, in snapshot: ScreenSnapshot) -> GridContentLayer {
+        let footerStart = max(0, (snapshot.grid?.height ?? 0) - Self.frozenFooterRows)
+        return cursor.row >= footerStart ? footerLayer : contentLayer
+    }
+
+    /// View-space y of a grid layer's local origin: the scrolling region sits
+    /// under the live scroll lead, the frozen footer is never translated.
+    private func layerOriginY(_ layer: GridContentLayer) -> CGFloat {
+        let gridOrigin = layer === footerLayer ? footerLayer.sliceOriginY : scrollAnimator.presentationOffset
+        return Self.contentInset + gridOrigin
     }
 
     /// Display width in cells for preedit text: wide characters take two,
@@ -595,7 +657,10 @@ final class TerminalView: NSView {
         return cells
     }
 
-    private var lastPreeditRect: CGRect?
+    /// Where the marked text was last drawn and in which layer, so clearing
+    /// it repaints the layer that drew it — the preedit follows the cursor,
+    /// which can move between the scrolling region and the cmdline row.
+    private var lastPreedit: (layer: GridContentLayer, rect: CGRect)?
 
     /// Live grid dimensions for input translation (mouse cell coordinates).
     var gridDimensions: (width: Int, height: Int)? {
@@ -678,18 +743,31 @@ final class TerminalView: NSView {
     }
 
     private func invalidatePreeditRegion() {
-        let rect = preeditLayerRect(forCharacterRange: NSRange(
-            location: 0,
-            length: imeHandler.markedText.utf16.count
-        ))
+        let previous = lastPreedit
+        lastPreedit = nil
+        for gridLayer in gridLayers { gridLayer.preedit = nil }
+        guard imeHandler.hasMarkedText,
+              let (layer, rect) = preeditLayerRect(forCharacterRange: NSRange(
+                  location: 0,
+                  length: imeHandler.markedText.utf16.count
+              )) else {
+            if let previous { previous.layer.setNeedsDisplay(previous.rect) }
+            return
+        }
+        layer.preedit = GridContentLayer.Preedit(
+            text: imeHandler.markedText,
+            selection: imeHandler.markedSelection
+        )
         var dirty = rect
-        if let lastPreeditRect { dirty = dirty.union(lastPreeditRect) }
-        lastPreeditRect = imeHandler.hasMarkedText ? rect : nil
-        contentLayer.preedit = imeHandler.hasMarkedText
-            ? GridContentLayer.Preedit(text: imeHandler.markedText, selection: imeHandler.markedSelection)
-            : nil
-        guard !dirty.isEmpty else { return }
-        contentLayer.setNeedsDisplay(dirty)
+        if let previous {
+            if previous.layer === layer {
+                dirty = dirty.union(previous.rect)
+            } else {
+                previous.layer.setNeedsDisplay(previous.rect)
+            }
+        }
+        layer.setNeedsDisplay(dirty)
+        lastPreedit = (layer, rect)
     }
 
     override func viewDidMoveToWindow() {
@@ -697,7 +775,12 @@ final class TerminalView: NSView {
         updateContentsScale()
         if snapshot == nil {
             connectScreen()
-        }        // Take focus so typing reaches the editor without requiring a click.
+        }
+        // Place the grid layers before anything can draw: an empty clip layer
+        // would hide the scrolling region entirely, and the snapshot may have
+        // arrived while this view was not yet in a window.
+        updateFooterGeometry()
+        // Take focus so typing reaches the editor without requiring a click.
         // Re-assert on the next main-actor turn in case SwiftUI restores focus
         // to another control while the window is being laid out.
         if let window {
@@ -750,19 +833,23 @@ final class TerminalView: NSView {
         // Fallback colors follow the system appearance; repaint so cells
         // drawn with nvim-packed colors keep showing through where set.
         refreshBackgroundColor()
+        updateFooterGeometry()
         updateStatuslineLayer()
-        contentLayer.setNeedsDisplay()
+        for gridLayer in gridLayers { gridLayer.setNeedsDisplay() }
     }
 
     private func updateContentsScale() {
         layer?.contentsScale = backingScale
-        contentLayer.contentsScale = backingScale
-        contentLayer.setNeedsDisplay()
+        for gridLayer in gridLayers {
+            gridLayer.contentsScale = backingScale
+            gridLayer.setNeedsDisplay()
+        }
     }
 
     override func setFrameSize(_ newSize: CGSize) {
         super.setFrameSize(newSize)
         requestResize(to: newSize)
+        updateFooterGeometry()
         updateStatuslineLayer()
         updateCompletionPanel()
         positionOpenQuicklyPanel()
@@ -786,8 +873,11 @@ final class TerminalView: NSView {
                     self.updateCursorGlide(previous: previous, next: snapshot)
                     self.crossfadeThemeTransition(from: previous, to: snapshot)
                     self.snapshot = snapshot
-                    self.contentLayer.update(snapshot: snapshot)
-                    self.contentLayer.invalidate(cellRects: cellRects)
+                    for gridLayer in self.gridLayers {
+                        gridLayer.update(snapshot: snapshot)
+                        gridLayer.invalidate(cellRects: cellRects)
+                    }
+                    self.updateFooterGeometry()
                     self.refreshBackgroundColor()
                     self.updateStatuslineLayer()
                     self.updateCompletionPanel()
@@ -806,8 +896,11 @@ final class TerminalView: NSView {
             let snapshot = await screen.snapshot()
             guard snapshot.grid != nil else { return }
             self.snapshot = snapshot
-            self.contentLayer.update(snapshot: snapshot)
-            self.contentLayer.setNeedsDisplay()
+            for gridLayer in self.gridLayers {
+                gridLayer.update(snapshot: snapshot)
+                gridLayer.setNeedsDisplay()
+            }
+            self.updateFooterGeometry()
             self.refreshBackgroundColor()
             self.updateStatuslineLayer()
             self.updateCompletionPanel()
@@ -846,15 +939,41 @@ final class TerminalView: NSView {
         return resolved ?? NSColor.textBackgroundColor.cgColor
     }
 
+    /// Place the two grid layers: the clip container spans the rows the
+    /// scroll lead moves (everything above the statusline row) and the frozen
+    /// footer sits at the statusline row's top edge, so its rows land exactly
+    /// where the grid puts them.
+    private func updateFooterGeometry() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let grid = snapshot?.grid, !grid.isEmpty else {
+            scrollClipLayer.frame = .zero
+            return
+        }
+        let cellHeight = metrics.cellSize.height
+        let footerStart = max(0, grid.height - Self.frozenFooterRows)
+        let footerTop = Self.gridRowY(
+            footerStart, gridHeight: grid.height, cellHeight: cellHeight
+        )
+        scrollClipLayer.frame = CGRect(
+            x: Self.contentInset,
+            y: Self.contentInset,
+            width: CGFloat(grid.width) * metrics.cellSize.width,
+            height: footerTop
+        )
+        footerLayer.position = CGPoint(x: Self.contentInset, y: Self.contentInset + footerTop)
+    }
+
     /// Paint the statusline row with the opposite theme mode's default
     /// background, stretched to the full window width: themes pick statusline
     /// backgrounds nearly identical to the editor background (monokai pro
     /// dark: #2E323C on #26292C), so the row itself can't be told apart. The
     /// row above the last grid row is the statusline — the same layout the
     /// cmdline gap assumes (last row = cmdline area, `laststatus` >= 2). The
-    /// layer sits below the content layer, whose statusline-row cells stay
+    /// layer sits below the footer layer, whose statusline-row cells stay
     /// transparent so this fill shows through; the edges are snapped to the
-    /// same pixels the content layer snaps its fills to.
+    /// same pixels the grid layers snap their fills to.
     private func updateStatuslineLayer() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -991,7 +1110,7 @@ final class TerminalView: NSView {
               let grid = next.grid,
               next.cursor.row >= 0, next.cursor.row < grid.height,
               next.cursor.col >= 0, next.cursor.col < grid.width,
-              let oldRect = contentLayer.cursorAnchorRect() else {
+              let oldRect = cursorLayer(for: previous.cursor, in: previous).cursorGridRect() else {
             return
         }
         let cellSize = metrics.cellSize

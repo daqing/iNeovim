@@ -67,7 +67,8 @@ iNeovim 嵌入一个 Neovim 实例并实现其 GUI 协议:
   - 触控板的 delta 与阶段(`NSEventPhase` began/changed/ended/momentum)
     直接驱动滚动;传统滚轮的动量由 GUI 补出。
   - 网格内容放在一个 `CALayer` 中,像素偏移由 `CADisplayLink` 驱动的动画
-    更新——纯视觉层,不触碰 Neovim。
+    更新——纯视觉层,不触碰 Neovim。状态栏行与命令行行不参与这个偏移:
+    Neovim 从不滚动它们,所以它们单独放在一个不平移的图层里。
   - 累积的像素 delta 折算成整行发给 Neovim;`grid_scroll` 事件到达时更新
     网格内容。偏移做限幅(最多领先一屏),快速滚动不会越过内容滚出空白。
   - 光标移动用短动画(~50–100ms)插值滑动,而不是瞬移跳变。

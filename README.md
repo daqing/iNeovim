@@ -84,6 +84,8 @@ iNeovim embeds a Neovim instance and implements the GUI protocol:
     synthesized by the GUI.
   - Grid content lives in a `CALayer` whose pixel offset is animated by a
     `CADisplayLink`-driven animator — purely visual, never touching Neovim.
+    The statusline and cmdline rows are excluded from that offset: Neovim
+    never scrolls them, so they sit in their own untranslated layer.
   - Accumulated pixel deltas are converted to whole lines and sent to Neovim;
     incoming `grid_scroll` events update the grid content. The offset is
     clamped (at most one screen ahead) so fast scrolling never runs past the

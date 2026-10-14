@@ -2,9 +2,36 @@ import AppKit
 import CoreText
 import os
 
-/// The scrollable grid surface: owns drawing of the cells, the cursor, and
-/// the IME preedit, so the animator can translate the whole content while
-/// the view behind it keeps painting the background.
+/// A slice of the grid for one content layer. The terminal splits its grid
+/// in two so the trailing rows Neovim never scrolls — the statusline and the
+/// cmdline/message row — can live in a layer the scroll lead does not
+/// translate; both slices are drawn by `GridContentLayer`.
+enum GridRowSlice: Equatable {
+    /// Every row, for a layer that owns the whole grid.
+    case all
+    /// The rows above the trailing `count` (the scrolling region).
+    case head(excludingTrailing: Int)
+    /// The last `count` rows (the frozen footer).
+    case tail(count: Int)
+
+    /// The grid rows this slice covers in a grid `gridHeight` rows tall.
+    func range(gridHeight: Int) -> Range<Int> {
+        switch self {
+        case .all:
+            return 0..<max(0, gridHeight)
+        case .head(let trailing):
+            return 0..<max(0, gridHeight - trailing)
+        case .tail(let count):
+            return max(0, gridHeight - count)..<max(0, gridHeight)
+        }
+    }
+}
+
+/// The grid surface: owns drawing of the cells, the cursor, and the IME
+/// preedit, so the animator can translate the scrollable rows while the view
+/// behind it keeps painting the background. Which rows it draws is
+/// `rowSlice`, so the same class serves the scrolling region and the frozen
+/// footer as two layers.
 final class GridContentLayer: CALayer {
     struct Preedit: Equatable {
         var text: String
@@ -13,6 +40,8 @@ final class GridContentLayer: CALayer {
 
     private(set) var snapshot: ScreenSnapshot?
     private(set) var metrics: FontMetrics
+    /// The rows this layer draws; `all` for a layer that owns the whole grid.
+    var rowSlice: GridRowSlice = .all
     private var fonts: FontVariants
     var preedit: Preedit?
     var cursorVisible = true {
@@ -62,6 +91,7 @@ final class GridContentLayer: CALayer {
         super.init(layer: layer)
         if let source {
             snapshot = source.snapshot
+            rowSlice = source.rowSlice
             preedit = source.preedit
             cursorVisible = source.cursorVisible
             cursorGlideOffset = source.cursorGlideOffset
@@ -73,10 +103,17 @@ final class GridContentLayer: CALayer {
     func update(snapshot: ScreenSnapshot) {
         self.snapshot = snapshot
         let size: CGSize
-        if let grid = snapshot.grid, !grid.isEmpty {
+        if let grid = snapshot.grid, !grid.isEmpty, !sliceRange.isEmpty {
+            let cellHeight = metrics.cellSize.height
+            let top = TerminalView.gridRowY(
+                sliceRange.lowerBound, gridHeight: grid.height, cellHeight: cellHeight
+            )
+            let bottom = TerminalView.gridRowY(
+                sliceRange.upperBound - 1, gridHeight: grid.height, cellHeight: cellHeight
+            ) + cellHeight
             size = CGSize(
                 width: CGFloat(grid.width) * metrics.cellSize.width,
-                height: CGFloat(grid.height) * metrics.cellSize.height + TerminalView.cmdlineGap
+                height: bottom - top
             )
         } else {
             size = .zero
@@ -99,11 +136,14 @@ final class GridContentLayer: CALayer {
         setNeedsDisplay()
     }
 
-    /// Mark one or more cell-coordinate regions dirty.
+    /// Mark one or more cell-coordinate regions dirty. A flush covers the
+    /// whole grid, so each rect is clipped to this layer's slice and a rect
+    /// that lies entirely outside it is dropped.
     func invalidate(cellRects: [CellRect]) {
-        guard !cellRects.isEmpty else { return }
-        pendingCellRects.append(contentsOf: cellRects)
-        for rect in cellRects {
+        let mine = cellRects.compactMap(clipped(toSlice:))
+        guard !mine.isEmpty else { return }
+        pendingCellRects.append(contentsOf: mine)
+        for rect in mine {
             setNeedsDisplay(snappedToPixels(pixelRect(for: rect)))
         }
     }
@@ -121,11 +161,20 @@ final class GridContentLayer: CALayer {
     }
 
     /// Layer-space rect of the cursor cell (including any glide offset);
-    /// the preedit anchors to it.
+    /// the preedit anchors to it. Nil when the cursor's row is not in this
+    /// layer's slice, which is how the layer that keeps the other rows skips
+    /// drawing it.
     func cursorAnchorRect() -> CGRect? {
         cursorCellRect().map {
             $0.offsetBy(dx: cursorGlideOffset.width, dy: cursorGlideOffset.height)
         }
+    }
+
+    /// The same rect in grid coordinates: the slice origin is added back so
+    /// the cursor glide can cross the footer boundary (pressing `:` moves the
+    /// cursor from the text area into the cmdline row).
+    func cursorGridRect() -> CGRect? {
+        cursorAnchorRect()?.offsetBy(dx: 0, dy: sliceOriginY)
     }
 
     override func draw(in context: CGContext) {
@@ -149,9 +198,11 @@ final class GridContentLayer: CALayer {
 
         let minY = dirtyRects.map(\.minY).min() ?? 0
         let maxY = dirtyRects.map(\.maxY).max() ?? 0
-        let firstRow = max(0, Int(floor(minY / cellHeight)))
-        let lastRow = min(grid.height - 1, Int(floor(maxY / cellHeight)))
-        guard firstRow <= lastRow else { return }
+        // Rows of this layer's slice that overlap the dirty band. Testing the
+        // rows instead of dividing y by the cell height keeps rows clear of
+        // the cmdline gap — the last row sits that gap lower than its slot.
+        let rows = sliceRange.filter { rowY($0) < maxY && rowY($0) + cellHeight > minY }
+        guard !rows.isEmpty else { return }
         let dirtyBounds = CGRect(x: clip.minX, y: minY, width: clip.width, height: maxY - minY)
 
         // Resolve each highlight id once per frame instead of once per run.
@@ -164,7 +215,7 @@ final class GridContentLayer: CALayer {
         let statuslineText = TerminalView.statuslineColors(
             themeIsDark: TerminalView.hasDarkBackground(snapshot.defaultBackground)
         ).foreground
-        for row in firstRow...lastRow {
+        for row in rows {
             let runs = CellRenderer.runs(forRow: grid.rowSlice(row))
 
             // Background pass, in layer coordinates (y down). Runs without an
@@ -207,13 +258,40 @@ final class GridContentLayer: CALayer {
 
     /// Y of a row's top edge in layer space; the last row (cmdline/message
     /// area) is shifted down by the cmdline gap. Every row-positioning math
-    /// in the layer must go through this so the gap stays consistent.
+    /// in the layer must go through this so the gap stays consistent. A
+    /// slice other than the whole grid starts at its own origin.
     private func rowY(_ row: Int) -> CGFloat {
         TerminalView.gridRowY(
             row,
-            gridHeight: snapshot?.grid?.height ?? 0,
+            gridHeight: gridHeight,
+            cellHeight: metrics.cellSize.height
+        ) - sliceOriginY
+    }
+
+    private var gridHeight: Int { snapshot?.grid?.height ?? 0 }
+
+    private var sliceRange: Range<Int> { rowSlice.range(gridHeight: gridHeight) }
+
+    /// Grid-space y of the slice's first row's top edge: zero for the
+    /// scrolling region, the statusline row's y for the frozen footer. The
+    /// terminal places the layer with it, so the rows land where the grid
+    /// puts them.
+    var sliceOriginY: CGFloat {
+        guard !sliceRange.isEmpty else { return 0 }
+        return TerminalView.gridRowY(
+            sliceRange.lowerBound,
+            gridHeight: gridHeight,
             cellHeight: metrics.cellSize.height
         )
+    }
+
+    /// The part of a cell rect inside this layer's slice; nil when the rect
+    /// lies entirely outside it.
+    private func clipped(toSlice rect: CellRect) -> CellRect? {
+        let minRow = max(rect.minRow, sliceRange.lowerBound)
+        let maxRow = min(rect.maxRow, sliceRange.upperBound)
+        guard minRow < maxRow else { return nil }
+        return CellRect(minRow: minRow, minCol: rect.minCol, maxRow: maxRow, maxCol: rect.maxCol)
     }
 
     private func pixelRect(for cellRect: CellRect) -> CGRect {
@@ -386,7 +464,7 @@ final class GridContentLayer: CALayer {
     private func cursorCellRect() -> CGRect? {
         guard let snapshot, let grid = snapshot.grid,
               snapshot.cursor.grid == 1,
-              snapshot.cursor.row >= 0, snapshot.cursor.row < grid.height,
+              sliceRange.contains(snapshot.cursor.row),
               snapshot.cursor.col >= 0, snapshot.cursor.col < grid.width else {
             return nil
         }

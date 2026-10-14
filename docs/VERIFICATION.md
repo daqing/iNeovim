@@ -91,6 +91,27 @@ aligned.
   gutter cell on a clean line behaves exactly like before (the click reaches
   nvim, e.g. it toggles a fold when a fold column is present).
 
+## Smooth scrolling and the frozen footer
+
+Neovim never scrolls the statusline and cmdline rows, so the app draws them in
+a layer the scroll lead does not translate: the grid is split into a scrolling
+region and a frozen footer (`GridContentLayer.rowSlice`), and the scrolling
+region is clipped to its own rows. Drawing the whole grid in one translated
+layer let the statusline text slide off its bar mid-gesture.
+
+Manual check in the GUI:
+
+1. Open a long file and scroll with a precision trackpad gesture that moves
+   the grid by less than one line (a slow two-finger drag).
+2. Watch the statusline row while the text above it is still moving.
+
+Expected: the statusline text and its full-width bar stay planted; at most a
+sub-cell band of blank background opens between the last text row and the
+statusline, and it closes as soon as the gesture settles. Scrolling the other
+way shows the mirror behavior (blank at the top edge, footer still planted).
+Automated check: `FrozenFooterTests` pins the row slices, the layers' tiling,
+and which layer draws a cursor in the cmdline row.
+
 ## Native terminal pane (Ghostty)
 
 A typed `:terminal` opens a native Ghostty terminal pane docked to the right
