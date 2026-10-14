@@ -44,7 +44,12 @@ final class ScrollController {
         lastModifierFlags = event.modifierFlags
 
         if event.hasPreciseScrollingDeltas {
-            if event.phase == .began || (event.momentumPhase == .began && !gestureActive) {
+            // The gesture must be open before the first delta it carries: a
+            // `began` (or momentum `began`) phase that reports no movement
+            // returns above without opening it, and a gesture opened late
+            // ignores the confirmations answering it, so the lead would grow
+            // against a stationary grid.
+            if !gestureActive || event.phase == .began || event.momentumPhase == .began {
                 beginGesture()
             }
             apply(delta: rawDelta, lineHeight: lineHeight)
@@ -75,15 +80,14 @@ final class ScrollController {
         onOffsetChange?(accumulator.offset, true)
     }
 
-    /// Cap the visual lead at one screen (or the grid content height when it
-    /// is smaller) so fast scrolling never reveals blank space.
+    /// Allow at most one cell of visual lead. Neovim only sends the visible
+    /// screenful, so a lead of a whole line already exposes undrawn space;
+    /// `ScrollAccumulator` suspends the lead entirely once a gesture wants
+    /// one, which is what a whole-line wheel step does immediately (and what
+    /// a scroll at the buffer's edge does, since nothing there is confirmed).
     private func updateLeadCap() {
         guard let view else { return }
-        let viewHeight = view.bounds.height
-        let contentHeight = view.gridDimensions.map {
-            CGFloat($0.height) * view.metrics.cellSize.height + TerminalView.cmdlineGap
-        } ?? viewHeight
-        accumulator.maxLead = max(1, min(viewHeight, contentHeight))
+        accumulator.maxLead = max(1, view.metrics.cellSize.height)
     }
 
     private func beginGesture() {
@@ -95,9 +99,18 @@ final class ScrollController {
     }
 
     private func apply(delta: CGFloat, lineHeight: CGFloat) {
+        let wasSuspended = accumulator.leadSuspended
         let requests = accumulator.addDelta(delta, lineHeight: lineHeight)
         send(requests)
-        onOffsetChange?(accumulator.offset, false)
+        if accumulator.leadSuspended {
+            // A whole-line lead (what a wheel step asks for, and what a scroll
+            // at the buffer's edge ends up wanting) is blank space Neovim has
+            // not drawn; it is given up smoothly rather than snapped, and the
+            // chase already under way is left alone.
+            if !wasSuspended { onOffsetChange?(accumulator.offset, true) }
+        } else {
+            onOffsetChange?(accumulator.offset, false)
+        }
     }
 
     private func send(_ requests: [ScrollLineRequest]) {
@@ -112,14 +125,10 @@ final class ScrollController {
         )
         let modifier = MouseHandler.modifierString(for: lastModifierFlags)
         for request in requests {
-            let button: String
-            switch request {
-            case .up: button = "wheelup"
-            case .down: button = "wheeldown"
-            }
+            let wheel = request.wheelButton
             dispatcher.send(.mouse(
-                button: button,
-                action: "press",
+                button: wheel.button,
+                action: wheel.action,
                 modifier: modifier,
                 grid: 1,
                 row: row,

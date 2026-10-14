@@ -451,11 +451,24 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 - **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
   so one wheel event scrolls exactly one line and the visual lead in
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.
+  `nvim_input_mouse` takes the wheel as button `"wheel"` with the direction as
+  the *action* (`"up"`/`"down"`); the terminfo-style `"wheelup"`/`"press"`
+  pair is rejected with `invalid button or action`, which leaves nvim
+  unscrolled while the visual lead runs ahead and then snaps back — the
+  blank-space symptom — so `ScrollLineRequest.wheelButton` owns the mapping.
   Horizontal wheel input is not sent yet (`wheelleft`/`wheelright` require
   nvim 0.10; the minimum is 0.9) — horizontal deltas are ignored for now.
-- **Scroll lead cap (T7.4):** the visual lead is clamped at one screen (or the
-  grid content height when smaller). Deltas beyond the cap are dropped rather
-  than deferred, which also throttles wheel requests to a stalled Neovim.
+- **Scroll lead limit (T7.4):** the content may lead Neovim's scroll by at
+  most one cell — the sub-line part of the gesture, which is what makes a drag
+  look smooth (`ScrollAccumulator.offset`). A single grid has no pixels beyond
+  the visible screenful, so a whole line of lead is space Neovim has not
+  painted: blank space above/below the text that stands as long as the lead
+  does. A gesture that wants one therefore has the lead suspended — a
+  whole-line wheel step immediately, and any gesture at the buffer's edge,
+  where nothing is ever confirmed — and the content then moves with Neovim's
+  confirmations alone until a confirmation proves the backlog is gone.
+  Deltas are never dropped: the old cap throttled requests past it, which made
+  the content fall behind the wheel *and* left up to a screen of blank.
 - **Animation pacing (T7.6):** all easing is time-based (elapsed/duration,
   sampled from `CVDisplayLink` frame timestamps), so animation speed is
   identical at 60 Hz and 120 Hz ProMotion; ProMotion just samples the curve
