@@ -90,6 +90,14 @@ aligned.
   `source · code`; click outside, type, or scroll to dismiss. Clicking a
   gutter cell on a clean line behaves exactly like before (the click reaches
   nvim, e.g. it toggles a fold when a fold column is present).
+- **Open a URL (⌘-click):** with a URL visible in the grid, hold ⌘ and move the
+  pointer onto it: the link is underlined and the pointer becomes a hand; move
+  off it (or release ⌘) and both revert. ⌘-click opens it in the default
+  browser; the click (and its drag/release) never reaches nvim. The URL is read
+  from the same snapshot the renderer draws, so it matches what is on screen;
+  the hit test tolerates the punctuation that typically wraps a URL in prose
+  (`(https://…)`, a trailing `.`) and clicks on the continuation cell of an
+  adjacent double-width glyph.
 
 ## Smooth scrolling and the frozen footer
 

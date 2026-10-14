@@ -148,6 +148,12 @@ final class TerminalView: NSView {
     private let scrollController: ScrollController
     let imeHandler = IMEHandler()
     private var sessionReady = false
+    /// Grid rect of the link currently underlined for ⌘-hover, nil otherwise.
+    private var hoveredLinkRect: CellRect?
+    /// Whether the pointing-hand cursor is currently set by a link hover, so
+    /// the cursor is only reset when it was ours to change.
+    private var linkCursorActive = false
+    private var hoverTrackingArea: NSTrackingArea?
     /// The view size for which a corrective resize was already attempted; a
     /// rejected request must not be repeated forever.
     private var reconciledViewSize: CGSize?
@@ -681,9 +687,114 @@ final class TerminalView: NSView {
         mouseHandler.mouseUp(event)
     }
 
+    // MARK: - Link hover
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        refreshLinkHover(
+            atViewPoint: convert(event.locationInWindow, from: nil),
+            commandHeld: event.modifierFlags.contains(.command)
+        )
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        mouseMoved(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        clearLinkHover()
+    }
+
+    /// Command pressed or released while the pointer is still: re-evaluate the
+    /// hover from the current pointer instead of waiting for a mouse move.
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        refreshLinkHoverFromPointer(commandHeld: event.modifierFlags.contains(.command))
+    }
+
     override func scrollWheel(with event: NSEvent) {
         diagnosticPopover.close()
         scrollController.scrollWheel(with: event)
+    }
+
+    // MARK: - Link opening
+
+    /// The http(s) URL rendered at a grid cell, used by ⌘-click. Read from the
+    /// same snapshot the renderer draws, so it matches what is on screen.
+    func linkTarget(atRow row: Int, col: Int) -> URL? {
+        linkHit(atRow: row, col: col)?.url
+    }
+
+    /// The URL and the cells it covers at a grid cell, or nil when the cell is
+    /// not part of an http(s) URL.
+    func linkHit(atRow row: Int, col: Int) -> LinkHit? {
+        guard let grid = snapshot?.grid, !grid.isEmpty,
+              row >= 0, row < grid.height, col >= 0, col < grid.width else { return nil }
+        return LinkDetector.hit(in: Array(grid.rowSlice(row)), column: col)
+    }
+
+    /// Underline the link under a view-space point and switch to the
+    /// pointing-hand cursor while Command is held over one; clear both
+    /// otherwise.
+    private func refreshLinkHover(atViewPoint point: CGPoint, commandHeld: Bool) {
+        var rect: CellRect?
+        if commandHeld, bounds.contains(point), let cell = gridCell(atViewPoint: point),
+           let hit = linkHit(atRow: cell.row, col: cell.col) {
+            rect = CellRect(
+                minRow: cell.row,
+                minCol: hit.columns.lowerBound,
+                maxRow: cell.row + 1,
+                maxCol: hit.columns.upperBound
+            )
+        }
+        guard rect != hoveredLinkRect else { return }
+        hoveredLinkRect = rect
+        for gridLayer in gridLayers { gridLayer.linkUnderline = rect }
+        setLinkCursor(active: rect != nil)
+    }
+
+    /// Re-evaluate the hover from the live pointer, for a modifier change that
+    /// arrives with no mouse event of its own.
+    private func refreshLinkHoverFromPointer(commandHeld: Bool) {
+        guard let window else { return }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        refreshLinkHover(atViewPoint: point, commandHeld: commandHeld)
+    }
+
+    private func clearLinkHover() {
+        guard hoveredLinkRect != nil else { return }
+        refreshLinkHover(atViewPoint: CGPoint(x: -1, y: -1), commandHeld: false)
+    }
+
+    private func setLinkCursor(active: Bool) {
+        guard linkCursorActive != active else { return }
+        linkCursorActive = active
+        (active ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+
+    /// Grid cell under a point in view coordinates, via the same
+    /// inset-adjusted math as the mouse handler.
+    private func gridCell(atViewPoint point: CGPoint) -> (row: Int, col: Int)? {
+        guard let dimensions = gridDimensions else { return nil }
+        let gridPoint = CGPoint(x: point.x - Self.contentInset, y: point.y - Self.contentInset)
+        return MouseHandler.cellLocation(
+            for: gridPoint,
+            cellSize: metrics.cellSize,
+            gridWidth: dimensions.width,
+            gridHeight: dimensions.height
+        )
     }
 
     // MARK: - Diagnostics popover
@@ -784,6 +895,9 @@ final class TerminalView: NSView {
         // Re-assert on the next main-actor turn in case SwiftUI restores focus
         // to another control while the window is being laid out.
         if let window {
+            // Tracking areas deliver mouseMoved independently, but enabling the
+            // window-level flag too keeps hover working across AppKit versions.
+            window.acceptsMouseMovedEvents = true
             // init resolved the adaptive fallback with no window context,
             // baking the system appearance into the layer's CGColor; paint
             // the seeded theme before the window can first display.
@@ -883,6 +997,9 @@ final class TerminalView: NSView {
                     self.updateCompletionPanel()
                     self.refreshWindowAppearance()
                     self.reconcileGridSize(with: snapshot)
+                    self.refreshLinkHoverFromPointer(
+                        commandHeld: NSEvent.modifierFlags.contains(.command)
+                    )
                 }
             }
             await screen.setScrollHandler { [weak self] grid, rows, _ in
@@ -905,6 +1022,9 @@ final class TerminalView: NSView {
             self.updateStatuslineLayer()
             self.updateCompletionPanel()
             self.refreshWindowAppearance()
+            self.refreshLinkHoverFromPointer(
+                commandHeld: NSEvent.modifierFlags.contains(.command)
+            )
         }
     }
 

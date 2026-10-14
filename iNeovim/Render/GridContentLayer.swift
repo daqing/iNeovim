@@ -47,6 +47,19 @@ final class GridContentLayer: CALayer {
     var cursorVisible = true {
         didSet { invalidateCursor() }
     }
+    /// Grid rect of the ⌘-hovered link, underlined on top of the cells. nil
+    /// when no link is hovered.
+    var linkUnderline: CellRect? {
+        didSet {
+            guard linkUnderline != oldValue else { return }
+            var dirty = CGRect.null
+            for rect in [oldValue, linkUnderline].compactMap({ $0 }).compactMap({ clipped(toSlice: $0) }) {
+                dirty = dirty.union(snappedToPixels(pixelRect(for: rect)))
+            }
+            guard !dirty.isNull else { return }
+            setNeedsDisplay(dirty.intersection(bounds))
+        }
+    }
     /// Translation applied to the drawn cursor while it glides between cells.
     var cursorGlideOffset: CGSize = .zero {
         didSet { invalidateCursor() }
@@ -95,6 +108,7 @@ final class GridContentLayer: CALayer {
             preedit = source.preedit
             cursorVisible = source.cursorVisible
             cursorGlideOffset = source.cursorGlideOffset
+            linkUnderline = source.linkUnderline
         }
     }
 
@@ -254,6 +268,7 @@ final class GridContentLayer: CALayer {
 
         drawCursor(dirtyBounds, context: context)
         drawPreedit(dirtyBounds, context: context)
+        drawLinkUnderline(context: context)
     }
 
     /// Y of a row's top edge in layer space; the last row (cmdline/message
@@ -557,6 +572,35 @@ final class GridContentLayer: CALayer {
             return 0
         }
         return grid[snapshot.cursor.row, snapshot.cursor.col].attrId
+    }
+
+    // MARK: - Link underline
+
+    /// Underline the hovered ⌘-link in the cells' own foreground color, in
+    /// layer coordinates (y down) at the font's underline position.
+    private func drawLinkUnderline(context: CGContext) {
+        guard let rect = linkUnderline, let grid = snapshot?.grid, !grid.isEmpty,
+              let sliced = clipped(toSlice: rect),
+              sliced.minCol >= 0, sliced.maxCol <= grid.width else { return }
+        let font = metrics.font
+        let ctFont = font as CTFont
+        // Match the text pass: the statusline row draws on the inverted bar
+        // and uses the opposite mode's foreground, not the cell's own.
+        let statuslineRow = grid.height >= 2 ? grid.height - 2 : -1
+        let color: NSColor
+        if sliced.minRow == statuslineRow {
+            color = TerminalView.statuslineColors(
+                themeIsDark: TerminalView.hasDarkBackground(snapshot?.defaultBackground)
+            ).foreground
+        } else {
+            color = resolvedColors(for: grid[sliced.minRow, sliced.minCol].attrId).foreground
+        }
+        let y = rowY(sliced.minRow) + metrics.baseline - CTFontGetUnderlinePosition(ctFont)
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(max(1, CTFontGetUnderlineThickness(ctFont)))
+        context.move(to: CGPoint(x: CGFloat(sliced.minCol) * metrics.cellSize.width, y: y))
+        context.addLine(to: CGPoint(x: CGFloat(sliced.maxCol) * metrics.cellSize.width, y: y))
+        context.strokePath()
     }
 
     // MARK: - Preedit (marked text)

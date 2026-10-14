@@ -23,6 +23,17 @@ final class MouseHandler {
         guard let button = Self.buttonName(for: event) else { return }
         view?.window?.makeFirstResponder(view)
         pressedButton = button
+        // ⌘-click on an http(s) URL opens it in the default browser instead of
+        // reaching nvim; the rest of the gesture is swallowed so nvim never
+        // sees an orphan drag/release.
+        if button == "left",
+           event.modifierFlags.contains(.command),
+           let cell = cellLocation(for: event),
+           let url = view?.linkTarget(atRow: cell.row, col: cell.col) {
+            isSwallowingGesture = true
+            _ = NSWorkspace.shared.open(url)
+            return
+        }
         if button == "left",
            Self.modifierString(for: event.modifierFlags).isEmpty,
            let cell = cellLocation(for: event),

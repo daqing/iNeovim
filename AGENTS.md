@@ -84,6 +84,7 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── InputSettings.swift    passCmdKeysThrough / optionAsMeta switches
 │   ├── IMEHandler.swift       marked text state + NSTextInputClient
 │   ├── MouseHandler.swift     press/drag/release → nvim_input_mouse
+│   ├── LinkDetector.swift     http(s) URL hit-testing for ⌘-click
 │   ├── InputEvent.swift       the unified input event enum
 │   └── InputDispatcher.swift  single-consumer stream into NvimClient
 ├── Scroll/               smooth scrolling and animation (Phase 7)
@@ -344,6 +345,31 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   only completion UI while attached — there is no in-grid fallback. Hover /
   signature-help floats still render as grid content; making those native
   requires `ext_multigrid` and is a separate, much larger iteration.
+- **⌘-click opens URLs:** `MouseHandler.mouseDown` intercepts a left click
+  carrying Command before anything reaches nvim: it hit-tests the clicked grid
+  cell against the rendered snapshot via `TerminalView.linkTarget` and
+  `LinkDetector`, and hands an `http(s)` URL to `NSWorkspace.shared.open`.
+  `LinkDetector` is pure (grid row cells + column → `URL?`): it joins the row's
+  non-blank cells into a token, finds the first `http://`/`https://`, cuts the
+  body at the first non-URL character (so adjacent CJK or prose needs no
+  separating space), and trims wrapping punctuation while keeping balanced
+  parentheses (`…/Foo_(bar)`). A click on the empty continuation cell of a
+  double-width glyph resolves against the glyph cell before it. The gesture
+  sets `isSwallowingGesture`, so nvim never sees the press — or an orphaned
+  drag/release. A ⌘-click that is not on a URL still falls through to normal
+  mouse handling.
+- **⌘-hover underlines links:** while Command is held, an `NSTrackingArea` on
+  `TerminalView` (`.mouseMoved` / `.mouseEnteredAndExited`, `activeInKeyWindow`,
+  `inVisibleRect`, with `window.acceptsMouseMovedEvents`) re-detects the link
+  under the pointer on every move; `flagsChanged` re-detects when Command is
+  pressed or released without a move, and a flush re-detects so a scroll or
+  redraw cannot leave the underline on the wrong row. `LinkHit.columns` (the
+  cell range `LinkDetector` already computes for the click) is stored on both
+  `GridContentLayer`s as `linkUnderline` and drawn as a line at the font's
+  underline position in the cells' own foreground — so the underline lives in
+  the scrolling layer and follows a scroll lead — and the pointer becomes
+  `NSCursor.pointingHand`. Both are cleared on `mouseExited`, Command release,
+  and when the pointer leaves a link.
 - **Sign-column diagnostics popover:** a plain left click in the gutter
   (grid columns 0–1, where LSP signs such as gopls' "E" render) opens a
   native popover listing that line's `vim.diagnostic` entries — severity
