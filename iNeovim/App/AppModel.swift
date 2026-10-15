@@ -609,7 +609,7 @@ final class AppModel: ObservableObject {
 
     /// Deliver one per-buffer diagnostics snapshot from the embedded nvim.
     /// The panel refreshes through the store's `onChange`; it opens only on
-    /// demand (⌘I / Neovim menu / header ✕), never automatically.
+    /// demand (⌥P / Neovim menu / header ✕), never automatically.
     func handleDiagnosticUpdate(_ update: NvimDiagnosticUpdate) {
         diagnosticsStore.apply(update)
     }

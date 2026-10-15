@@ -406,9 +406,13 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   (`:edit` when the path differs from the current buffer →
   `nvim_win_set_cursor`) and the panel keeps focus, so the arrow keys walk
   the list. The panel is created once per window and stays subscribed while
-  hidden. It opens only on demand — ⌘I or the Neovim menu's "Toggle
+  hidden. It opens only on demand — ⌥P or the Neovim menu's "Toggle
   Problems" — and closes via the header ✕ or the same toggle; nothing pops
-  it open automatically and no settings gate exists.
+  it open automatically and no settings gate exists. The ⌥P chord is claimed
+  by the same `AppDelegate` keyDown monitor as ⌥T: SwiftUI registers the
+  ⌥P menu equivalent but never fires it (a bare AppKit item with the same
+  registration does match a real Option keypress), so the monitor does the
+  work and the menu entry is display-only.
 - **Native terminal pane (Ghostty):** a typed `:terminal` (and its `term`…
   `terminal` abbreviations, optional `vert[ical]` modifier, optional `!`,
   optional trailing command) never reaches nvim: `TerminalView.sendKeys`
@@ -436,7 +440,8 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   instead of keeping its original theme. Menu "Toggle Terminal
   Pane" / ⌃` toggles regardless of focus, and so does ⌥T — a local keyDown
   monitor in `AppDelegate` (SwiftUI menu items can carry only one shortcut)
-  claims the exact ⌥T chord before dispatch; when "Option as Meta" is on the
+  claims the exact ⌥T and ⌥P chords before dispatch; when "Option as Meta" is
+  on the
   chord goes to nvim as `<M-t>` and the pane stays on ⌃` alone; the settings
   toggle
   "Open :terminal in native pane" only gates the cmdline interception
