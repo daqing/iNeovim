@@ -9,7 +9,6 @@ final class CompletionPanelView: NSView {
     /// Rows actually created, so a huge candidate list cannot spawn hundreds
     /// of label trees on every keystroke.
     fileprivate static let rowCap = 50
-    fileprivate static let visibleRows = 10
     fileprivate static let horizontalPadding: CGFloat = 10
     fileprivate static let columnGap: CGFloat = 10
     fileprivate static let edgeInset: CGFloat = 4
@@ -93,10 +92,11 @@ final class CompletionPanelView: NSView {
             max(rowViews.map(\.preferredWidth).max() ?? 0, 160),
             max(maxWidth, 160)
         )
-        let visible = min(rowViews.count, Self.visibleRows)
+        // Every row is shown in full; the list never scrolls (rows beyond
+        // rowCap are simply not created).
         contentSize = CGSize(
             width: width,
-            height: Self.edgeInset * 2 + CGFloat(visible) * rowHeight
+            height: Self.edgeInset * 2 + CGFloat(rowViews.count) * rowHeight
         )
         setFrameSize(contentSize)
         scrollView.frame = bounds

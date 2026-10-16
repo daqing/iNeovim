@@ -339,9 +339,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   and sends `popupmenu_show/select/hide` instead. `Screen` keeps a
   `PopupState` (items, selected, anchor row/col) surfaced through
   `ScreenSnapshot.popup`; `TerminalView.updateCompletionPanel()` places
-  `CompletionPanelView` (vibrancy-backed AppKit list, row cap 50, ~10 rows
-  visible) at the anchor cell — flipping up when it would overflow the
-  bottom edge — from the flush, initial-snapshot, metrics-, and resize
+  `CompletionPanelView` (vibrancy-backed AppKit list, row cap 50, every row
+  shown — the panel sizes to fit the list and never scrolls) at the anchor
+  cell — flipping up when it would overflow the bottom edge — from the
+  flush, initial-snapshot, metrics-, and resize
   paths. Keyboard navigation stays with nvim (`popupmenu_select` updates the
   panel); row clicks call `nvim_select_popupmenu_item`. The panel is the
   only completion UI while attached — there is no in-grid fallback. Hover /
