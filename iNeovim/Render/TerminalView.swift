@@ -393,6 +393,13 @@ final class TerminalView: NSView {
             model.requestNativeTab(file: file)
             return
         }
+        // A typed `:q` (or another quit command) ends the embedded nvim —
+        // and with it the window, or the whole app when it is the last one —
+        // so confirm first; cancel sends `<Esc>` and dismisses the cmdline.
+        if keys == "<CR>", Self.isQuitCommand(cmdlineBuffer) {
+            confirmQuit(pendingKeys: keys)
+            return
+        }
         // Hard gate: the tree-walking fzf commands must not run in / or
         // $HOME — walking either tree can freeze the machine.
         if keys == "<CR>", Self.isFzfWalkCommand(cmdlineBuffer) {
@@ -400,6 +407,20 @@ final class TerminalView: NSView {
             return
         }
         model.inputDispatcher.send(.keys(keys))
+    }
+
+    /// Whether a typed cmdline names a command that quits the embedded nvim:
+    /// `:q[uit]` and `:qa[ll]`, each with an optional `!`. Matching mirrors
+    /// nvim's abbreviations (`:q`, `:qu`, `:qui`, `:quit`; `:qa`, `:qal`,
+    /// `:qall`) and is case-sensitive like nvim's built-in commands. Write-and-
+    /// quit forms (`:wq`, `:x`) are left to nvim.
+    static func isQuitCommand(_ command: String) -> Bool {
+        let words = command.trimmingCharacters(in: .whitespaces)
+            .split(separator: " ", omittingEmptySubsequences: true)
+        guard let name = words.first else { return false }
+        let bare = name.hasSuffix("!") ? name.dropLast() : name
+        guard !bare.isEmpty else { return false }
+        return "quit".hasPrefix(bare) || (bare.count >= 2 && "qall".hasPrefix(bare))
     }
 
     /// fzf.vim commands whose source walks the current directory tree.
@@ -499,6 +520,26 @@ final class TerminalView: NSView {
             // Printable runs arrive as plain text; notation tokens (<Esc>,
             // arrows, …) are cmdline editing keys that do not add text.
             if !keys.hasPrefix("<") { cmdlineBuffer += keys }
+        }
+    }
+
+    /// Hold a typed quit command behind a confirmation: `:q` exits the
+    /// embedded nvim, closing the window — or the whole app when it is the
+    /// last one — so a stray quit must be confirmed. Cancel sends `<Esc>`
+    /// instead, leaving the session running.
+    private func confirmQuit(pendingKeys: String) {
+        cmdlineBuffer = ""
+        Task { @MainActor in
+            let alert = NSAlert()
+            alert.messageText = "Quit iNeovim?"
+            alert.informativeText = "The embedded Neovim will exit and this window will close."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn {
+                model.inputDispatcher.send(.keys(pendingKeys))
+            } else {
+                model.inputDispatcher.send(.keys("<Esc>"))
+            }
         }
     }
 
