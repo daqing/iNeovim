@@ -22,7 +22,7 @@ final class CompletionPanelView: NSView {
     private let clipView = NSView()
     private let effect = NSVisualEffectView()
     private let scrollView = NSScrollView()
-    private let content = NSView()
+    private let content = FlippedContentView()
     private var rowViews: [RowView] = []
     private var rowHeight: CGFloat = 22
     private(set) var contentSize: CGSize = .zero
@@ -143,6 +143,14 @@ final class CompletionPanelView: NSView {
         scrollView.frame = bounds
         layoutRows()
     }
+}
+
+/// Flipped document view: y=0 is the top edge, so `layoutRows()` paints
+/// nvim's first candidate at the top and selection walks top-down. Without
+/// it the list renders upside down (first item at the bottom) and long
+/// lists open scrolled to the end.
+private final class FlippedContentView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 /// One completion row: the word in the editor's monospaced font, the source
