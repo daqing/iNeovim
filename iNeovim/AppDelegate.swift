@@ -107,6 +107,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestNewTab(from: NSApp.keyWindow)
     }
 
+    /// The red close button's action for editor windows: confirm first, then
+    /// close — quitting the whole app when this was the last editor window,
+    /// matching a clean `:q` exit and ⌘W on the last window.
+    @objc func confirmCloseEditorWindow(_ sender: Any?) {
+        let window = (sender as? NSButton)?.window
+            ?? (sender as? NSWindow)
+            ?? NSApp.keyWindow
+        guard let window else { return }
+        guard QuitConfirmation.present() else { return }
+        if AppModel.live.count <= 1 {
+            NSApp.terminate(nil)
+        } else {
+            window.performClose(nil)
+        }
+    }
+
     /// Open a new editor window joined as a tab to `host`'s tab group, with
     /// `file` opened in it once its session is ready. A host that is not an
     /// editor window (e.g. Settings) yields a standalone window.
@@ -141,6 +157,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// group's; the join is only deferred across the invisible appearance
     /// gap, never while the window can be seen.
     func registerEditorWindow(_ window: NSWindow, model: AppModel) {
+        // The red close button goes through the same confirmation a typed
+        // `:q` shows before tearing the window (and its embedded nvim) down.
+        // `performClose(_:)` (⌘W) does not use the button's action, so only
+        // the traffic-light click is intercepted here.
+        if let closeButton = window.standardWindowButton(.closeButton) {
+            closeButton.target = self
+            closeButton.action = #selector(confirmCloseEditorWindow(_:))
+        }
         let host = pendingTabHost
         let file = pendingTabFile
         pendingTabHost = nil

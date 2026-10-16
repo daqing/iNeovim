@@ -530,12 +530,7 @@ final class TerminalView: NSView {
     private func confirmQuit(pendingKeys: String) {
         cmdlineBuffer = ""
         Task { @MainActor in
-            let alert = NSAlert()
-            alert.messageText = "Quit iNeovim?"
-            alert.informativeText = "The embedded Neovim will exit and this window will close."
-            alert.addButton(withTitle: "Quit")
-            alert.addButton(withTitle: "Cancel")
-            if alert.runModal() == .alertFirstButtonReturn {
+            if QuitConfirmation.present() {
                 model.inputDispatcher.send(.keys(pendingKeys))
             } else {
                 model.inputDispatcher.send(.keys("<Esc>"))
