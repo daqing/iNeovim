@@ -43,16 +43,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let modifiers = event.modifierFlags
                 .intersection(.deviceIndependentFlagsMask)
                 .subtracting([.capsLock, .function])
-            guard modifiers == .option,
-                  let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
-            switch key {
-            case "t":
+            guard let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
+            switch (modifiers, key) {
+            case (.command, "d"):
                 return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
-            case "p":
+            case (.control, "`"):
+                return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
+            case (.option, "p"):
                 return MainActor.assumeIsolated(Self.claimProblemsPanelChord) ? nil : event
-            case "1":
-                return MainActor.assumeIsolated(Self.claimEditorFocusChord) ? nil : event
-            case "2":
+            case ([.command, .shift], "t"):
                 return MainActor.assumeIsolated(Self.claimTerminalPaneFocusChord) ? nil : event
             default:
                 return event
@@ -61,12 +60,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.app.info("Application did finish launching")
     }
 
-    /// ⌥T toggles the terminal pane like the menu's ⌃`, from any focused view
-    /// (a local monitor sees the keydown before the responder chain). Returns
-    /// whether the chord was claimed; a modal session owning the app, or
-    /// "Option as Meta" dedicating Option to nvim (`<M-t>`), leaves it alone.
+    /// ⌘D (and its ⌃` alternate) toggles the terminal pane from any focused
+    /// view. A local monitor sees the keydown before the responder chain and
+    /// before Ghostty's `SurfaceView.performKeyEquivalent`, which otherwise
+    /// claims ⌘D for its default `new_split:right` binding while the pane is
+    /// focused — the menu shortcut alone then only ever opened the pane.
+    /// Returns whether the chord was claimed; a modal session leaves it alone.
     private static func claimTerminalPaneChord() -> Bool {
-        guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
+        guard NSApp.modalWindow == nil else { return false }
         AppModel.active?.toggleTerminalPane()
         return true
     }
@@ -74,27 +75,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ⌥P toggles the problems panel like its menu item, which is display-only:
     /// SwiftUI registers the ⌥P equivalent but never fires it (bare AppKit
     /// items do — verified against a real HID keypress), so the chord is
-    /// claimed here like ⌥T. Same guards: a modal session, or "Option as
-    /// Meta" dedicating Option to nvim (`<M-p>`), leaves it alone.
+    /// claimed here like the other Option-only chords. Same guards: a modal
+    /// session, or "Option as Meta" dedicating Option to nvim (`<M-p>`),
+    /// leaves it alone.
     private static func claimProblemsPanelChord() -> Bool {
         guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
         AppModel.active?.toggleProblemsPanel()
         return true
     }
 
-    /// ⌥1 puts keyboard focus in the editor. Same guards as the other
-    /// Option-only chords.
-    private static func claimEditorFocusChord() -> Bool {
-        guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
-        AppModel.active?.focusEditor()
-        return true
-    }
-
-    /// ⌥2 puts keyboard focus in the terminal pane, opening it when it is
-    /// hidden. Same guards as the other Option-only chords.
+    /// ⌘⇧T hands keyboard focus between the editor and the terminal pane,
+    /// opening the pane when it is hidden. A local monitor sees the keydown
+    /// before the responder chain and before Ghostty's
+    /// `SurfaceView.performKeyEquivalent`, so the pane keeps handing focus
+    /// back to the editor even though it owns the keyboard.
     private static func claimTerminalPaneFocusChord() -> Bool {
-        guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
-        AppModel.active?.focusTerminalPane()
+        guard NSApp.modalWindow == nil else { return false }
+        AppModel.active?.toggleTerminalPaneFocus()
         return true
     }
 

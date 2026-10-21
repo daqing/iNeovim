@@ -106,8 +106,8 @@ iNeovim 嵌入一个 Neovim 实例并实现其 GUI 协议:
 输入 `:terminal` 会在编辑器右侧打开一个原生终端面板——真正的 Ghostty 终端
 surface(libghostty),而不是 Neovim 内的终端缓冲区。面板在 Neovim 的当前工作
 目录启动(`:term <cmd>` 则运行指定命令),字体与配色跟随编辑器,可随时用
-`` ⌃` ``,`` ⌥T `` 或 **Neovim ▸ Toggle Terminal Pane** 开关。`` ⌥1 `` 把键盘焦点移到
-编辑器,`` ⌥2 `` 移到终端面板(面板未打开时会先打开)——不用鼠标也能来回切换。
+`` ⌘D ``(或 `` ⌃` ``)或 **Neovim ▸ Toggle Terminal Pane** 开关。`` ⌘⇧T `` 可在
+编辑器与终端面板之间切换键盘焦点(面板未打开时会先打开)——不用鼠标也能来回切换。
 设置中可关闭该拦截,回落到 Neovim 原生的缓冲区内终端。内嵌的 GhosttyKit 二进制与
 适配后的 Swift 绑定位于 `Packages/GhosttySupport`(基于固定版本的 Ghostty 源码快照
 自建,详见其中的 `ADAPTATION.md`)。

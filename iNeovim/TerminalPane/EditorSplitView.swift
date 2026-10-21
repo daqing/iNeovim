@@ -175,10 +175,23 @@ final class EditorSplitView: NSView {
             if let pane {
                 window?.makeFirstResponder(pane.surfaceView)
             }
-        case .focusEditor:
-            window?.makeFirstResponder(terminalView)
+        case .toggleFocus:
+            togglePaneFocus()
         case .close:
             closePane(removeImmediately: false)
+        }
+    }
+
+    /// Hand keyboard focus between the editor and the pane: pane → editor,
+    /// anything else → pane. Focus elsewhere in the window (the problems
+    /// panel) is treated like editor focus.
+    private func togglePaneFocus() {
+        guard let pane, let window else { return }
+        if let responder = window.firstResponder as? NSView,
+           responder.isDescendant(of: pane) {
+            window.makeFirstResponder(terminalView)
+        } else {
+            window.makeFirstResponder(pane.surfaceView)
         }
     }
 

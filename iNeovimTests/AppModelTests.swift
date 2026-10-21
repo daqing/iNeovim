@@ -181,11 +181,8 @@ final class AppModelTests: XCTestCase {
         model.requestTerminalPane(command: "ls")
         XCTAssertEqual(model.terminalPaneIntent, .focus)
 
-        model.focusEditor()
-        XCTAssertEqual(model.terminalPaneIntent, .focusEditor)
-
-        model.focusTerminalPane()
-        XCTAssertEqual(model.terminalPaneIntent, .focus)
+        model.toggleTerminalPaneFocus()
+        XCTAssertEqual(model.terminalPaneIntent, .toggleFocus)
 
         model.toggleTerminalPane()
         XCTAssertEqual(model.terminalPaneIntent, .close)

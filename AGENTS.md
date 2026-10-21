@@ -410,7 +410,8 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   hidden. It opens only on demand — ⌥P or the Neovim menu's "Toggle
   Problems" — and closes via the header ✕ or the same toggle; nothing pops
   it open automatically and no settings gate exists. The ⌥P chord is claimed
-  by the same `AppDelegate` keyDown monitor as ⌥T: SwiftUI registers the
+  by the same `AppDelegate` keyDown monitor as the other Option-only chords:
+  SwiftUI registers the
   ⌥P menu equivalent but never fires it (a bare AppKit item with the same
   registration does match a real Option keypress), so the monitor does the
   work and the menu entry is display-only.
@@ -439,17 +440,19 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   driven by `AppModel.$terminalColors`) whenever a session reports a new
   default background, so an open pane follows a dark↔light colorscheme flip
   instead of keeping its original theme. Menu "Toggle Terminal
-  Pane" / ⌃` toggles regardless of focus, and so does ⌥T — a local keyDown
-  monitor in `AppDelegate` (SwiftUI menu items can carry only one shortcut)
-  claims the exact ⌥T, ⌥P, ⌥1, and ⌥2 chords before dispatch. ⌥1 focuses the
-  editor (`AppModel.focusEditor` publishes a `.focusEditor` intent that
-  `EditorSplitView` turns into `makeFirstResponder(terminalView)`), and ⌥2
-  focuses the pane (`focusTerminalPane` publishes `.focus`, opening the pane
-  first when it is hidden); when "Option as Meta" is
-  on the
-  chord goes to nvim as `<M-t>`/`<M-p>`/`<M-1>`/`<M-2>` and the pane stays on
-  ⌃` alone; the settings
-  toggle
+  Pane" / ⌘D toggles regardless of focus; the keyDown monitor in `AppDelegate`
+  claims ⌘D (and its ⌃` alternate) before dispatch because Ghostty's
+  `SurfaceView.performKeyEquivalent` would otherwise consume ⌘D for its
+  default `new_split:right` binding while the pane is focused, so the menu
+  shortcut alone only ever opened the pane. The same monitor claims ⌘⇧T (the
+  focus toggle) and the exact ⌥P chord. ⌘⇧T
+  switches keyboard focus between the editor and the pane (an `AppModel`
+  `.toggleFocus` intent that `EditorSplitView` resolves from
+  `window.firstResponder`: focus inside the pane → editor, anything else →
+  pane), opening and focusing the pane first when it is hidden; when "Option
+  as Meta" is on ⌥P goes to nvim as `<M-p>` and the pane stays on ⌘D/⌃`
+  alone; the
+  settings toggle
   "Open :terminal in native pane" only gates the cmdline interception
   (mappings/plugins/RPC `:terminal` bypass `sendKeys` and keep nvim's
   in-buffer terminal, exactly like the fzf gate's known edges). GhosttySupport

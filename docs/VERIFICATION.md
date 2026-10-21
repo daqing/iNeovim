@@ -130,16 +130,16 @@ of the editor instead of an in-buffer terminal. Manual checks:
    pane's shell starts in nvim's working directory (`:pwd` matches `pwd` in
    the pane). The nvim grid reflows to the narrower editor area.
 2. Type `:term git status`: the pane runs that command instead of a shell.
-3. ⌃` or ⌥T or **Neovim ▸ Toggle Terminal Pane** toggles the pane; both
-   shortcuts work while the pane has focus too. Dragging the divider resizes
+3. ⌘D (or ⌃`) or **Neovim ▸ Toggle Terminal Pane** toggles the
+   pane; both work while the pane has focus too. Dragging the divider resizes
    the pane (280 pt…60% of the window) and the editor follows live.
-4. ⌥1 (**Neovim ▸ Focus Editor**) puts focus in the editor; ⌥2
-   (**Neovim ▸ Focus Terminal Pane**) puts it in the pane, opening the pane
-   when hidden. Typing lands in whichever side now has focus.
+4. ⌘⇧T (**Neovim ▸ Switch Focus Between Editor and Terminal**) moves focus
+   between the editor and the pane in both directions, opening the pane when
+   hidden. Typing lands in whichever side now has focus.
 5. `:terminal` while the pane is open just focuses it. Typing `exit` in the
    pane (or the ⓧ button) closes the pane and returns focus to the editor.
 6. Settings ▸ Terminal ▸ "Open :terminal in native pane" off: `:terminal`
-   falls back to nvim's in-buffer terminal; ⌃`/the menu still open the pane.
+   falls back to nvim's in-buffer terminal; ⌘D/⌃`/the menu still open the pane.
 7. The pane's font and colors follow the editor (font/size from settings,
    background/foreground from nvim's colorscheme at open time).
 8. Multiple windows (⌘N) each own a pane; closing a window cleans up its

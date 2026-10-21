@@ -562,7 +562,7 @@ final class AppModel: ObservableObject {
     enum TerminalPaneIntent: Equatable {
         case open(TerminalPaneRequest)
         case focus
-        case focusEditor
+        case toggleFocus
         case close
     }
 
@@ -593,7 +593,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Menu / ⌃` action: hide a shown pane, otherwise open one.
+    /// Menu / ⌘D action (⌃` alternate): hide a shown pane, otherwise open one.
     func toggleTerminalPane() {
         if isTerminalPaneVisible {
             terminalPaneIntent = .close
@@ -602,19 +602,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Menu / ⌥1 action: put keyboard focus in the editor.
-    func focusEditor() {
-        terminalPaneIntent = .focusEditor
-    }
-
-    /// Menu / ⌥2 action: put keyboard focus in the terminal pane, opening it
-    /// when it is hidden.
-    func focusTerminalPane() {
+    /// Menu / ⌘⇧T action: switch keyboard focus between the editor and the
+    /// pane, opening (and focusing) the pane when it is hidden. The split
+    /// container decides which side holds focus.
+    func toggleTerminalPaneFocus() {
         guard isTerminalPaneVisible else {
             requestTerminalPane(command: "")
             return
         }
-        terminalPaneIntent = .focus
+        terminalPaneIntent = .toggleFocus
     }
 
     // MARK: - Diagnostics panel
