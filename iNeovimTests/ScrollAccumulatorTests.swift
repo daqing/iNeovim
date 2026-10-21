@@ -65,31 +65,46 @@ final class ScrollAccumulatorTests: XCTestCase {
         XCTAssertEqual(accumulator.offset, 7)
     }
 
-    func testWholeLineLeadIsSuspendedInsteadOfUncovered() {
-        // One wheel step is a whole line: leading it would show a line Neovim
-        // has not drawn, so the content waits for the confirmation.
+    func testWholeLineLeadFollowsTheWheel() {
+        // One wheel step is a whole line: the content moves with the wheel at
+        // once, and the confirmation replaces that line with the painted row.
         var accumulator = makeAccumulator()
         XCTAssertEqual(accumulator.addDelta(10, lineHeight: line), [.up])
-        XCTAssertTrue(accumulator.leadSuspended)
-        XCTAssertEqual(accumulator.offset, 0)
-        // The next step is still requested; only the drawing waits.
-        XCTAssertEqual(accumulator.addDelta(10, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.offset, 10)
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertTrue(accumulator.isSettled)
+    }
+
+    func testWholeLineLeadFollowsTheWheelDownwards() {
+        var accumulator = makeAccumulator()
+        XCTAssertEqual(accumulator.addDelta(-10, lineHeight: line), [.down])
+        XCTAssertEqual(accumulator.offset, -10)
+        accumulator.confirmScroll(rows: 1, lineHeight: line)
         XCTAssertEqual(accumulator.offset, 0)
     }
 
-    func testSuspendedLeadIsAlsoSuspendedDownwards() {
+    func testBurstClampsTheLeadToOneLine() {
+        // Steps that arrive before Neovim answers may only put the content
+        // one line ahead; the confirmations drain the rest a frame at a time.
         var accumulator = makeAccumulator()
-        XCTAssertEqual(accumulator.addDelta(-10, lineHeight: line), [.down])
+        XCTAssertEqual(accumulator.addDelta(10, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.addDelta(10, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.addDelta(10, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.offset, 10)
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, 10)
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, 10)
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
         XCTAssertEqual(accumulator.offset, 0)
     }
 
     func testConfirmationResumesTheLead() {
         var accumulator = makeAccumulator()
         _ = accumulator.addDelta(10, lineHeight: line)
-        XCTAssertEqual(accumulator.offset, 0)
+        XCTAssertEqual(accumulator.offset, 10)
         // Neovim scrolled the window up by one line in response to wheelup.
         accumulator.confirmScroll(rows: -1, lineHeight: line)
-        XCTAssertFalse(accumulator.leadSuspended)
         XCTAssertTrue(accumulator.isSettled)
         _ = accumulator.addDelta(3, lineHeight: line)
         XCTAssertEqual(accumulator.offset, 3)
@@ -129,9 +144,24 @@ final class ScrollAccumulatorTests: XCTestCase {
 
         accumulator.beginGesture()
         XCTAssertEqual(accumulator.offset, 3)
-        // Request accounting resets relative to the new gesture.
+        // The unrequested sub-line remainder survives the gesture change.
         XCTAssertEqual(accumulator.addDelta(4, lineHeight: line), [])
         XCTAssertEqual(accumulator.addDelta(4, lineHeight: line), [.up])
+    }
+
+    func testBeginGestureDoesNotReRequestAnInFlightLine() {
+        // A whole-line lead is still in flight when the next gesture starts
+        // (a wheel's idle timer ends the gesture before a slow confirmation
+        // arrives); the preserved line must not be requested a second time.
+        var accumulator = makeAccumulator()
+        XCTAssertEqual(accumulator.addDelta(10, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.offset, 10)
+
+        accumulator.beginGesture()
+        XCTAssertEqual(accumulator.offset, 10)
+        XCTAssertEqual(accumulator.addDelta(1, lineHeight: line), [])
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, 1)
     }
 
     func testCollapseDropsTheLeadWithoutBackwardsJump() {

@@ -1,12 +1,13 @@
 import AppKit
 
-/// Translates `scrollWheel` events into pixel offsets for the animator plus
-/// whole-line wheel requests for Neovim, then folds the `grid_scroll` events
-/// Neovim answers with back into the offset (see `ScrollAccumulator`).
+/// Translates `scrollWheel` events into pixel offsets plus whole-line wheel
+/// requests for Neovim, then folds the `grid_scroll` events Neovim answers
+/// with back into the offset (see `ScrollAccumulator`).
 ///
 /// Trackpad gestures report `NSEventPhase` directly. Traditional wheel events
-/// carry no phase, so an idle timer synthesizes the "ended" transition and
-/// the momentum-like glide is the animator's decay.
+/// carry no phase, so an idle timer synthesizes the "ended" transition. The
+/// content follows both 1:1 while the gesture lasts; the animator only eases
+/// the unconfirmed lead back to rest afterwards.
 final class ScrollController {
     weak var view: TerminalView?
     var settings = ScrollAnimationSettings.default
@@ -74,17 +75,32 @@ final class ScrollController {
 
     /// A `grid_scroll` Neovim applied to grid 1 while our scroll was in
     /// flight; shrinks the visual lead so the content does not jump.
+    ///
+    /// Only the accumulator moves here. The offset that goes with the
+    /// confirmation is applied by `applyConfirmedOffset`, after the flush
+    /// carrying it has repainted the grid: the grid moved by exactly the
+    /// confirmed amount and the lead shrank by the same amount, so swapping
+    /// both in one frame leaves the content exactly where the gesture had it.
+    /// Applying the offset here (a task earlier) or easing it back over later
+    /// frames would show the content sliding against the gesture for a frame
+    /// or more.
     func confirmScroll(rows: Int) {
         guard acceptConfirmations, let view else { return }
         accumulator.confirmScroll(rows: rows, lineHeight: view.metrics.cellSize.height)
-        onOffsetChange?(accumulator.offset, true)
+    }
+
+    /// Apply a confirmation's offset change, if any, immediately after the
+    /// flush that carried it has repainted the grid. Called by the view at the
+    /// end of its flush apply so the new grid and the offset that belongs to
+    /// it are presented in the same frame instead of a frame apart.
+    func applyConfirmedOffset() {
+        guard acceptConfirmations else { return }
+        onOffsetChange?(accumulator.offset, false)
     }
 
     /// Allow at most one cell of visual lead. Neovim only sends the visible
-    /// screenful, so a lead of a whole line already exposes undrawn space;
-    /// `ScrollAccumulator` suspends the lead entirely once a gesture wants
-    /// one, which is what a whole-line wheel step does immediately (and what
-    /// a scroll at the buffer's edge does, since nothing there is confirmed).
+    /// screenful, so a whole-line lead already exposes undrawn space; the cap
+    /// keeps the content from getting more than one wheel step ahead of it.
     private func updateLeadCap() {
         guard let view else { return }
         accumulator.maxLead = max(1, view.metrics.cellSize.height)
@@ -99,18 +115,9 @@ final class ScrollController {
     }
 
     private func apply(delta: CGFloat, lineHeight: CGFloat) {
-        let wasSuspended = accumulator.leadSuspended
         let requests = accumulator.addDelta(delta, lineHeight: lineHeight)
         send(requests)
-        if accumulator.leadSuspended {
-            // A whole-line lead (what a wheel step asks for, and what a scroll
-            // at the buffer's edge ends up wanting) is blank space Neovim has
-            // not drawn; it is given up smoothly rather than snapped, and the
-            // chase already under way is left alone.
-            if !wasSuspended { onOffsetChange?(accumulator.offset, true) }
-        } else {
-            onOffsetChange?(accumulator.offset, false)
-        }
+        onOffsetChange?(accumulator.offset, false)
     }
 
     private func send(_ requests: [ScrollLineRequest]) {

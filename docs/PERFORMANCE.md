@@ -49,7 +49,22 @@ were needed; baselines below guard regressions.
 
 **Scroll (`ScrollAnimator.tick`)** — driven by `CVDisplayLink`; the cost is a
 single exponential step plus a `CATransform3D` write. Time-based easing keeps
-it identical at 60 Hz and 120 Hz (see `ScrollAnimationSettings`).
+it identical at 60 Hz and 120 Hz (see `ScrollAnimationSettings`). The link is
+created, started, and stopped only when the presentation has to move.
+`CVDisplayLinkCreateWithActiveCGDisplays` + start + stop measures ~0.5 ms on
+its own, and a wheel confirmation's offset is applied directly with its
+repaint rather than eased, so the old unconditional start ran that cycle once
+per wheel step and queued a tick on the main thread at frame time for an
+animation that had nothing to animate.
+
+Measured full-viewport draw after caching (`GridContentLayer` into an offscreen
+bitmap, 12 runs per row):
+
+| Grid | Release | Debug |
+|------|---------|-------|
+| 200×60 | 4.9 ms | 8.0 ms |
+| 120×40 | 2.2 ms | 3.8 ms |
+| 80×24  | 1.1 ms | 1.9 ms |
 
 ## Signposts
 

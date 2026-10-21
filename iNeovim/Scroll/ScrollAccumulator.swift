@@ -26,34 +26,27 @@ enum ScrollLineRequest: Equatable, Sendable {
 ///   `grid_scroll`.
 ///
 /// The visual offset is the *unconfirmed* part of `credit`, so the content
-/// layer can follow the finger while Neovim's scroll is in flight. Neovim
-/// only ever draws the visible screenful, so a lead of a whole line or more
-/// is space Neovim has not painted: blank space, and the longer the lead
-/// stands the more blank lines appear. A gesture that wants such a lead means
-/// Neovim is not keeping up with it — a stalled session, or a scroll at the
-/// buffer's edge, where nothing is ever confirmed — so the lead is suspended
-/// (the content then moves with Neovim's confirmations alone) until the next
-/// confirmation proves Neovim is scrolling again. Whole-line wheel steps trip
-/// this on their first step, so a wheel never draws ahead of Neovim at all;
-/// trackpad gestures keep the sub-line part, which is what makes a drag look
-/// smooth.
+/// layer can follow the wheel or the finger while Neovim's scroll is in
+/// flight. Neovim only ever draws the visible screenful, so a lead is space
+/// it has not painted: the content may lead by at most one line, which is
+/// exactly one wheel notch. A notch moves the content at once and the
+/// `grid_scroll` Neovim answers with replaces the lead a frame or two later
+/// with the row it painted; a burst that gets further ahead is clamped to the
+/// same line and caught up by the confirmations. A lead Neovim never confirms
+/// — the buffer's edge — is given up by the controller once the gesture ends.
 struct ScrollAccumulator: Equatable, Sendable {
-    /// Largest visual lead allowed — one cell height, i.e. the sub-line part
-    /// of the gesture. A gesture that reaches it suspends the lead.
+    /// Largest visual lead allowed — one cell height, i.e. exactly one
+    /// whole-line wheel step.
     var maxLead: CGFloat
     private(set) var credit: CGFloat = 0
     private(set) var sent: CGFloat = 0
     private(set) var confirmed: CGFloat = 0
-    /// Suppressed because Neovim has not confirmed a whole line of the lead;
-    /// cleared by the next confirmation.
-    private(set) var leadSuspended = false
 
     init(maxLead: CGFloat = 0) {
         self.maxLead = maxLead
     }
 
     var offset: CGFloat {
-        guard !leadSuspended else { return 0 }
         let lead = credit - confirmed
         // Clamp to the gesture's direction as well as to the cap: a
         // confirmation that outruns the gesture (a late one, or Neovim
@@ -73,9 +66,6 @@ struct ScrollAccumulator: Equatable, Sendable {
     mutating func addDelta(_ delta: CGFloat, lineHeight: CGFloat) -> [ScrollLineRequest] {
         guard lineHeight > 0, delta.isFinite, delta != 0 else { return [] }
         credit += delta
-        if maxLead > 0, abs(credit - confirmed) >= maxLead {
-            leadSuspended = true
-        }
 
         var requests: [ScrollLineRequest] = []
         var remainder = credit - sent
@@ -93,21 +83,26 @@ struct ScrollAccumulator: Equatable, Sendable {
     }
 
     /// Neovim scrolled the grid by `rows` (positive moves content up — the
-    /// response to a `.down` request), shrinking the visual lead. The lead
-    /// only resumes once the backlog is gone: Neovim catching up a line while
-    /// still behind must not re-expose space it has not drawn.
+    /// response to a `.down` request), shrinking the visual lead. The clamp in
+    /// `offset` bounds a catch-up that is itself behind: no more of the
+    /// unpainted screen is exposed than the cap allows.
     mutating func confirmScroll(rows: Int, lineHeight: CGFloat) {
         guard lineHeight > 0 else { return }
         confirmed += CGFloat(-rows) * lineHeight
-        leadSuspended = maxLead > 0 && abs(credit - confirmed) >= maxLead
     }
 
-    /// Start a new gesture, preserving the current visual offset.
+    /// Start a new gesture, preserving the current visual offset. The part of
+    /// that offset already requested is carried over as `sent`, not reset:
+    /// re-requesting a line still in flight would scroll it twice when the
+    /// new gesture's first step crosses a line.
     mutating func beginGesture() {
-        credit = offset
-        sent = 0
+        let preserved = offset
+        let inFlight = sent - confirmed
+        credit = preserved
+        sent = preserved >= 0
+            ? min(max(inFlight, 0), preserved)
+            : max(min(inFlight, 0), preserved)
         confirmed = 0
-        leadSuspended = false
     }
 
     /// Give up on the unconfirmed lead (snap-back). The request accounting is
@@ -115,6 +110,5 @@ struct ScrollAccumulator: Equatable, Sendable {
     /// against the gesture; the direction clamp keeps it at rest.
     mutating func collapse() {
         confirmed = credit
-        leadSuspended = true
     }
 }

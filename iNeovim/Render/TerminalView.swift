@@ -771,13 +771,28 @@ final class TerminalView: NSView {
         (active ? NSCursor.pointingHand : NSCursor.arrow).set()
     }
 
-    /// Grid cell under a point in view coordinates, via the same
-    /// inset-adjusted math as the mouse handler.
+    /// View point → grid point, via the same math the mouse handler uses.
+    /// The live scroll lead translates the scrolling region, so the content
+    /// drawn under the pointer is that much further along the grid; the
+    /// frozen footer never moves and is left alone.
+    func gridPoint(forViewPoint point: CGPoint) -> CGPoint {
+        var y = point.y - Self.contentInset
+        if let grid = snapshot?.grid, !grid.isEmpty {
+            let footerTop = Self.gridRowY(
+                max(0, grid.height - Self.frozenFooterRows),
+                gridHeight: grid.height,
+                cellHeight: metrics.cellSize.height
+            )
+            if y < footerTop { y -= scrollAnimator.presentationOffset }
+        }
+        return CGPoint(x: point.x - Self.contentInset, y: y)
+    }
+
+    /// Grid cell under a point in view coordinates.
     private func gridCell(atViewPoint point: CGPoint) -> (row: Int, col: Int)? {
         guard let dimensions = gridDimensions else { return nil }
-        let gridPoint = CGPoint(x: point.x - Self.contentInset, y: point.y - Self.contentInset)
         return MouseHandler.cellLocation(
-            for: gridPoint,
+            for: gridPoint(forViewPoint: point),
             cellSize: metrics.cellSize,
             gridWidth: dimensions.width,
             gridHeight: dimensions.height
@@ -1004,6 +1019,10 @@ final class TerminalView: NSView {
             gridLayer.update(snapshot: snapshot)
             gridLayer.invalidate(cellRects: cellRects)
         }
+        // A wheel confirmation's visual offset belongs to this repaint: swap
+        // the one-line lead for the rows Neovim just painted in the same
+        // frame, before the transform is ever committed on its own.
+        scrollController.applyConfirmedOffset()
         updateFooterGeometry()
         refreshBackgroundColor()
         updateStatuslineLayer()

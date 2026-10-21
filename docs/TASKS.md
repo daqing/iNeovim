@@ -124,9 +124,10 @@ Hand-rolled, no third-party dependency. Pure, stateless, and testable.
   `CADisplayLink`-driven animator for the visual offset.
 - **T7.3** Logical sync: accumulate pixel deltas → whole lines → send scrolls to
   Neovim; apply incoming `grid_scroll` events to the grid.
-- **T7.4** Offset clamping: lead the grid by at most one cell (the sub-line
-  part of a gesture); a whole line of lead is space Neovim has not drawn, so a
-  gesture wanting one has the lead suspended instead of exposing blank space.
+- **T7.4** Offset clamping: lead the grid by at most one line — exactly one
+  wheel notch. The notch moves the content at once and the confirmation's
+  repaint replaces the one line Neovim had not drawn yet (see the revised
+  policy in `AGENTS.md`).
 - **T7.5** Cursor glide: interpolate cursor position over ~50–100 ms instead of
   jumping.
 - **T7.6** Animation tuning: curves, and 120 Hz ProMotion behavior.

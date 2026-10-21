@@ -131,6 +131,20 @@ way shows the mirror behavior (blank at the top edge, footer still planted).
 Automated check: `FrozenFooterTests` pins the row slices, the layers' tiling,
 and which layer draws a cursor in the cmdline row.
 
+Wheel check (traditional mouse wheel, no trackpad):
+
+1. Scroll through a long file at a steady pace, then spin the wheel fast.
+2. Watch the leading edge of the text and then scroll at the top or bottom of
+   the buffer.
+
+Expected: each notch moves the content in the wheel's own frame (no step
+waiting for the round trip), with at most one line of background at the
+leading edge until Neovim's `grid_scroll` paints the revealed row a frame or
+two later; the text never jumps back. At the buffer's edge the one-line lead
+is held only while the wheel is moving and eases back once it stops, instead
+of staying blank. Automated check: `ScrollAccumulatorTests` pins the one-line
+lead, the burst clamp, and the confirmation.
+
 ## Native terminal pane (Ghostty)
 
 A typed `:terminal` opens a native Ghostty terminal pane docked to the right

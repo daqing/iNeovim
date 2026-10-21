@@ -226,6 +226,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `MouseHandler`, wheel pointer `ScrollController`, IME preedit rects)
   subtract the inset, and row↔y math everywhere goes through
   `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent.
+  Pointer hit-testing (`MouseHandler`, link hover) goes through
+  `TerminalView.gridPoint(forViewPoint:)`, which also subtracts the live
+  scroll lead for points in the scrolling region — with a one-line lead the
+  cell under the pointer is one row further along the grid — but not in the
+  frozen footer, which never moves.
 - **Full-width statusline bar:** the statusline row (the one above the cmdline
   row) gets a backdrop layer (`TerminalView.statuslineLayer`, below the grid
   layers) filled with the OPPOSITE theme mode's default background — a
@@ -603,32 +608,49 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   blank-space symptom — so `ScrollLineRequest.wheelButton` owns the mapping.
   Horizontal wheel input is not sent yet (`wheelleft`/`wheelright` require
   nvim 0.10; the minimum is 0.9) — horizontal deltas are ignored for now.
-- **Scroll lead limit (T7.4):** the content may lead Neovim's scroll by at
-  most one cell — the sub-line part of the gesture, which is what makes a drag
-  look smooth (`ScrollAccumulator.offset`). A single grid has no pixels beyond
-  the visible screenful, so a whole line of lead is space Neovim has not
-  painted: blank space above/below the text that stands as long as the lead
-  does. A gesture that wants one therefore has the lead suspended — a
-  whole-line wheel step immediately, and any gesture at the buffer's edge,
-  where nothing is ever confirmed — and the content then moves with Neovim's
-  confirmations alone until a confirmation proves the backlog is gone.
-  Deltas are never dropped: the old cap throttled requests past it, which made
-  the content fall behind the wheel *and* left up to a screen of blank. The
-  lead translates the scrolling grid layer only — never the frozen footer, and
-  never past the clip band above it (see "Frozen footer" above).
+- **Scroll lead (T7.4, revised):** the content may lead Neovim's scroll by at
+  most one line — exactly one wheel notch (`ScrollAccumulator.offset`). A
+  notch therefore moves the content in the wheel's own frame instead of
+  waiting for the round trip, which is what makes wheel scrolling feel like a
+  native scroll instead of a sequence of steps. A single grid has no pixels
+  beyond the visible screenful, so that lead is one line Neovim has not
+  painted yet; the `grid_scroll` it answers with arrives a frame or two later,
+  and the flush that carries it swaps the lead for the newly painted row in
+  the same main-actor turn as the grid repaint
+  (`ScrollController.applyConfirmedOffset`, called from
+  `TerminalView.apply(snapshot:cellRects:)`). The ordering is the point: an
+  offset applied before that repaint, or eased back over later frames, makes
+  the already-painted content slide the wrong way for a frame. A burst of
+  notches Neovim has not answered is clamped to the same one line, so a fast
+  spin exposes at most that one line of unpainted space and the confirmations
+  drain the rest; a lead Neovim never confirms — the buffer's edge — is held
+  while the gesture lasts and given up after `confirmationGrace`, so it never
+  stands. (The earlier policy suspended a whole-line lead outright, which is
+  why wheel steps used to move only when Neovim answered.) Deltas are never
+  dropped: throttling requests past the cap made the content fall behind the
+  wheel *and* left up to a screen of blank. The lead translates the scrolling
+  grid layer only — never the frozen footer, and never past the clip band
+  above it (see "Frozen footer" above).
 - **Animation pacing (T7.6):** all easing is time-based (elapsed/duration,
   sampled from `CVDisplayLink` frame timestamps), so animation speed is
   identical at 60 Hz and 120 Hz ProMotion; ProMotion just samples the curve
-  more often. Tuning lives in `ScrollAnimationSettings`.
-- **Scroll repaint cost:** because wheel scrolling is confirmation-bound
-  (§ Scroll lead limit), each wheel step repaints the whole viewport on the
-  main thread, and every avoidable cost there shows up as lag behind the
-  wheel. `GridContentLayer` therefore caches shaped runs (`lineCache`) keyed
-  by run text, font variant, and foreground color — the foreground must be
-  part of the key because Core Text bakes it into the `CTLine` rather than
-  taking the context fill color — and drops the cache when highlights, the
-  default colors, the font, or the window appearance change (the adaptive
-  `.textColor` fallback resolves at shaping time). Runs whose background
+  more often. Tuning lives in `ScrollAnimationSettings`. `ScrollAnimator`
+  starts the display link only when the presentation actually has to move:
+  every `grid_scroll` confirmation applies its offset directly with the
+  repaint it accounts for, so there is nothing to chase, and starting a link
+  just to chase 0→0 cost a thread create/start/stop (measured ~0.5 ms) plus a
+  main-thread tick per wheel step — a hitch at exactly the moment the frame
+  is committed. The link runs only for the unconfirmed lead's snap-back after
+  the gesture ends.
+- **Scroll repaint cost:** every wheel step still makes Neovim repaint the
+  whole viewport (one `grid_scroll` plus the revealed row), and the flush that
+  carries it repaints on the main thread, so every avoidable cost there shows
+  up as lag behind the wheel. `GridContentLayer` therefore caches shaped runs
+  (`lineCache`) keyed by run text, font variant, and foreground color — the
+  foreground must be part of the key because Core Text bakes it into the
+  `CTLine` rather than taking the context fill color — and drops the cache
+  when highlights, the default colors, the font, or the window appearance
+  change (the adaptive `.textColor` fallback resolves at shaping time). Runs whose background
   resolves to nvim's default skip their fill; the view's layer already paints
   it. `CellRenderer.runs` accumulates a run in locals and appends it when it
   ends, instead of mutating `runs[last]` per cell (which copied the run's text

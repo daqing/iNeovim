@@ -2,11 +2,11 @@ import Foundation
 import os
 
 /// Drives the content layer's scroll offset. While a gesture is active the
-/// offset is applied directly (1:1 with the trackpad); afterwards the
-/// presentation chases the target with an exponential time-based decay, which
-/// both snaps back unconfirmed lead and smooths out late `grid_scroll`
-/// confirmations. Time-based easing keeps the settle identical at 60 Hz and
-/// 120 Hz ProMotion refresh rates.
+/// offset is applied directly (1:1 with the wheel or trackpad), and each
+/// `grid_scroll` confirmation is applied in the same turn as the repaint it
+/// accounts for; the exponential chase only eases the unconfirmed lead back
+/// to rest after the gesture. Time-based easing keeps the settle identical at
+/// 60 Hz and 120 Hz ProMotion refresh rates.
 final class ScrollAnimator {
     private lazy var driver = DisplayLinkDriver { [weak self] timestamp in
         self?.tick(timestamp: timestamp)
@@ -26,7 +26,12 @@ final class ScrollAnimator {
     ///   display-link chase when true.
     func setTarget(_ value: CGFloat, animated: Bool) {
         target = value
-        if animated && settings.scrollEnabled {
+        // Nothing to chase: confirmations and wheel steps apply their offset
+        // directly, so most targets equal the presentation, and starting a
+        // display link for that costs a thread create/start plus a
+        // main-thread tick — real jitter on a fast wheel. The link is only
+        // started when the presentation actually has to move.
+        if animated, settings.scrollEnabled, value != presentation {
             lastTimestamp = nil
             driver.start()
         } else {
