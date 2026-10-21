@@ -135,9 +135,6 @@ final class TerminalView: NSView {
     /// Native ext_popupmenu completion panel, placed above the content layer
     /// at the anchor nvim reports.
     private let completionPanel = CompletionPanelView()
-    /// Native ⌘P file finder; presented centered over the editor and hidden
-    /// again after a pick or cancel.
-    private let openQuicklyPanel = OpenQuicklyPanel()
     /// Native popover listing the diagnostics on a gutter sign's line.
     private let diagnosticPopover = DiagnosticPopover()
     private let scrollAnimator = ScrollAnimator()
@@ -293,14 +290,6 @@ final class TerminalView: NSView {
         }
         addSubview(completionPanel)
         completionPanel.isHidden = true
-        addSubview(openQuicklyPanel)
-        openQuicklyPanel.isHidden = true
-        openQuicklyPanel.onOpen = { [weak self] path in
-            self?.openQuickly(path: path)
-        }
-        openQuicklyPanel.onClose = { [weak self] in
-            self?.dismissOpenQuickly()
-        }
         registerForDraggedTypes([.fileURL])
         imeHandler.view = self
         mouseHandler.view = self
@@ -562,50 +551,6 @@ final class TerminalView: NSView {
                 model.inputDispatcher.send(.keys("<Esc>"))
             }
         }
-    }
-
-    // MARK: - Open Quickly (⌘P)
-
-    /// Toggle the native file finder; presented centered over the editor.
-    func toggleOpenQuickly() {
-        if openQuicklyPanel.isHidden {
-            presentOpenQuickly()
-        } else {
-            dismissOpenQuickly()
-        }
-    }
-
-    private func presentOpenQuickly() {
-        positionOpenQuicklyPanel()
-        openQuicklyPanel.isHidden = false
-        window?.makeFirstResponder(openQuicklyPanel.preferredFocus)
-        Task { @MainActor in
-            let cwd = (try? await model.client.currentDirectory()) ?? ""
-            guard !openQuicklyPanel.isHidden, !cwd.isEmpty else { return }
-            let files = await QuicklyFileSource.collect(cwd: cwd)
-            guard !openQuicklyPanel.isHidden else { return }
-            openQuicklyPanel.present(files: files, workingDirectory: cwd)
-        }
-    }
-
-    private func dismissOpenQuickly() {
-        openQuicklyPanel.isHidden = true
-        window?.makeFirstResponder(self)
-    }
-
-    private func openQuickly(path: String) {
-        dismissOpenQuickly()
-        Task { @MainActor in
-            guard let escaped = try? await model.client.fnameescape(path) else { return }
-            try? await model.client.command("edit \(escaped)")
-        }
-    }
-
-    private func positionOpenQuicklyPanel() {
-        let size = OpenQuicklyPanel.panelSize
-        let x = (bounds.width - size.width) / 2
-        let y = max((bounds.height - size.height) / 2, 0)
-        openQuicklyPanel.setFrameOrigin(CGPoint(x: x, y: y))
     }
 
     // Standard Edit-menu actions reach the first responder through the
@@ -1002,7 +947,6 @@ final class TerminalView: NSView {
         updateFooterGeometry()
         updateStatuslineLayer()
         updateCompletionPanel()
-        positionOpenQuicklyPanel()
     }
 
     private var backingScale: CGFloat {

@@ -46,11 +46,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── SettingsView.swift    settings window
 │   ├── SetupView.swift       first-run guidance when no nvim is installed
 │   ├── EditorCommands.swift  File + Neovim menu commands
-│   ├── OpenQuicklyPanel.swift  native ⌘P file finder panel
-│   ├── QuicklyFileSource.swift  first-level directory listing for the panel
 │   ├── DiagnosticsStore.swift  per-session aggregated LSP diagnostics
 │   ├── ProblemsPanel.swift   docked non-modal issues sidebar
-│   ├── FuzzyMatcher.swift    fzf --filter front end with in-process fallback
 │   └── CommandLineTool.swift  installs the ineovim launcher into PATH
 ├── Logging.swift         os.Logger categories (rpc, render, input, app)
 ├── NvimDiscovery.swift   Locates the nvim binary and checks its version
@@ -290,22 +287,6 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `params[0].first` is itself an array; treating every single-argument
   notification as the pre-0.10 shape silently parses the whole-screen
   baseline to zero events and leaves stale rows.
-- **Open Quickly (⌘P):** a native file finder, deliberately outside nvim —
-  `EditorCommands` routes ⌘P to the key window's TerminalView, which
-  presents `OpenQuicklyPanel` (vibrancy panel: `NSSearchField` +
-  `NSTableView` + path preview, centered over the editor, focus moves into
-  the panel and back to the terminal on close). The list shows the FIRST
-  LEVEL of the current directory only (`QuicklyFileSource`: `fd
-  --max-depth 1` respecting .gitignore → `find -maxdepth 1`, non-hidden);
-  Enter on a directory re-collects that directory's children (drill-down,
-  with a `..` row to go back up) — never a recursive walk, so huge trees
-  cannot stall it. Ranking goes through `FuzzyMatcher`, which shells out to
-  `fzf --filter` when the binary exists (homebrew paths are probed — the
-  GUI PATH does not include them) and otherwise falls back to an
-  in-process subsequence scorer; selected rows use the OS accent color.
-  Picking a file sends `:edit <fnameescape(path)>` over RPC. This panel is
-  also the safe replacement for tree-walking fzf usage in huge
-  directories: it never spawns a TUI and caps its sources.
 - **Child-process environment:** nvim is spawned with an augmented PATH —
   the GUI PATH omits version managers (rbenv/asdf) and Homebrew, so tools
   nvim spawns (LSP servers, formatters) silently fell back to system
@@ -313,9 +294,8 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   modern Gemfile. `NvimProcess.augmentedEnvironment()` prepends
   `~/.rbenv/shims`, `~/.asdf/shims`, `~/.local/bin`, `/opt/homebrew/bin`,
   and `/usr/local/bin` (inherited PATH kept at the end). The same GUI-PATH
-  limitation is why `NvimDiscovery`, `FuzzyMatcher`, and
-  `QuicklyFileSource` probe absolute Homebrew paths instead of relying on
-  PATH.
+  limitation is why `NvimDiscovery` probes absolute Homebrew paths instead
+  of relying on PATH.
 - **fzf tree-walk guard:** typed cmdline input is funneled through
   `TerminalView.sendKeys`, which accumulates the command text while nvim
   reports cmdline mode (`TerminalView.isCmdlineMode`: nvim's UI protocol
@@ -327,7 +307,7 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   an `NSAlert` asks whether to run anyway (Cancel sends `<Esc>` instead) —
   walking either tree has frozen the machine (625k+ entries under `$HOME`).
   Commands triggered by mappings/plugins bypass the cmdline and are not
-  gated; the native Open Quickly panel is the safe replacement.
+  gated.
 - **Key repeat over press-and-hold:** printable keys reach nvim through the
   text input system (the `keyDown` → `interpretKeyEvents` path), where macOS
   "press and hold" (the accent popup) replaces system key repeat — letters
@@ -423,13 +403,12 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   (`:edit` when the path differs from the current buffer →
   `nvim_win_set_cursor`) and the panel keeps focus, so the arrow keys walk
   the list. The panel is created once per window and stays subscribed while
-  hidden. It opens only on demand — ⌥P or the Neovim menu's "Toggle
+  hidden. It opens only on demand — ⌘P or the Neovim menu's "Toggle
   Problems" — and closes via the header ✕ or the same toggle; nothing pops
-  it open automatically and no settings gate exists. The ⌥P chord is claimed
-  by the same `AppDelegate` keyDown monitor as the other Option-only chords:
-  SwiftUI registers the
-  ⌥P menu equivalent but never fires it (a bare AppKit item with the same
-  registration does match a real Option keypress), so the monitor does the
+  it open automatically and no settings gate exists. The ⌘P chord is claimed
+  by the same `AppDelegate` keyDown monitor as ⌘D and ⌘⇧T: SwiftUI registers
+  the ⌘P menu equivalent but never fires it (a bare AppKit item with the
+  same registration does match a real keypress), so the monitor does the
   work and the menu entry is display-only.
 - **Command-line tool (Neovim ▸ Install Command Line Tool…):** writes an
   `ineovim` shell script into the first of `~/.local/bin`, `/opt/homebrew/bin`,
@@ -526,13 +505,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `SurfaceView.performKeyEquivalent` would otherwise consume ⌘D for its
   default `new_split:right` binding while the pane is focused, so the menu
   shortcut alone only ever opened the pane. The same monitor claims ⌘⇧T (the
-  focus toggle) and the exact ⌥P chord. ⌘⇧T
+  focus toggle) and ⌘P (the problems panel). ⌘⇧T
   switches keyboard focus between the editor and the pane (an `AppModel`
   `.toggleFocus` intent that `EditorSplitView` resolves from
   `window.firstResponder`: focus inside the pane → editor, anything else →
-  pane), opening and focusing the pane first when it is hidden; when "Option
-  as Meta" is on ⌥P goes to nvim as `<M-p>` and the pane stays on ⌘D/⌃`
-  alone; the
+  pane), opening and focusing the pane first when it is hidden; the
   settings toggle
   "Open :terminal in native pane" only gates the cmdline interception
   (mappings/plugins/RPC `:terminal` bypass `sendKeys` and keep nvim's

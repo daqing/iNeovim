@@ -93,7 +93,7 @@ aligned.
   shown in full: a one-line message (e.g. pycodestyle's `E302 expected 2
   blank lines, found 1`) fits entirely instead of losing its last word, and a
   long message wraps inside the popover at its 440 pt cap.
-- **Problems panel (⌥P):** in a project with LSP diagnostics, press ⌥P (or
+- **Problems panel (⌘P):** in a project with LSP diagnostics, press ⌘P (or
   use **Neovim ▸ Toggle Problems**): the issues sidebar docks at the window's
   left edge, listing every error/warning/info/hint with counts in the header.
   A long message wraps to the panel width and is shown in full above its

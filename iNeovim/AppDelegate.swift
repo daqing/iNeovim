@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
             case (.control, "`"):
                 return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
-            case (.option, "p"):
+            case (.command, "p"):
                 return MainActor.assumeIsolated(Self.claimProblemsPanelChord) ? nil : event
             case ([.command, .shift], "t"):
                 return MainActor.assumeIsolated(Self.claimTerminalPaneFocusChord) ? nil : event
@@ -124,14 +124,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// ⌥P toggles the problems panel like its menu item, which is display-only:
-    /// SwiftUI registers the ⌥P equivalent but never fires it (bare AppKit
-    /// items do — verified against a real HID keypress), so the chord is
-    /// claimed here like the other Option-only chords. Same guards: a modal
-    /// session, or "Option as Meta" dedicating Option to nvim (`<M-p>`),
-    /// leaves it alone.
+    /// ⌘P toggles the problems panel like its menu item, which is
+    /// display-only: SwiftUI registers the ⌘P equivalent but never fires it
+    /// (bare AppKit items do — verified against a real HID keypress), so the
+    /// chord is claimed here like the other chords. A modal session leaves it
+    /// alone.
     private static func claimProblemsPanelChord() -> Bool {
-        guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
+        guard NSApp.modalWindow == nil else { return false }
         AppModel.active?.toggleProblemsPanel()
         return true
     }

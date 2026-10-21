@@ -9,8 +9,6 @@ struct EditorCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Open\u{2026}") { Self.showOpenPanel() }
                 .keyboardShortcut("o", modifiers: .command)
-            Button("Open Quickly\u{2026}") { Self.toggleOpenQuickly() }
-                .keyboardShortcut("p", modifiers: .command)
             Button("Close") { Self.closeKeyWindow() }
                 .keyboardShortcut("w", modifiers: .command)
         }
@@ -47,7 +45,7 @@ struct EditorCommands: Commands {
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             Divider()
             Button("Toggle Problems") { AppModel.active?.toggleProblemsPanel() }
-                .keyboardShortcut("p", modifiers: .option)
+                .keyboardShortcut("p", modifiers: .command)
             Divider()
             Button("Install Command Line Tool\u{2026}") { CommandLineTool.install() }
         }
@@ -84,13 +82,6 @@ struct EditorCommands: Commands {
     private static func selectNativeTab(_ index: Int) {
         guard let group = NSApp.keyWindow?.tabGroup, index >= 1, index <= group.windows.count else { return }
         group.windows[index - 1].makeKey()
-    }
-
-    /// ⌘P acts on the key window's editor view — the terminal is normally
-    /// the first responder, so the panel's own focus also routes back here.
-    private static func toggleOpenQuickly() {
-        guard let terminal = NSApp.keyWindow?.firstResponder as? TerminalView else { return }
-        terminal.toggleOpenQuickly()
     }
 
     /// ⌘W closes the key editor window — the current native tab. With only
