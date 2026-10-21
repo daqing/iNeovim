@@ -562,6 +562,7 @@ final class AppModel: ObservableObject {
     enum TerminalPaneIntent: Equatable {
         case open(TerminalPaneRequest)
         case focus
+        case focusEditor
         case close
     }
 
@@ -599,6 +600,21 @@ final class AppModel: ObservableObject {
         } else {
             requestTerminalPane(command: "")
         }
+    }
+
+    /// Menu / ⌥1 action: put keyboard focus in the editor.
+    func focusEditor() {
+        terminalPaneIntent = .focusEditor
+    }
+
+    /// Menu / ⌥2 action: put keyboard focus in the terminal pane, opening it
+    /// when it is hidden.
+    func focusTerminalPane() {
+        guard isTerminalPaneVisible else {
+            requestTerminalPane(command: "")
+            return
+        }
+        terminalPaneIntent = .focus
     }
 
     // MARK: - Diagnostics panel

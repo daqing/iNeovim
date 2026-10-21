@@ -130,11 +130,13 @@ Typing `:terminal` opens a native terminal pane docked to the right of the
 editor — a real Ghostty terminal surface (libghostty), not a terminal buffer
 inside Neovim. The pane starts in Neovim's working directory
 (`:term <cmd>` runs a command instead of a shell), mirrors the editor's font
-and colors, and follows `⌃\``, `⌥T`, or **Neovim ▸ Toggle Terminal Pane**. The
-interception can be disabled in Settings to fall back to Neovim's in-buffer
-terminal. The embedded GhosttyKit binary and its adapted Swift bindings are
-vendored under `Packages/GhosttySupport` (built from a pinned Ghostty source
-snapshot; see its `ADAPTATION.md`).
+and colors, and follows `⌃\``, `⌥T`, or **Neovim ▸ Toggle Terminal Pane**.
+`⌥1` moves keyboard focus to the editor and `⌥2` to the pane — opening the
+pane first when it is hidden — so you can move back and forth without the
+mouse. The interception can be disabled in Settings to fall back to Neovim's
+in-buffer terminal. The embedded GhosttyKit binary and its adapted Swift
+bindings are vendored under `Packages/GhosttySupport` (built from a pinned
+Ghostty source snapshot; see its `ADAPTATION.md`).
 
 ## Requirements
 

@@ -50,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
             case "p":
                 return MainActor.assumeIsolated(Self.claimProblemsPanelChord) ? nil : event
+            case "1":
+                return MainActor.assumeIsolated(Self.claimEditorFocusChord) ? nil : event
+            case "2":
+                return MainActor.assumeIsolated(Self.claimTerminalPaneFocusChord) ? nil : event
             default:
                 return event
             }
@@ -75,6 +79,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func claimProblemsPanelChord() -> Bool {
         guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
         AppModel.active?.toggleProblemsPanel()
+        return true
+    }
+
+    /// ⌥1 puts keyboard focus in the editor. Same guards as the other
+    /// Option-only chords.
+    private static func claimEditorFocusChord() -> Bool {
+        guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
+        AppModel.active?.focusEditor()
+        return true
+    }
+
+    /// ⌥2 puts keyboard focus in the terminal pane, opening it when it is
+    /// hidden. Same guards as the other Option-only chords.
+    private static func claimTerminalPaneFocusChord() -> Bool {
+        guard NSApp.modalWindow == nil, !AppSettings.shared.optionAsMeta else { return false }
+        AppModel.active?.focusTerminalPane()
         return true
     }
 

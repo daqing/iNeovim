@@ -175,6 +175,8 @@ final class EditorSplitView: NSView {
             if let pane {
                 window?.makeFirstResponder(pane.surfaceView)
             }
+        case .focusEditor:
+            window?.makeFirstResponder(terminalView)
         case .close:
             closePane(removeImmediately: false)
         }

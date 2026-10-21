@@ -441,9 +441,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   instead of keeping its original theme. Menu "Toggle Terminal
   Pane" / ⌃` toggles regardless of focus, and so does ⌥T — a local keyDown
   monitor in `AppDelegate` (SwiftUI menu items can carry only one shortcut)
-  claims the exact ⌥T and ⌥P chords before dispatch; when "Option as Meta" is
+  claims the exact ⌥T, ⌥P, ⌥1, and ⌥2 chords before dispatch. ⌥1 focuses the
+  editor (`AppModel.focusEditor` publishes a `.focusEditor` intent that
+  `EditorSplitView` turns into `makeFirstResponder(terminalView)`), and ⌥2
+  focuses the pane (`focusTerminalPane` publishes `.focus`, opening the pane
+  first when it is hidden); when "Option as Meta" is
   on the
-  chord goes to nvim as `<M-t>` and the pane stays on ⌃` alone; the settings
+  chord goes to nvim as `<M-t>`/`<M-p>`/`<M-1>`/`<M-2>` and the pane stays on
+  ⌃` alone; the settings
   toggle
   "Open :terminal in native pane" only gates the cmdline interception
   (mappings/plugins/RPC `:terminal` bypass `sendKeys` and keep nvim's
