@@ -16,10 +16,32 @@ Two avoidable costs were removed:
   once per run. The layer now resolves each highlight id once per frame and
   caches it, so a row with many same-attribute runs resolves one color.
 
-Core Text shaping (`CTLineCreateWithAttributedString` per run) remains the
-dominant cost and is intentionally not cached: run text changes constantly and
-ligatures are shaped across a whole run, so a line cache would rarely hit and
-would be invalidated by every `hl_attr_define`.
+Core Text shaping (`CTLineCreateWithAttributedString` per run plus
+`CellRenderer.shiftGroups`) turned out to be the dominant cost of wheel
+scrolling, because every scroll step repaints the whole viewport. Those rows
+are the ones that were already on screen a line earlier, so their shaping is
+reused: `GridContentLayer` keeps a `lineCache` keyed by the run's text, font
+variant, and foreground color (the foreground is baked into the `CTLine` —
+Core Text does not inherit the context fill color). The cache is dropped on
+any highlight/default-color change, a font change, and an appearance change
+(the adaptive `.textColor` fallback resolves at shaping time). Only shapes
+whose color actually differs can collide across theme flips, and those
+collisions are ruled out by the key.
+
+Two more scroll-frame costs were removed:
+
+- The per-run background fill skipped runs that resolve to nvim's default
+  background; the view's layer already paints it. Filling it per run repainted
+  every cell on every scroll step.
+- `CellRenderer.runs(forRow:)` accumulates the current run in locals and
+  appends it only when the run ends. Writing through `runs[last]` on each cell
+  copied the run's text and slot array per cell (both were shared with the
+  stored value), costing ~6 ms per full-screen frame in a Debug build.
+
+`TerminalView` also coalesces flush applies: while one main-actor apply is
+queued, later flushes only accumulate dirty cells, and the apply reads the
+newest snapshot. A wheel burst that nvim answers with several flushes now
+costs one repaint instead of one per flush.
 
 **RPC (`RPCSession.feed`/`handleMessage`)** — the incremental `MsgPackDecoder`
 is the hot path; encoding is batched per notification and cheap. No changes
@@ -47,7 +69,7 @@ averages against these recorded values on an Apple-silicon Mac:
 
 | Test | Steady-state average |
 |------|----------------------|
-| `testRunGroupingFullScreen` (200×60 rows) | ~5.8 ms |
+| `testRunGroupingFullScreen` (200×60 rows) | ~3.5 ms (was ~5.8 ms) |
 | `testGridScrollThroughput` (60×200 region) | ~2.2 ms |
 | `testMsgPackEncodeThroughput` (24-row redraw) | ~0.2 ms |
 | `testMsgPackDecodeThroughput` (24-row redraw) | ~0.3 ms |

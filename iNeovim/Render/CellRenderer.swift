@@ -42,36 +42,57 @@ enum CellRenderer {
     static func runs<C: Collection>(forRow row: C) -> [StyledRun] where C.Element == GridCell {
         var runs: [StyledRun] = []
         var previousHadText = false
+        var text = ""
+        var attrId = 0
+        var startCol = 0
         var runTextUTF16 = 0
-        var runStartCol = 0
+        var slots: [StyledRunSlot] = []
+        // The run under construction is accumulated in locals and appended
+        // only when it ends. Writing through `runs[last]` on every cell made
+        // each cell copy the run's text and slot array (both were shared with
+        // the stored value), which cost ~6 ms per full-screen frame in Debug.
+        func flush(endCol: Int) {
+            runs.append(StyledRun(
+                text: text,
+                attrId: attrId,
+                startCol: startCol,
+                endCol: endCol,
+                slots: slots
+            ))
+            slots = []
+        }
         for (index, cell) in row.enumerated() {
-            if cell.text.isEmpty, previousHadText, !runs.isEmpty {
-                runs[runs.count - 1].endCol = index + 1
-                runs[runs.count - 1].slots[runs[runs.count - 1].slots.count - 1].cols = 2
+            if cell.text.isEmpty, previousHadText, !slots.isEmpty {
+                slots[slots.count - 1].cols = 2
                 previousHadText = false
                 continue
             }
-            if let last = runs.last, last.attrId == cell.attrId {
-                runs[runs.count - 1].endCol = index + 1
-                runs[runs.count - 1].text += cell.text
-                runs[runs.count - 1].slots.append(StyledRunSlot(
+            if slots.isEmpty {
+                attrId = cell.attrId
+                startCol = index
+                text = cell.text
+                runTextUTF16 = cell.text.utf16.count
+                slots.append(StyledRunSlot(utf16: 0, col: 0, cols: 1))
+            } else if attrId == cell.attrId {
+                text += cell.text
+                slots.append(StyledRunSlot(
                     utf16: runTextUTF16,
-                    col: index - runStartCol,
+                    col: index - startCol,
                     cols: 1
                 ))
                 runTextUTF16 += cell.text.utf16.count
             } else {
-                runs.append(StyledRun(
-                    text: cell.text,
-                    attrId: cell.attrId,
-                    startCol: index,
-                    endCol: index + 1,
-                    slots: [StyledRunSlot(utf16: 0, col: 0, cols: 1)]
-                ))
+                flush(endCol: index)
+                attrId = cell.attrId
+                startCol = index
+                text = cell.text
                 runTextUTF16 = cell.text.utf16.count
-                runStartCol = index
+                slots.append(StyledRunSlot(utf16: 0, col: 0, cols: 1))
             }
             previousHadText = !cell.text.isEmpty
+        }
+        if !slots.isEmpty {
+            flush(endCol: row.count)
         }
         return runs
     }

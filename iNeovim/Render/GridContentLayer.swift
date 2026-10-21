@@ -71,6 +71,36 @@ final class GridContentLayer: CALayer {
     /// touched two far-apart cells doesn't make us shape every row between.
     private var pendingCellRects: [CellRect] = []
 
+    /// Shaped lines and their cell-pinning groups, keyed by everything that
+    /// affects shaping. A scroll repaints the whole viewport, but the rows it
+    /// repaints are the rows that were already on screen (shifted by a line),
+    /// so without this every wheel step re-shaped every visible run with Core
+    /// Text — the dominant cost of a scroll frame.
+    private var lineCache: [LineKey: CachedLine] = [:]
+    private static let lineCacheLimit = 2048
+
+    private struct LineKey: Hashable {
+        var text: String
+        var variant: FontVariants.Variant
+        var foregroundKey: Int
+    }
+
+    private struct CachedLine {
+        var line: CTLine
+        var groups: [CellRenderer.GlyphShiftGroup]
+    }
+
+    /// Cache key for an adaptive AppKit foreground; nvim's packed colors are
+    /// non-negative, so the sentinels cannot collide with them.
+    static let adaptiveForegroundKey = -1
+    static func statuslineForegroundKey(themeIsDark: Bool?) -> Int {
+        switch themeIsDark {
+        case .some(true): return -2
+        case .some(false): return -3
+        case .none: return -4
+        }
+    }
+
     init(metrics: FontMetrics) {
         self.metrics = metrics
         self.fonts = FontVariants(metrics.font)
@@ -115,6 +145,13 @@ final class GridContentLayer: CALayer {
     /// Apply a fresh snapshot and resize to the grid's content size (the
     /// bounds change invalidates the whole layer).
     func update(snapshot: ScreenSnapshot) {
+        if let previous = self.snapshot,
+           previous.highlights != snapshot.highlights
+            || previous.defaultForeground != snapshot.defaultForeground
+            || previous.defaultBackground != snapshot.defaultBackground
+            || previous.defaultSpecial != snapshot.defaultSpecial {
+            lineCache.removeAll(keepingCapacity: true)
+        }
         self.snapshot = snapshot
         let size: CGSize
         if let grid = snapshot.grid, !grid.isEmpty, !sliceRange.isEmpty {
@@ -147,7 +184,15 @@ final class GridContentLayer: CALayer {
     func updateMetrics(_ newMetrics: FontMetrics) {
         metrics = newMetrics
         fonts = FontVariants(newMetrics.font)
+        lineCache.removeAll(keepingCapacity: true)
         setNeedsDisplay()
+    }
+
+    /// Drop cached shaping. The adaptive fallback colors (`NSColor.textColor`)
+    /// resolve against the appearance current when the line was shaped, so a
+    /// system light/dark switch must re-shape even though no highlight changed.
+    func invalidateShaping() {
+        lineCache.removeAll(keepingCapacity: true)
     }
 
     /// Mark one or more cell-coordinate regions dirty. A flush covers the
@@ -226,9 +271,9 @@ final class GridContentLayer: CALayer {
         // the opposite mode's default foreground — the theme's per-run colors
         // match the editor background, not the bar.
         let statuslineRow = grid.height >= 2 ? grid.height - 2 : -1
-        let statuslineText = TerminalView.statuslineColors(
-            themeIsDark: TerminalView.hasDarkBackground(snapshot.defaultBackground)
-        ).foreground
+        let statuslineTheme = TerminalView.hasDarkBackground(snapshot.defaultBackground)
+        let statuslineText = TerminalView.statuslineColors(themeIsDark: statuslineTheme).foreground
+        let statuslineKey = Self.statuslineForegroundKey(themeIsDark: statuslineTheme)
         for row in rows {
             let runs = CellRenderer.runs(forRow: grid.rowSlice(row))
 
@@ -239,7 +284,7 @@ final class GridContentLayer: CALayer {
                 let runRect = rect(for: run, row: row)
                 guard dirtyRects.contains(where: { $0.intersects(runRect) }) else { continue }
                 guard row != statuslineRow,
-                      let background = color(for: run.attrId, cache: &colorCache).background else { continue }
+                      let background = color(for: run.attrId, cache: &colorCache).fillBackground else { continue }
                 context.setFillColor(background.cgColor)
                 context.fill(snappedToPixels(runRect))
             }
@@ -257,7 +302,9 @@ final class GridContentLayer: CALayer {
                         ? ResolvedColors(
                             foreground: statuslineText,
                             background: nil,
-                            special: statuslineText
+                            fillBackground: nil,
+                            special: statuslineText,
+                            foregroundKey: statuslineKey
                         )
                         : color(for: run.attrId, cache: &colorCache),
                     context: context
@@ -350,8 +397,16 @@ final class GridContentLayer: CALayer {
 
     private struct ResolvedColors {
         var foreground: NSColor
+        /// The full resolved background, including nvim's default; used where
+        /// the color itself matters (the cursor's swapped glyph, preedit).
         var background: NSColor?
+        /// The background this run must paint itself; nil when it resolves to
+        /// the default, which the view's layer already paints underneath.
+        var fillBackground: NSColor?
         var special: NSColor
+        /// Shaping-cache discriminator for the foreground: the packed nvim
+        /// color, or a sentinel for an adaptive AppKit color.
+        var foregroundKey: Int
     }
 
     private func color(for attrId: Int, cache: inout [Int: ResolvedColors]) -> ResolvedColors {
@@ -369,10 +424,17 @@ final class GridContentLayer: CALayer {
             defaultSpecial: snapshot?.defaultSpecial
         )
         let foreground = resolved.foreground.flatMap(NSColor.init(packedRGB:)) ?? fallbackForeground
+        let background = resolved.background.flatMap(NSColor.init(packedRGB:))
+        // The view's own layer already paints the default background, so
+        // filling it per run only repaints the whole viewport on every
+        // scroll frame for no visible change.
+        let fillBackground = resolved.background == snapshot?.defaultBackground ? nil : background
         return ResolvedColors(
             foreground: foreground,
-            background: resolved.background.flatMap(NSColor.init(packedRGB:)),
-            special: resolved.special.flatMap(NSColor.init(packedRGB:)) ?? foreground
+            background: background,
+            fillBackground: fillBackground,
+            special: resolved.special.flatMap(NSColor.init(packedRGB:)) ?? foreground,
+            foregroundKey: resolved.foreground ?? Self.adaptiveForegroundKey
         )
     }
 
@@ -381,25 +443,26 @@ final class GridContentLayer: CALayer {
         row: Int,
         colors: ResolvedColors,
         context: CGContext,
-        translation: CGSize = .zero
+        translation: CGSize = .zero,
+        cacheable: Bool = true
     ) {
         let attr = snapshot?.highlights[run.attrId] ?? HlAttr()
-        let font = fonts.font(for: attr)
+        let variant = FontVariants.variant(for: attr)
+        let font = fonts.font(variant)
         let ctFont = font as CTFont
-
-        let attributed = NSAttributedString(string: run.text, attributes: [
-            .font: font,
-            .foregroundColor: colors.foreground,
-            // Standard ligatures on: contiguous same-style text is shaped as
-            // one CTLine above, so fonts like Fira Code ligate across cells.
-            .ligature: 1,
-        ])
-        let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+        let shaped = shapedLine(
+            for: run,
+            font: font,
+            variant: variant,
+            foreground: colors.foreground,
+            foregroundKey: colors.foregroundKey,
+            cacheable: cacheable
+        )
 
         let baseline = rowY(row) + metrics.baseline + translation.height
         let textY = bounds.height - baseline
         let originX = CGFloat(run.startCol) * metrics.cellSize.width + translation.width
-        drawPinned(line: line, slots: run.slots, originX: originX, textY: textY, context: context)
+        drawPinned(groups: shaped.groups, originX: originX, textY: textY, context: context)
 
         let thickness = max(1, CTFontGetUnderlineThickness(ctFont))
         let startX = CGFloat(run.startCol) * metrics.cellSize.width + translation.width
@@ -437,18 +500,54 @@ final class GridContentLayer: CALayer {
     /// grid; each equal-correction glyph group is drawn as one shifted
     /// CTRunDraw range instead (see `CellRenderer.shiftGroups`). Slot columns
     /// are relative to `originX`, the run's first cell.
+    /// Shape a run, or reuse the cached result when nothing that affects
+    /// shaping changed. Scrolling repaints every visible row each step, and
+    /// the rows (shifted by a line or two) are mostly the ones already shaped
+    /// in the previous frame, so this turns most of a scroll frame's Core Text
+    /// work into dictionary lookups.
+    private func shapedLine(
+        for run: StyledRun,
+        font: NSFont,
+        variant: FontVariants.Variant,
+        foreground: NSColor,
+        foregroundKey: Int,
+        cacheable: Bool
+    ) -> CachedLine {
+        let key = LineKey(text: run.text, variant: variant, foregroundKey: foregroundKey)
+        if cacheable, let cached = lineCache[key] {
+            return cached
+        }
+        let attributed = NSAttributedString(string: run.text, attributes: [
+            .font: font,
+            .foregroundColor: foreground,
+            // Standard ligatures on: contiguous same-style text is shaped as
+            // one CTLine above, so fonts like Fira Code ligate across cells.
+            .ligature: 1,
+        ])
+        let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+        let cached = CachedLine(
+            line: line,
+            groups: CellRenderer.shiftGroups(
+                for: line,
+                slots: run.slots,
+                cellWidth: metrics.cellSize.width
+            )
+        )
+        if cacheable {
+            if lineCache.count >= Self.lineCacheLimit {
+                lineCache.removeAll(keepingCapacity: true)
+            }
+            lineCache[key] = cached
+        }
+        return cached
+    }
+
     private func drawPinned(
-        line: CTLine,
-        slots: [StyledRunSlot],
+        groups: [CellRenderer.GlyphShiftGroup],
         originX: CGFloat,
         textY: CGFloat,
         context: CGContext
     ) {
-        let groups = CellRenderer.shiftGroups(
-            for: line,
-            slots: slots,
-            cellWidth: metrics.cellSize.width
-        )
         for group in groups {
             context.textPosition = CGPoint(x: originX + group.dx, y: textY)
             CTRunDraw(group.run, context, group.range)
@@ -528,7 +627,9 @@ final class GridContentLayer: CALayer {
             let swapped = ResolvedColors(
                 foreground: colors.background ?? fallbackBackground,
                 background: nil,
-                special: colors.special
+                fillBackground: nil,
+                special: colors.special,
+                foregroundKey: colors.foregroundKey
             )
             context.saveGState()
             context.translateBy(x: 0, y: bounds.height)
@@ -538,7 +639,8 @@ final class GridContentLayer: CALayer {
                 row: snapshot.cursor.row,
                 colors: swapped,
                 context: context,
-                translation: cursorGlideOffset
+                translation: cursorGlideOffset,
+                cacheable: false
             )
             context.restoreGState()
         case .horizontal:
@@ -658,7 +760,16 @@ final class GridContentLayer: CALayer {
             col += cols
         }
         let textY = bounds.height - (anchor.minY + metrics.baseline)
-        drawPinned(line: line, slots: slots, originX: anchor.minX, textY: textY, context: context)
+        drawPinned(
+            groups: CellRenderer.shiftGroups(
+                for: line,
+                slots: slots,
+                cellWidth: metrics.cellSize.width
+            ),
+            originX: anchor.minX,
+            textY: textY,
+            context: context
+        )
 
         let underlineY = textY + CTFontGetUnderlinePosition(font as CTFont)
         context.setStrokeColor(NSColor.controlAccentColor.cgColor)
@@ -706,12 +817,29 @@ private struct FontVariants {
         boldItalic = manager.convert(font, toHaveTrait: [.boldFontMask, .italicFontMask])
     }
 
-    func font(for attr: HlAttr) -> NSFont {
+    enum Variant: Hashable {
+        case regular, bold, italic, boldItalic
+    }
+
+    static func variant(for attr: HlAttr) -> Variant {
         switch (attr.bold, attr.italic) {
-        case (true, true): return boldItalic
-        case (true, false): return bold
-        case (false, true): return italic
-        default: return regular
+        case (true, true): return .boldItalic
+        case (true, false): return .bold
+        case (false, true): return .italic
+        default: return .regular
+        }
+    }
+
+    func font(for attr: HlAttr) -> NSFont {
+        font(Self.variant(for: attr))
+    }
+
+    func font(_ variant: Variant) -> NSFont {
+        switch variant {
+        case .regular: return regular
+        case .bold: return bold
+        case .italic: return italic
+        case .boldItalic: return boldItalic
         }
     }
 }

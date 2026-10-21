@@ -112,6 +112,12 @@ final class TerminalView: NSView {
     let model: AppModel
     private(set) var metrics: FontMetrics
     private var snapshot: ScreenSnapshot?
+    /// Dirty cells from flushes that arrived while a snapshot apply was
+    /// already queued. A wheel burst produces a flush per step; applying each
+    /// one on its own re-rendered the same latest snapshot and piled work up
+    /// behind the event that caused it, so the content fell further behind.
+    private var pendingFlushRects: [CellRect] = []
+    private var flushApplyScheduled = false
     /// Overlay fading the previous theme's rendering out during a light↔dark
     /// flip seen in place (see `crossfadeThemeTransition`).
     private var themeCrossfadeView: NSView?
@@ -930,7 +936,10 @@ final class TerminalView: NSView {
         refreshBackgroundColor()
         updateFooterGeometry()
         updateStatuslineLayer()
-        for gridLayer in gridLayers { gridLayer.setNeedsDisplay() }
+        for gridLayer in gridLayers {
+            gridLayer.invalidateShaping()
+            gridLayer.setNeedsDisplay()
+        }
     }
 
     private func updateContentsScale() {
@@ -953,6 +962,59 @@ final class TerminalView: NSView {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
     }
 
+    /// Fold a flush's dirty cells into the next apply. While one apply is
+    /// queued, later flushes only accumulate their cells: the queued apply
+    /// reads the newest snapshot, so the intermediate states it would have
+    /// rendered are exactly the ones the next flush overwrites anyway.
+    private func scheduleFlushApply(cellRects: [CellRect]) {
+        pendingFlushRects.append(contentsOf: cellRects)
+        guard !flushApplyScheduled else { return }
+        flushApplyScheduled = true
+        Task { [weak self] in
+            await self?.applyPendingFlush()
+        }
+    }
+
+    private func applyPendingFlush() async {
+        while true {
+            // Read the snapshot after the suspension, then drain the cells: any
+            // flush that arrived while this task was starting is reflected in
+            // the snapshot read next time round, never lost.
+            let snapshot = await model.screen.snapshot()
+            let cellRects = pendingFlushRects
+            pendingFlushRects.removeAll(keepingCapacity: true)
+            apply(snapshot: snapshot, cellRects: cellRects)
+            // A flush handled while the snapshot was in flight may not be in
+            // that snapshot; its cells are in `pendingFlushRects`, so paint
+            // again from a fresh one. No suspension between this test and
+            // clearing the flag, so a later flush cannot slip in unseen.
+            guard !pendingFlushRects.isEmpty else {
+                flushApplyScheduled = false
+                return
+            }
+        }
+    }
+
+    private func apply(snapshot: ScreenSnapshot, cellRects: [CellRect]) {
+        let previous = self.snapshot
+        updateCursorGlide(previous: previous, next: snapshot)
+        crossfadeThemeTransition(from: previous, to: snapshot)
+        self.snapshot = snapshot
+        for gridLayer in gridLayers {
+            gridLayer.update(snapshot: snapshot)
+            gridLayer.invalidate(cellRects: cellRects)
+        }
+        updateFooterGeometry()
+        refreshBackgroundColor()
+        updateStatuslineLayer()
+        updateCompletionPanel()
+        refreshWindowAppearance()
+        reconcileGridSize(with: snapshot)
+        refreshLinkHoverFromPointer(
+            commandHeld: NSEvent.modifierFlags.contains(.command)
+        )
+    }
+
     /// Pull a fresh snapshot on every nvim flush, then invalidate only the
     /// cells the flush dirtied.
     private func connectScreen() {
@@ -962,24 +1024,7 @@ final class TerminalView: NSView {
             await screen.setFlushHandler { [weak self] grid, cellRects in
                 guard let self, grid == 1 else { return }
                 Task { @MainActor in
-                    let snapshot = await screen.snapshot()
-                    let previous = self.snapshot
-                    self.updateCursorGlide(previous: previous, next: snapshot)
-                    self.crossfadeThemeTransition(from: previous, to: snapshot)
-                    self.snapshot = snapshot
-                    for gridLayer in self.gridLayers {
-                        gridLayer.update(snapshot: snapshot)
-                        gridLayer.invalidate(cellRects: cellRects)
-                    }
-                    self.updateFooterGeometry()
-                    self.refreshBackgroundColor()
-                    self.updateStatuslineLayer()
-                    self.updateCompletionPanel()
-                    self.refreshWindowAppearance()
-                    self.reconcileGridSize(with: snapshot)
-                    self.refreshLinkHoverFromPointer(
-                        commandHeld: NSEvent.modifierFlags.contains(.command)
-                    )
+                    self.scheduleFlushApply(cellRects: cellRects)
                 }
             }
             await screen.setScrollHandler { [weak self] grid, rows, _ in

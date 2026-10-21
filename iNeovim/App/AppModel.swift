@@ -97,7 +97,9 @@ final class AppModel: ObservableObject {
     func setThemeIsDark(_ isDark: Bool?) {
         if let isDark {
             hasReportedTheme = true
-            UserDefaults.standard.set(isDark, forKey: Self.persistedThemeKey)
+            if UserDefaults.standard.object(forKey: Self.persistedThemeKey) as? Bool != isDark {
+                UserDefaults.standard.set(isDark, forKey: Self.persistedThemeKey)
+            }
         } else if !hasReportedTheme && themeIsDark != nil {
             // Pre-report `nil` from the empty snapshot: keep the seeded scheme
             // so the window is not reverted to the system appearance.
@@ -129,7 +131,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var terminalColors = TerminalColors()
 
     func setTerminalColors(_ colors: TerminalColors) {
-        if let background = colors.background {
+        if let background = colors.background,
+           UserDefaults.standard.object(forKey: Self.persistedBackgroundKey) as? Int != background {
             UserDefaults.standard.set(background, forKey: Self.persistedBackgroundKey)
         }
         if terminalColors != colors {

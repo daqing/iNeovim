@@ -620,6 +620,22 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   sampled from `CVDisplayLink` frame timestamps), so animation speed is
   identical at 60 Hz and 120 Hz ProMotion; ProMotion just samples the curve
   more often. Tuning lives in `ScrollAnimationSettings`.
+- **Scroll repaint cost:** because wheel scrolling is confirmation-bound
+  (§ Scroll lead limit), each wheel step repaints the whole viewport on the
+  main thread, and every avoidable cost there shows up as lag behind the
+  wheel. `GridContentLayer` therefore caches shaped runs (`lineCache`) keyed
+  by run text, font variant, and foreground color — the foreground must be
+  part of the key because Core Text bakes it into the `CTLine` rather than
+  taking the context fill color — and drops the cache when highlights, the
+  default colors, the font, or the window appearance change (the adaptive
+  `.textColor` fallback resolves at shaping time). Runs whose background
+  resolves to nvim's default skip their fill; the view's layer already paints
+  it. `CellRenderer.runs` accumulates a run in locals and appends it when it
+  ends, instead of mutating `runs[last]` per cell (which copied the run's text
+  and slot array per cell). `TerminalView` coalesces flush applies: flushes
+  that arrive while one apply is queued only add their dirty cells, and the
+  apply reads the newest snapshot, so a wheel burst costs one repaint rather
+  than one per flush.
 
 ## Security considerations
 
