@@ -91,10 +91,10 @@ struct EditorCommands: Commands {
         terminal.toggleOpenQuickly()
     }
 
-    /// ⌘W closes the key editor window. With only one editor window left it
-    /// asks for confirmation instead — SwiftUI would otherwise leave the app
-    /// running with no window after the last close. Non-editor key windows
-    /// (e.g. Settings) close directly.
+    /// ⌘W closes the key editor window — the current native tab. With only
+    /// one editor window left it asks for confirmation instead — SwiftUI
+    /// would otherwise leave the app running with no window after the last
+    /// close. Non-editor key windows (e.g. Settings) close directly.
     private static func closeKeyWindow() {
         let live = AppModel.live
         let keyWindow = NSApp.keyWindow
@@ -104,7 +104,12 @@ struct EditorCommands: Commands {
             keyWindow?.performClose(nil)
             return
         }
-        guard live.count > 1 else {
+        // `performClose(_:)` simulates a click on the close button, whose
+        // action runs the quit confirmation — it would ask on every ⌘W and
+        // re-enter itself. Tab windows therefore close directly; a window
+        // in a tab group never quits the app, only the current tab goes.
+        let hasOtherWindows = live.count > 1 || (window.tabGroup?.windows.count ?? 0) > 1
+        guard hasOtherWindows else {
             let alert = NSAlert()
             alert.messageText = "Quit iNeovim?"
             alert.informativeText = "This is the last editor window; closing it quits iNeovim."
@@ -114,6 +119,6 @@ struct EditorCommands: Commands {
             NSApp.terminate(nil)
             return
         }
-        window.performClose(nil)
+        window.close()
     }
 }

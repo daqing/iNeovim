@@ -435,7 +435,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   app config (Application Support/iNeovim/ghostty.conf) mirrors the editor
   font and nvim's default colors and sets `shell-integration = none` —
   Ghostty's shell-integration scripts are GPLv3 and must not ship in this
-  MIT app. It is written when the first pane opens and rewritten + reloaded
+  MIT app. It also unbinds `super+1`…`super+9`
+  (`keybind = super+N=unbind`): Ghostty's default `super+N=goto_tab:N` (and
+  `super+9=last_tab`) would otherwise swallow the editor's "Go to Tab"
+  shortcuts while the pane has focus. It is written when the first pane opens
+  and rewritten + reloaded
   (`GhosttyTerminalController.updateColors` → `Ghostty.App.reloadConfig`,
   driven by `AppModel.$terminalColors`) whenever a session reports a new
   default background, so an open pane follows a dark↔light colorscheme flip
@@ -515,11 +519,17 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   in `$HOME` (`NvimProcess` sets the child's cwd), and closing a window
   terminates its nvim in `AppModel.deinit`.
 - **⌘W (File > Close):** `EditorCommands.closeKeyWindow` closes the key
-  editor window via `performClose`. When `AppModel.live` reports a single
-  session left, it first confirms with an `NSAlert` and quits via
-  `NSApp.terminate` (whose `applicationWillTerminate` begins shutdown for
-  every live session) — SwiftUI would otherwise leave the app running with
-  no window. A non-editor key window (e.g. Settings) closes directly.
+  editor window — with native tabs that is the current tab, and a window in
+  a tab group with other tabs never quits the app. It closes the window with
+  `close()`, not `performClose(_:)`: `performClose` simulates a click on the
+  close button, whose action `registerEditorWindow` replaces with
+  `confirmCloseEditorWindow`, so it would run the quit confirmation on every
+  ⌘W (and `confirmCloseEditorWindow`'s own close re-entered itself in an
+  endless alert loop). When `AppModel.live` reports a single session left, it
+  first confirms with an `NSAlert` and quits via `NSApp.terminate` (whose
+  `applicationWillTerminate` begins shutdown for every live session) —
+  SwiftUI would otherwise leave the app running with no window. A non-editor
+  key window (e.g. Settings) closes directly.
 - **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
   so one wheel event scrolls exactly one line and the visual lead in
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.

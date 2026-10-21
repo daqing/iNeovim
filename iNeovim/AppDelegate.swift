@@ -133,10 +133,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ?? NSApp.keyWindow
         guard let window else { return }
         guard QuitConfirmation.present() else { return }
-        if AppModel.live.count <= 1 {
+        let hasOtherWindows = AppModel.live.count > 1
+            || (window.tabGroup?.windows.count ?? 0) > 1
+        if !hasOtherWindows {
             NSApp.terminate(nil)
         } else {
-            window.performClose(nil)
+            // `performClose(_:)` simulates a click on the close button, which
+            // re-enters this action and shows the confirmation again; close
+            // the tab window directly instead.
+            window.close()
         }
     }
 
@@ -176,8 +181,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func registerEditorWindow(_ window: NSWindow, model: AppModel) {
         // The red close button goes through the same confirmation a typed
         // `:q` shows before tearing the window (and its embedded nvim) down.
-        // `performClose(_:)` (⌘W) does not use the button's action, so only
-        // the traffic-light click is intercepted here.
+        // `performClose(_:)` runs this action too (it simulates a click on
+        // the button), so the close commands use `close()` for tab windows
+        // to avoid re-entering the confirmation.
         if let closeButton = window.standardWindowButton(.closeButton) {
             closeButton.target = self
             closeButton.action = #selector(confirmCloseEditorWindow(_:))

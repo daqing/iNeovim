@@ -82,6 +82,11 @@ final class GhosttyTerminalController {
 
         var lines = [
             "shell-integration = none",
+            // ⌘1..⌘9 are the editor's Go to Tab shortcuts, but Ghostty's
+            // default `goto_tab` (and `last_tab` on ⌘9) bindings swallow
+            // them while the pane has focus; unbind the whole row so the
+            // menu receives the events.
+        ] + (1...9).map { "keybind = super+\($0)=unbind" } + [
             // Room between the pane divider and the text; the surface still
             // paints its background full-bleed, so no color seam appears.
             // Mirrors TerminalPaneView.contentInset for the title alignment.
