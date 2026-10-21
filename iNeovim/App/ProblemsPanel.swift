@@ -17,6 +17,9 @@ final class ProblemsPanelController: NSViewController {
     private let tableView = NSTableView()
     private let countsLabel = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "No problems")
+    /// Table width the rows were last measured at; a resize has to re-wrap
+    /// every message, so the cached row heights are invalidated then.
+    private var measuredWidth: CGFloat = 0
 
     init(
         store: DiagnosticsStore,
@@ -72,7 +75,10 @@ final class ProblemsPanelController: NSViewController {
         tableView.addTableColumn(column)
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         tableView.headerView = nil
-        tableView.style = .inset
+        // A plain table puts the cell 8 pt in from the panel edge, so the
+        // row content starts near the header's 12 pt title leading; the
+        // inset style's 16 pt margin made every row read as indented.
+        tableView.style = .plain
         tableView.rowHeight = Self.rowHeight
         tableView.dataSource = self
         tableView.delegate = self
@@ -120,6 +126,23 @@ final class ProblemsPanelController: NSViewController {
         rebuild()
 
         view = root
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        let width = tableView.bounds.width
+        guard width > 0, width != measuredWidth else { return }
+        measuredWidth = width
+        // The single column fills the panel; setting it here (instead of
+        // relying on the table's autoresizing, which the headless check
+        // showed can lag a resize) keeps the wrap width, the row heights,
+        // and the cell frames on one number.
+        tableView.tableColumns.first?.width = width
+        guard !problems.isEmpty else { return }
+        // Dragging the panel divider re-wraps every message. Invalidating the
+        // heights after the width settles re-measures them; the next pass sees
+        // the same width and stops, so this cannot loop.
+        tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<problems.count))
     }
 
     @objc private func closeClicked() {
@@ -171,6 +194,16 @@ extension ProblemsPanelController: NSTableViewDataSource, NSTableViewDelegate {
         problems.count
     }
 
+    /// Messages wrap, so a row is as tall as its text at the table's current
+    /// width. The data source measures it (rather than the cell describing
+    /// its own size) so the row height and the cell's wrap width come from
+    /// the same number: the column width.
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard row < problems.count else { return Self.rowHeight }
+        let width = tableView.tableColumns.first?.width ?? tableView.bounds.width
+        return ProblemsRowView.height(for: problems[row].diagnostic.message, width: width)
+    }
+
     /// Any selection change — mouse click or arrow keys — jumps the editor;
     /// the panel keeps first-responder status either way.
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -184,52 +217,120 @@ extension ProblemsPanelController: NSTableViewDataSource, NSTableViewDelegate {
         let problem = problems[row]
         let diagnostic = problem.diagnostic
 
-        let cell = NSView()
-
-        let dot = NSView()
-        dot.wantsLayer = true
-        dot.layer?.backgroundColor = Self.severityColor(diagnostic.severity).cgColor
-        dot.layer?.cornerRadius = 4
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(dot)
-
-        let message = NSTextField(labelWithString: diagnostic.message.replacingOccurrences(of: "\n", with: " "))
-        message.font = .systemFont(ofSize: 12)
-        message.lineBreakMode = .byTruncatingTail
-        message.toolTip = diagnostic.message
-        message.translatesAutoresizingMaskIntoConstraints = false
-        // The message gives way first so a long location never pushes it out.
-        message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let cell = ProblemsRowView()
+        cell.dot.layer?.backgroundColor = Self.severityColor(diagnostic.severity).cgColor
+        // The message wraps instead of truncating: the panel is narrow, and
+        // a compiler message cut at the tail hides the part that matters
+        // (e.g. "… found 1" ending at "found "). The location moves under the
+        // message so the text can use the panel's full width.
+        cell.message.stringValue = diagnostic.message.replacingOccurrences(of: "\n", with: " ")
+        cell.message.toolTip = diagnostic.message
         // Info and hint rows read dimmed, Xcode-style.
-        message.textColor = diagnostic.severity == .info || diagnostic.severity == .hint
+        cell.message.textColor = diagnostic.severity == .info || diagnostic.severity == .hint
             ? .secondaryLabelColor
             : .labelColor
-        cell.addSubview(message)
+        cell.location.stringValue = Self.locationText(problem)
+        cell.location.toolTip = problem.path.isEmpty ? "unnamed buffer" : problem.path
+        return cell
+    }
+}
 
-        let location = NSTextField(labelWithString: Self.locationText(problem))
-        location.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+/// One problem row: severity dot, a message wrapped to the panel's width, and
+/// the `file:line` beneath it. Laid out by hand (like the completion panel)
+/// so the wrap width in the cell is exactly the width `height(for:width:)`
+/// measured the row at — Auto Layout's fitting in a narrow, resizing table
+/// column produced heights and cell widths that disagreed.
+private final class ProblemsRowView: NSView {
+    static let messageFont = NSFont.systemFont(ofSize: 12)
+    static let locationFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+
+    // The plain table style places its cells at x = 8; 4 more puts the dot's
+    // left edge at the 12 pt leading of the header title.
+    private static let dotLeading: CGFloat = 4
+    private static let dotSize: CGFloat = 8
+    private static let textLeading: CGFloat = dotLeading + dotSize + 8
+    private static let textTrailing: CGFloat = 10
+    private static let verticalPadding: CGFloat = 5
+    private static let lineSpacing: CGFloat = 2
+    private static let minimumTextWidth: CGFloat = 40
+    private static let messageLineHeight = ceil(messageFont.ascender - messageFont.descender + messageFont.leading)
+    private static let locationLineHeight = ceil(locationFont.ascender - locationFont.descender + locationFont.leading)
+
+    private static let measuringLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = messageFont
+        return label
+    }()
+
+    let dot = NSView()
+    let message = NSTextField(wrappingLabelWithString: "")
+    let location = NSTextField(labelWithString: "")
+
+    /// Top-down coordinates, so the rows' vertical math reads in order.
+    override var isFlipped: Bool { true }
+
+    init() {
+        super.init(frame: .zero)
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = Self.dotSize / 2
+        addSubview(dot)
+
+        message.font = Self.messageFont
+        message.lineBreakMode = .byWordWrapping
+        message.maximumNumberOfLines = 0
+        addSubview(message)
+
+        location.font = Self.locationFont
         location.textColor = .secondaryLabelColor
         location.lineBreakMode = .byTruncatingHead
-        location.toolTip = problem.path.isEmpty ? "unnamed buffer" : problem.path
-        location.translatesAutoresizingMaskIntoConstraints = false
-        location.setContentCompressionResistancePriority(.required, for: .horizontal)
-        cell.addSubview(location)
+        addSubview(location)
+    }
 
-        NSLayoutConstraint.activate([
-            dot.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
-            dot.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 8),
-            dot.heightAnchor.constraint(equalToConstant: 8),
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
 
-            message.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
-            message.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+    /// Height of a row holding `message` when its cell is `width` wide. The
+    /// label cell is the authoritative measure: it insets text by 2 pt per
+    /// side, and `NSString`-based sizes under-measure the last wrapped line.
+    static func height(for message: String, width: CGFloat) -> CGFloat {
+        measuringLabel.stringValue = message.replacingOccurrences(of: "\n", with: " ")
+        let measured = measuringLabel.cell?.cellSize(forBounds: NSRect(
+            x: 0,
+            y: 0,
+            width: max(width - textLeading - textTrailing, minimumTextWidth),
+            height: .greatestFiniteMagnitude
+        )).height ?? messageLineHeight
+        return verticalPadding * 2 + max(ceil(measured), messageLineHeight)
+            + lineSpacing + locationLineHeight
+    }
 
-            location.leadingAnchor.constraint(greaterThanOrEqualTo: message.trailingAnchor, constant: 12),
-            location.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
-            location.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            location.widthAnchor.constraint(lessThanOrEqualToConstant: 150),
-        ])
-
-        return cell
+    override func layout() {
+        super.layout()
+        let textWidth = max(bounds.width - Self.textLeading - Self.textTrailing, Self.minimumTextWidth)
+        // The row height was measured for this text width, so the message
+        // gets everything the row has left above the location line.
+        let messageHeight = max(
+            bounds.height - Self.verticalPadding * 2 - Self.lineSpacing - Self.locationLineHeight,
+            Self.messageLineHeight
+        )
+        dot.frame = CGRect(
+            x: Self.dotLeading,
+            y: Self.verticalPadding + 3,
+            width: Self.dotSize,
+            height: Self.dotSize
+        )
+        message.frame = CGRect(
+            x: Self.textLeading,
+            y: Self.verticalPadding,
+            width: textWidth,
+            height: messageHeight
+        )
+        location.frame = CGRect(
+            x: Self.textLeading,
+            y: Self.verticalPadding + messageHeight + Self.lineSpacing,
+            width: textWidth,
+            height: Self.locationLineHeight
+        )
     }
 }

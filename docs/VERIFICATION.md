@@ -93,6 +93,14 @@ aligned.
   shown in full: a one-line message (e.g. pycodestyle's `E302 expected 2
   blank lines, found 1`) fits entirely instead of losing its last word, and a
   long message wraps inside the popover at its 440 pt cap.
+- **Problems panel (⌥P):** in a project with LSP diagnostics, press ⌥P (or
+  use **Neovim ▸ Toggle Problems**): the issues sidebar docks at the window's
+  left edge, listing every error/warning/info/hint with counts in the header.
+  A long message wraps to the panel width and is shown in full above its
+  dimmed `file:line` — no ellipsis — and dragging the divider between the
+  panel and the editor re-wraps every message at the new width. Selecting a
+  row (click or arrow keys) jumps the editor while the panel keeps focus; an
+  empty list reads "No problems"; the header ✕ closes the panel.
 - **Open a URL (⌘-click):** with a URL visible in the grid, hold ⌘ and move the
   pointer onto it: the link is underlined and the pointer becomes a hand; move
   off it (or release ⌘) and both revert. ⌘-click opens it in the default

@@ -413,7 +413,13 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   issue navigator (`EditorSplitView`: panel | editor | divider | terminal
   pane). The list live-updates while shown and lists every severity —
   errors and warnings at full strength, info/hint dimmed, with per-severity
-  counts in the header; selecting a row jumps the editor
+  counts in the header. Each row is two lines: the message (newlines folded
+  to spaces) wraps to the panel's width above a dimmed `file:line`, because
+  the sidebar is narrow and a tail-truncated compiler message hides the part
+  that matters ("… found 1" ending at "found "). Rows are hand-laid out by
+  `ProblemsRowView` and the data source measures each height at the column
+  width, so dragging the panel divider re-wraps every message instead of
+  clipping it. Selecting a row jumps the editor
   (`:edit` when the path differs from the current buffer →
   `nvim_win_set_cursor`) and the panel keeps focus, so the arrow keys walk
   the list. The panel is created once per window and stays subscribed while
