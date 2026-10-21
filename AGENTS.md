@@ -31,7 +31,7 @@ Key facts from `iNeovim.xcodeproj/project.pbxproj`:
 - **Versioning:** `MARKETING_VERSION = 1.0`, `CURRENT_PROJECT_VERSION = 1` — both live only
   in `project.pbxproj`. The Info.plist is generated (`GENERATE_INFOPLIST_FILE = YES`) and
   merged with the partial `Config/Info.plist`, which declares the document types the app
-  can open (T8.6).
+  can open (T8.6) and the `ineovim` URL scheme the command-line launcher uses.
 
 ## Repository layout
 
@@ -110,7 +110,8 @@ Scripts/                  One-off tooling (app-icon generator); not part of the 
 iNeovimTests/             XCTest target (synchronized group); codec round-trip,
                           redraw-parsing, settings/model, and embedded-nvim tests
 Config/Info.plist         Partial Info.plist merged into the generated one
-                          (document types); outside the synchronized group
+                          (document types, ineovim URL scheme); outside the
+                          synchronized group
 Config/ExportOptions.plist  developer-id export options (T9.6)
 docs/                     TASKS, VERIFICATION, PERFORMANCE, RELEASE, screenshots/
 iNeovim.xcodeproj/        iNeovim app + iNeovimTests unit test targets
@@ -428,12 +429,55 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   user cannot write (typically `/usr/local/bin`) asks first, then elevates
   through Standard Additions (`do shell script … with administrator
   privileges`), passing the script as base64 so no quoting layer sees its
-  contents; a cancelled auth prompt (-128) is silent. The launcher calls
-  `open -a <the app that installed it>`, falling back to `open -b
-  com.mzevo.iNeovim` if the app has moved, creates missing path arguments so
-  `ineovim newfile.txt` behaves like nvim's new buffer, and supports
-  `-h`/`--help`. An existing file not carrying the launcher's marker is only
-  replaced after an explicit confirmation.
+  contents; a cancelled auth prompt (-128) is silent. The normal path does
+  not use `open -a`: the launcher sends `ineovim://open?payload=…` (scheme
+  declared in `Config/Info.plist`), which carries the shell's `$PWD` — a
+  file open cannot say which directory the command ran in. The payload is
+  base64url over NUL-terminated UTF-8 components (shell directory first,
+  then each argument), so spaces, newlines, and non-ASCII names survive;
+  `CommandLineTool.openRequest(from:)` resolves relative arguments against
+  the shell's directory and then takes the window's directory from the
+  arguments: the first path's parent (or the path itself when it is a
+  directory), or the shell's directory when there are no arguments.
+  `application(_:open:)` routes these to `AppDelegate`'s request queue,
+  which hands out one at a time. A request that belongs to the launch — it
+  arrives during startup, or within a second of
+  `applicationDidFinishLaunching` in case delivery slips past it — is taken
+  by the window SwiftUI already opens: the launch window can register
+  *before* LaunchServices delivers the URL, so the request is applied to
+  that window directly (`launchWindowModel`) rather than parked in the
+  pending slot, which nothing would then consume and the first window would
+  stay in `$HOME`. The pending slot is only used while that window has not
+  registered yet. Afterwards the window for an invocation is the one SwiftUI
+  shows for the URL event itself — measured ~40 ms *before*
+  `application(_:open:)` reaches the delegate — so a request that arrives
+  next to a window registered in the last half second
+  (`newestWindowModel`/`newestWindowAt`) is applied to that window instead of
+  asking for another one; an explicit `openWindow` beside it produced two
+  windows per invocation, a default `$HOME` one next to the requested one.
+  A request whose window has not registered yet waits in the pending slot,
+  and only when none appears within half a second does
+  `pumpCommandLineRequests` open a window itself. `registerEditorWindow` acts
+  only on a window's first registration (a weak `NSHashTable` of windows
+  already seen): a repeat `viewDidMoveToWindow` must not take the pending
+  request, adopt the launch slot, or count as the newest window. The window
+  is a standalone editor window (like ⌘N, so it seeds from the active
+  session's theme). Its `AppModel.openFromCommandLine` seeds
+  `NvimProcess.start(workingDirectory:)` when its session has not started —
+  so init.lua already sees the directory — otherwise `:cd`s before opening
+  the files; startup re-reads the requested directory after its last
+  suspension point (and repeats when the `:cd` itself suspends), because a
+  launch request can arrive while nvim is already booting. It also marks the
+  window (`focusAfterCommandLineOpen`) to activate the app and take keyboard
+  focus as it is revealed (`fadeIn` uses `makeKeyAndOrderFront` instead of
+  `orderFront`), so the command line can be typed into without clicking
+  first. `open -a <the app that
+  installed it>` (falling back to `open -b com.mzevo.iNeovim` when the app
+  has moved) remains the fallback when the URL scheme is unavailable, e.g. a
+  launcher left over from an older build. The launcher creates missing path
+  arguments so `ineovim newfile.txt` behaves like nvim's new buffer, and
+  supports `-h`/`--help`. An existing file not carrying the launcher's
+  marker is only replaced after an explicit confirmation.
 - **Native terminal pane (Ghostty):** a typed `:terminal` (and its `term`…
   `terminal` abbreviations, optional `vert[ical]` modifier, optional `!`,
   optional trailing command) never reaches nvim: `TerminalView.sendKeys`

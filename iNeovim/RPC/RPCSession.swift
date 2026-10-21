@@ -48,8 +48,8 @@ actor RPCSession {
         notificationHandlers[method, default: []].append(handler)
     }
 
-    func start() async throws {
-        try await process.start()
+    func start(workingDirectory: URL? = nil) async throws {
+        try await process.start(workingDirectory: workingDirectory)
         guard !isClosed, let output = await process.standardOutput else { throw NvimProcessError.notRunning }
         // Read on a dedicated blocking thread and hand chunks to a single
         // consumer through an AsyncStream. Yielding to one continuation

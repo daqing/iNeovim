@@ -3,12 +3,14 @@ import Foundation
 import os
 
 /// Installs an `ineovim` launcher into a directory the user's shell already
-/// searches. The launcher hands its arguments to the running app through
-/// LaunchServices, so a terminal command opens files in the same windows the
-/// rest of the system routes to.
+/// searches. The launcher hands its arguments — and the shell's working
+/// directory, which a plain file open cannot carry — to the app as one
+/// `ineovim://` URL, so every command opens its own window in the directory
+/// the user typed it in.
 enum CommandLineTool {
     static let commandName = "ineovim"
     static let bundleIdentifier = "com.mzevo.iNeovim"
+    static let urlScheme = "ineovim"
 
     private static let scriptMarker = "# iNeovim command-line launcher"
 
@@ -19,6 +21,79 @@ enum CommandLineTool {
         let isOnPath: Bool?
 
         var commandURL: URL { directory.appendingPathComponent(CommandLineTool.commandName) }
+    }
+
+    /// One `ineovim` invocation: the shell's directory plus its file
+    /// arguments, resolved to absolute paths.
+    struct OpenRequest: Equatable {
+        let workingDirectory: URL
+        let files: [URL]
+    }
+
+    /// Decode `ineovim://open?payload=…`. The payload is base64url over
+    /// NUL-terminated UTF-8 components: the shell's directory first, then
+    /// each argument, so spaces, newlines, and non-ASCII names survive the
+    /// trip. Relative arguments resolve against the shell's directory.
+    /// The window's directory follows the arguments: the first one's
+    /// directory (or the argument itself when it is a directory), falling
+    /// back to the shell's directory when there is no argument.
+    static func openRequest(from url: URL) -> OpenRequest? {
+        guard url.scheme?.lowercased() == urlScheme, url.host == "open",
+              let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: true)?.queryItems,
+              let payload = queryItems.first(where: { $0.name == "payload" })?.value,
+              let components = decodePayload(payload),
+              let directory = components.first else {
+            return nil
+        }
+        let shellDirectory = resolvePath(directory, relativeTo: nil)
+        let files = components.dropFirst().map { resolvePath($0, relativeTo: shellDirectory) }
+        return OpenRequest(
+            workingDirectory: workingDirectory(for: files, fallback: shellDirectory),
+            files: files
+        )
+    }
+
+    /// A path argument decides the directory — running `ineovim
+    /// /elsewhere/file.go` from `$HOME` opens the window in `/elsewhere`,
+    /// not in `$HOME`. A directory argument is its own target.
+    private static func workingDirectory(for files: [URL], fallback: URL) -> URL {
+        guard let first = files.first else { return fallback }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: first.path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return first
+        }
+        return first.deletingLastPathComponent()
+    }
+
+    private static func decodePayload(_ payload: String) -> [String]? {
+        var base64 = payload
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = base64.count % 4
+        if remainder > 0 {
+            base64 += String(repeating: "=", count: 4 - remainder)
+        }
+        guard let data = Data(base64Encoded: base64),
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        var components = text
+            .split(separator: "\0", omittingEmptySubsequences: false)
+            .map(String.init)
+        if components.last?.isEmpty == true {
+            components.removeLast()
+        }
+        return components.isEmpty ? nil : components
+    }
+
+    private static func resolvePath(_ path: String, relativeTo directory: URL?) -> URL {
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded).standardizedFileURL
+        }
+        let base = directory ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        return base.appendingPathComponent(expanded).standardizedFileURL
     }
 
     /// Picks `~/.local/bin`, then Apple Silicon Homebrew, then the shared
@@ -192,7 +267,7 @@ enum CommandLineTool {
 
         case "${1-}" in
             -h|--help)
-                printf 'usage: \(commandName) [file ...]\\n\\nOpen files in iNeovim. Missing paths are created.\\n'
+                printf 'usage: \(commandName) [path ...]\\n\\nOpen paths in a new iNeovim window. The window starts in the directory\\nof the first path, or in the current directory when no path is given.\\nMissing paths are created.\\n'
                 exit 0
                 ;;
         esac
@@ -208,6 +283,22 @@ enum CommandLineTool {
                 fi
             fi
         done
+
+        # A plain file open cannot say which directory the command ran in, so
+        # the directory and the arguments travel as one URL: base64url over
+        # NUL-terminated components (the directory first).
+        payload=$(
+            {
+                printf '%s\\0' "${PWD:-$(pwd -P)}"
+                for arg in "$@"; do
+                    printf '%s\\0' "$arg"
+                done
+            } | /usr/bin/base64 | /usr/bin/tr -d '\\n' | /usr/bin/tr '+/' '-_' | /usr/bin/tr -d '='
+        )
+
+        if /usr/bin/open "\(urlScheme)://open?payload=$payload" 2>/dev/null; then
+            exit 0
+        fi
 
         if [ -d "$APP_PATH" ]; then
             exec /usr/bin/open -a "$APP_PATH" "$@"

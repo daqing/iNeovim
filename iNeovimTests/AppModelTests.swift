@@ -18,6 +18,19 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(opened, [[url]])
     }
 
+    func testCommandLineOpenQueuesFilesUntilReady() {
+        var opened: [[URL]] = []
+        let model = AppModel(openHandler: { urls, _ in opened.append(urls) })
+        let file = URL(fileURLWithPath: "/work/repo/main.go")
+
+        model.openFromCommandLine(directory: URL(fileURLWithPath: "/work/repo"), files: [file])
+        XCTAssertEqual(model.pendingFileCount, 1)
+        XCTAssertTrue(opened.isEmpty)
+
+        model.markReadyForTesting()
+        XCTAssertEqual(opened, [[file]])
+    }
+
     func testFilesOpenedAfterReadyGoStraightThrough() {
         var opened: [[URL]] = []
         let model = AppModel(openHandler: { urls, _ in opened.append(urls) })

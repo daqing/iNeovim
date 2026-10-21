@@ -162,6 +162,10 @@ final class AppModel: ObservableObject {
     private let commandHandler: @MainActor (String, NvimClient) -> Void
     private let cleanExitHandler: (@MainActor () -> Void)?
     private var pendingFiles: [URL] = []
+    /// Directory an `ineovim` command opened this window in. It seeds the
+    /// nvim child process (so init.lua sees it) and doubles as the
+    /// post-attach `:cd` when the request arrives after startup began.
+    private var workingDirectory: URL?
     private var terminationTask: Task<Void, Never>?
     private var isShuttingDown = false
     private var isBootstrapping = false
@@ -253,6 +257,22 @@ final class AppModel: ObservableObject {
 
     private var hasRevealedWindow = false
     private var windowRevealTask: Task<Void, Never>?
+    /// An `ineovim` command opened this window to be typed in at once: take
+    /// keyboard focus as it is revealed, instead of leaving it in whatever
+    /// window was key when the command was run.
+    private var focusesOnReveal = false
+
+    /// Bring the app forward now and make the window key once it is visible.
+    /// Focusing before the fade would leave the keyboard on a transparent
+    /// window for the first frames.
+    func focusAfterCommandLineOpen() {
+        focusesOnReveal = true
+        guard let window = hostWindow else { return }
+        NSApp.activate()
+        if hasRevealedWindow {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
 
     /// Release a window that must not use the standalone fade: a native tab
     /// joining its host's group. The seeded theme is already painted, so the
@@ -310,7 +330,11 @@ final class AppModel: ObservableObject {
     /// `NSAnimationContext.runAnimationGroup` resolves to its non-async
     /// overload rather than the Swift-concurrency one.
     private func fadeIn(_ window: NSWindow) {
-        window.orderFront(nil)
+        if focusesOnReveal {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            window.orderFront(nil)
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.windowRevealDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -336,7 +360,7 @@ final class AppModel: ObservableObject {
         do {
             bootstrapError = nil
             setup = nil
-            try await session.start()
+            try await session.start(workingDirectory: workingDirectory)
             try await session.handshake()
             // Subscribe before attaching: nvim sends its first full screen as
             // the redraw batch that immediately follows ui_attach, and that
@@ -373,6 +397,16 @@ final class AppModel: ObservableObject {
             }
             await inputDispatcher.startConsuming(with: client)
             startObservingTermination()
+            // An `ineovim` request can land while startup is still running —
+            // the launch window adopts one after its nvim has already booted.
+            // Read the directory after the last suspension point and repeat
+            // when the `:cd` itself suspends, so the request that arrived last
+            // is the one applied before the queued files open.
+            var appliedDirectory: URL?
+            while let directory = workingDirectory, directory != appliedDirectory {
+                appliedDirectory = directory
+                await changeWorkingDirectory(to: directory)
+            }
             isReady = true
             flushPendingFiles()
             AppModel.flushStagedFiles()
@@ -658,6 +692,40 @@ final class AppModel: ObservableObject {
                     "Failed to jump to \(problem.path, privacy: .public):\(problem.diagnostic.line + 1, privacy: .public): \(error.localizedDescription, privacy: .public)"
                 )
             }
+        }
+    }
+
+    /// Open the files of an `ineovim` command in the directory it ran in.
+    /// The window was created for this request, so its process normally has
+    /// not started yet — setting the directory here starts nvim in it. A
+    /// session that is already running (the launch window on a cold start)
+    /// is moved with `:cd` before its files open, since its process may
+    /// already have booted in another directory.
+    func openFromCommandLine(directory: URL, files: [URL]) {
+        workingDirectory = directory
+        focusAfterCommandLineOpen()
+        guard isReady else {
+            open(files)
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            await self.changeWorkingDirectory(to: directory)
+            self.open(files)
+        }
+    }
+
+    /// Move the embedded nvim to `directory`. The process starts there
+    /// whenever the request is known early enough; this covers the rest and
+    /// keeps init.lua-owned state (autochdir, session files) consistent.
+    private func changeWorkingDirectory(to directory: URL) async {
+        do {
+            let escaped = try await client.fnameescape(directory.path(percentEncoded: false))
+            try await client.command("cd \(escaped)")
+        } catch {
+            Log.app.error(
+                "Failed to change directory to \(directory.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

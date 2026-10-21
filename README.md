@@ -144,9 +144,10 @@ Ghostty source snapshot; see its `ADAPTATION.md`).
 **Neovim ▸ Install Command Line Tool…** installs an `ineovim` command into the
 first of `~/.local/bin`, `/opt/homebrew/bin`, or `/usr/local/bin` that your
 shell already searches, asking for administrator rights only when the folder
-requires them. `ineovim [file ...]` then opens those files in iNeovim through
-the running app; missing paths are created first, matching
-`nvim newfile.txt`.
+requires them. `ineovim [path ...]` opens the paths in a new window that
+starts in the first path's directory (or in the current directory when no path
+is given) and takes keyboard focus, so you can start typing immediately;
+missing paths are created first, matching `nvim newfile.txt`.
 
 ## Requirements
 

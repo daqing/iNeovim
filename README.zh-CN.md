@@ -117,7 +117,8 @@ surface(libghostty),而不是 Neovim 内的终端缓冲区。面板在 Neovim �
 **Neovim ▸ Install Command Line Tool…** 会把 `ineovim` 命令安装到
 `~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 中你的 shell 已经搜索的
 第一个目录;只有该目录需要写入权限时才会请求管理员授权。之后
-`ineovim [file ...]` 会通过正在运行的 iNeovim 打开这些文件;不存在的路径会先被
+`ineovim [path ...]` 会在新窗口中打开这些路径:工作目录取第一个路径所在目录
+(未提供路径时取当前目录),窗口自动获得焦点,可以直接开始输入;不存在的路径会先被
 创建,与 `nvim newfile.txt` 的行为一致。
 
 ## 环境要求

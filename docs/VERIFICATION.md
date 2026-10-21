@@ -156,15 +156,39 @@ login shell's PATH. Manual checks:
 
 1. Run the menu item: the success alert names the installed path (normally
    `~/.local/bin/ineovim`), and the file exists and is executable.
-2. In a new terminal, `ineovim --help` prints usage; `ineovim README.md` opens
-   the file in the running app (no second process); `ineovim newfile.txt`
-   creates the empty file and opens it as a new buffer.
-3. On a machine where the chosen directory is root-owned (typically
+2. In a new terminal, `ineovim --help` prints usage. `cd` into a project and
+   run `ineovim README.md`: a new window opens in front with keyboard focus,
+   nvim's directory is the file's directory (`:pwd`), and the file is the
+   current buffer; typing works without clicking the window first.
+3. Run `ineovim /path/to/another/project/main.go` from an unrelated
+   directory: the window starts in that file's directory, not in the shell's
+   cwd. Run `ineovim` with no arguments: the window starts in the shell's
+   current directory.
+4. Run `ineovim src/main.go` from the same project: a second, independent
+   window opens (the first is untouched); relative arguments resolve against
+   the shell's directory, and a directory or file name containing spaces or
+   non-ASCII characters works without quoting surprises.
+5. `ineovim newfile.txt` creates the empty file in the shell's directory and
+   opens it as a new buffer.
+6. Quit the app, then run `ineovim README.md`: the launch uses the single
+   window SwiftUI opens — no extra empty window — in the file's directory.
+   Quit again and run `ineovim .` from a project: that same first window's
+   `:pwd` is the project directory, never `$HOME` (the launch window can
+   register before the URL is delivered, so a request parked for "the next
+   window" would never reach it).
+7. With the app already running (any number of windows open), run
+   `ineovim .` once: exactly **one** new window appears — the one SwiftUI
+   opens for the URL event, showing that directory — with no extra empty
+   `$HOME` window beside it. Running it a second time opens exactly one more
+   window of its own; existing windows are untouched.
+8. On a machine where the chosen directory is root-owned (typically
    `/usr/local/bin`), the confirmation alert appears first, then the macOS
    administrator prompt; cancelling the prompt changes nothing.
-4. Running the menu item again silently replaces the launcher; a foreign
+9. Running the menu item again silently replaces the launcher; a foreign
    (non-iNeovim) file at that path asks Replace/Cancel first.
 
 Automated checks: `CommandLineToolTests` pins destination selection (PATH
-membership, `~/.local/bin` creation, fallback) and the launcher script's
-quoting.
+membership, `~/.local/bin` creation, fallback), the launcher script's
+encoding/quoting, and the URL payload decoder (shell directory, first-path
+directory, relative paths, directory arguments, spaces, non-ASCII names,
+unrelated URLs).

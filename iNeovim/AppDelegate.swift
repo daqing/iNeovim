@@ -22,11 +22,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var pendingTabHost: NSWindow?
     private var pendingTabFile: URL?
 
+    /// `ineovim` invocations waiting for a window. Requests are handed out
+    /// one at a time: a window consumes its request as its content installs,
+    /// and only then does the next request ask for a window, so two commands
+    /// never race over the single pending slot.
+    private var pendingCommandLineRequest: CommandLineTool.OpenRequest?
+    private var queuedCommandLineRequests: [CommandLineTool.OpenRequest] = []
+
+    /// True until launch finishes. A request delivered during launch is
+    /// taken by the window SwiftUI already opens, rather than leaving an
+    /// empty default window next to it.
+    private var isLaunching = true
+
+    /// The editor window SwiftUI opened at launch. A request that caused the
+    /// launch can arrive *after* that window registered (LaunchServices
+    /// delivers the URL during startup, not before the window exists), so the
+    /// request is applied to this window directly — waiting for a pending
+    /// window would leave it in `$HOME` forever.
+    private weak var launchWindowModel: AppModel?
+    private var launchWindowTookRequest = false
+    private var didFinishLaunchingAt: Date?
+
+    /// How long after launch a request can still be the one that caused the
+    /// launch. The URL event is normally delivered before launch finishes;
+    /// the window only stays adoptable for a short margin in case delivery
+    /// slips just past `applicationDidFinishLaunching`.
+    private static let launchRequestWindow: TimeInterval = 1
+
+    /// Windows whose content has already registered. `viewDidMoveToWindow`
+    /// can run again for a window that is already set up, and only the first
+    /// registration may take a request meant for a new window. Weak, so a
+    /// closed window's identity cannot be mistaken for a new window's.
+    private let registeredWindows = NSHashTable<NSWindow>.weakObjects()
+
+    /// The editor window that registered most recently. SwiftUI opens a
+    /// window of its own for an external URL — measured about 40 ms before
+    /// `application(_:open:)` reaches the delegate — so a request that
+    /// arrives next to a freshly registered window belongs to that window.
+    private weak var newestWindowModel: AppModel?
+    private var newestWindowAt: Date?
+
+    /// Opens a window for a request only when none showed up on its own.
+    private var commandLineWindowTask: Task<Void, Never>?
+    private static let recentWindowInterval: TimeInterval = 0.5
+    private static let commandLineWindowDelay: Duration = .milliseconds(500)
+
     private var keyDownMonitor: Any?
 
     override init() {
         super.init()
         Self.shared = self
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        isLaunching = true
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -58,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         Log.app.info("Application did finish launching")
+        isLaunching = false
+        didFinishLaunchingAt = Date()
+        pumpCommandLineRequests()
     }
 
     /// ⌘D (and its ⌃` alternate) toggles the terminal pane from any focused
@@ -97,9 +149,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// "Open With", Dock-icon drops, and `open -a` all arrive here; the model
     /// routes them to the active session or stages them until one is ready.
+    /// `ineovim://` requests (the command-line launcher) are not file opens:
+    /// each one gets its own window in the directory the command ran in.
     func application(_ application: NSApplication, open urls: [URL]) {
-        Log.app.info("Open request for \(urls.count, privacy: .public) file(s)")
-        AppModel.openFromSystem(urls)
+        let requests = urls.compactMap(CommandLineTool.openRequest(from:))
+        let files = urls.filter { $0.isFileURL }
+        if !files.isEmpty {
+            Log.app.info("Open request for \(files.count, privacy: .public) file(s)")
+            AppModel.openFromSystem(files)
+        }
+        if !requests.isEmpty {
+            Log.app.info("Command-line open request for \(requests.count, privacy: .public) window(s)")
+            queuedCommandLineRequests.append(contentsOf: requests)
+            pumpCommandLineRequests()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -117,6 +180,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func registerWindowOpener(_ opener: @escaping () -> Void) {
         guard openEditorWindow == nil else { return }
         openEditorWindow = opener
+        pumpCommandLineRequests()
+    }
+
+    /// Hand the next `ineovim` request to a window. The window SwiftUI opens
+    /// at launch takes a launch-time request as soon as it has registered;
+    /// afterwards a request goes to the window SwiftUI itself opened for the
+    /// URL event that carried it, and only opens a window of its own when
+    /// none shows up.
+    private func pumpCommandLineRequests() {
+        while pendingCommandLineRequest == nil, !queuedCommandLineRequests.isEmpty {
+            let request = queuedCommandLineRequests.removeFirst()
+
+            if !launchWindowTookRequest, isAdoptingLaunchRequest {
+                guard let launchWindowModel else {
+                    // The launch window is still installing; it takes the
+                    // request when it registers. Opening a window here would
+                    // race it.
+                    pendingCommandLineRequest = request
+                    return
+                }
+                launchWindowTookRequest = true
+                newestWindowAt = nil
+                Log.app.info("Launch window takes the command-line request")
+                launchWindowModel.openFromCommandLine(directory: request.workingDirectory, files: request.files)
+                continue
+            }
+
+            // SwiftUI opens a window of its own for the external URL —
+            // measured ~40 ms before `application(_:open:)` reaches this
+            // delegate — so a window that registered just now is the one
+            // meant for this request. Asking for another window here produced
+            // two windows per `ineovim` invocation (the user saw an extra
+            // default one next to the request).
+            if let newestWindowModel, let newestWindowAt,
+               Date().timeIntervalSince(newestWindowAt) < Self.recentWindowInterval {
+                self.newestWindowAt = nil
+                Log.app.info("SwiftUI's window takes the command-line request")
+                newestWindowModel.openFromCommandLine(directory: request.workingDirectory, files: request.files)
+                continue
+            }
+
+            pendingCommandLineRequest = request
+            scheduleCommandLineWindow()
+        }
+    }
+
+    /// Open a window for a parked request unless one appears on its own
+    /// first. SwiftUI's window registers within a frame or two of the URL
+    /// event; the delay only covers a delivery that skips it (e.g. a request
+    /// from a launcher whose event the system routes differently).
+    private func scheduleCommandLineWindow() {
+        commandLineWindowTask?.cancel()
+        guard pendingCommandLineRequest != nil, openEditorWindow != nil else { return }
+        commandLineWindowTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.commandLineWindowDelay)
+            guard !Task.isCancelled, let self, self.pendingCommandLineRequest != nil else { return }
+            Log.app.notice("No window appeared for the command-line request; opening one")
+            self.openEditorWindow?()
+        }
+    }
+
+    private var isAdoptingLaunchRequest: Bool {
+        if isLaunching { return true }
+        guard let didFinishLaunchingAt else { return false }
+        return Date().timeIntervalSince(didFinishLaunchingAt) < Self.launchRequestWindow
     }
 
     /// The tab bar's + button and the system New Tab action both land here.
@@ -179,6 +307,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// group's; the join is only deferred across the invisible appearance
     /// gap, never while the window can be seen.
     func registerEditorWindow(_ window: NSWindow, model: AppModel) {
+        // `viewDidMoveToWindow` can run again for a window that is already
+        // set up; only the first registration may take a request, adopt the
+        // launch slot, or count as the newest window.
+        let isNewWindow = !registeredWindows.contains(window)
+        if isNewWindow {
+            registeredWindows.add(window)
+            newestWindowModel = model
+            newestWindowAt = Date()
+            // The launch window adopts a launch-time request (see
+            // `pumpCommandLineRequests`); later windows never do.
+            if launchWindowModel == nil, !launchWindowTookRequest {
+                launchWindowModel = model
+            }
+        }
         // The red close button goes through the same confirmation a typed
         // `:q` shows before tearing the window (and its embedded nvim) down.
         // `performClose(_:)` runs this action too (it simulates a click on
@@ -208,6 +350,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let file {
             model.open([file])
+        }
+        if isNewWindow, let request = pendingCommandLineRequest {
+            pendingCommandLineRequest = nil
+            commandLineWindowTask?.cancel()
+            newestWindowAt = nil
+            if launchWindowModel === model {
+                launchWindowTookRequest = true
+            }
+            model.openFromCommandLine(directory: request.workingDirectory, files: request.files)
+            // Ask for the next window outside this window's layout pass.
+            Task { @MainActor in self.pumpCommandLineRequests() }
         }
     }
 

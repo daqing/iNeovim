@@ -28,7 +28,7 @@ actor NvimProcess {
 
     var standardOutput: FileHandle? { stdoutPipe?.fileHandleForReading }
 
-    func start() async throws {
+    func start(workingDirectory: URL? = nil) async throws {
         guard !isStarting, process == nil else { return }
         isStarting = true
         defer { isStarting = false }
@@ -41,9 +41,10 @@ actor NvimProcess {
         process.executableURL = binary
         process.arguments = ["--embed"]
         // A GUI launch inherits "/" as the working directory; starting in the
-        // user's home must happen here (not via RPC) so init.lua already sees
-        // the expected `getcwd()` during startup.
-        process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        // user's home (or in the directory an `ineovim` command ran in) must
+        // happen here (not via RPC) so init.lua already sees the expected
+        // `getcwd()` during startup.
+        process.currentDirectoryURL = workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
         process.environment = Self.augmentedEnvironment()
         process.standardInput = stdin
         process.standardOutput = stdout
