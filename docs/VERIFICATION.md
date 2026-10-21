@@ -89,7 +89,10 @@ aligned.
   native popover appears anchored there listing severity, message, and
   `source · code`; click outside, type, or scroll to dismiss. Clicking a
   gutter cell on a clean line behaves exactly like before (the click reaches
-  nvim, e.g. it toggles a fold when a fold column is present).
+  nvim, e.g. it toggles a fold when a fold column is present). The message is
+  shown in full: a one-line message (e.g. pycodestyle's `E302 expected 2
+  blank lines, found 1`) fits entirely instead of losing its last word, and a
+  long message wraps inside the popover at its 440 pt cap.
 - **Open a URL (⌘-click):** with a URL visible in the grid, hold ⌘ and move the
   pointer onto it: the link is underlined and the pointer becomes a hand; move
   off it (or release ⌘) and both revert. ⌘-click opens it in the default

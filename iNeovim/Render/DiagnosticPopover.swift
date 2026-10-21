@@ -13,6 +13,11 @@ final class DiagnosticPopover {
     private static let dotSize: CGFloat = 8
     private static let dotGap: CGFloat = 8
     private static let metaGap: CGFloat = 2
+    private static let unboundedRect = NSRect(
+        x: 0, y: 0,
+        width: CGFloat.greatestFiniteMagnitude,
+        height: CGFloat.greatestFiniteMagnitude
+    )
 
     private let popover = NSPopover()
 
@@ -65,19 +70,34 @@ final class DiagnosticPopover {
         let metaLineHeight = ceil(metaFont.ascender - metaFont.descender + metaFont.leading)
         // Fit the widest message, clamped: short errors get a small popover,
         // long compiler output wraps at the cap instead of running off-screen.
-        let naturalWidth = items
-            .map { ($0.message as NSString).size(withAttributes: [.font: font]).width }
+        // Measure with the label cell, not `NSString`: the cell insets its
+        // text by 2 pt per side and its single-line width is that much wider
+        // than `NSString.size(withAttributes:)`. At the narrower width a
+        // message that only just fits wrapped its last word onto a second
+        // line that the old height calculation did not reserve, so the
+        // popover showed "E302 expected 2 blank lines, found " clipped
+        // before the count.
+        let labels = items.map { item -> NSTextField in
+            let label = NSTextField(wrappingLabelWithString: item.message)
+            label.font = font
+            return label
+        }
+        let naturalWidth = labels
+            .map { $0.cell?.cellSize(forBounds: Self.unboundedRect).width ?? minTextWidth }
             .max() ?? minTextWidth
         let textWidth = min(max(ceil(naturalWidth), minTextWidth), maxTextWidth)
 
-        let rows: [(item: LineDiagnostic, messageHeight: CGFloat, meta: String)] = items.map { item in
-            let bounds = (item.message as NSString).boundingRect(
-                with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading],
-                attributes: [.font: font]
-            )
+        let rows: [(item: LineDiagnostic, label: NSTextField, messageHeight: CGFloat, meta: String)] =
+            items.indices.map { index in
+            let item = items[index]
+            let label = labels[index]
+            let measured = label.cell?.cellSize(forBounds: NSRect(
+                x: 0, y: 0,
+                width: textWidth,
+                height: Self.unboundedRect.height
+            )).height ?? lineHeight
             let meta = [item.source, item.code].filter { !$0.isEmpty }.joined(separator: " · ")
-            return (item, ceil(bounds.height) + 2, meta)
+            return (item, label, ceil(max(measured, lineHeight)) + 2, meta)
         }
 
         let textX = sidePadding + dotSize + dotGap
@@ -96,8 +116,7 @@ final class DiagnosticPopover {
             dot.layer?.cornerRadius = dotSize / 2
             content.addSubview(dot)
 
-            let message = NSTextField(wrappingLabelWithString: row.item.message)
-            message.font = font
+            let message = row.label
             message.textColor = .labelColor
             message.isSelectable = true
             message.setFrameOrigin(CGPoint(x: textX, y: y))

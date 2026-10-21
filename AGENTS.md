@@ -387,7 +387,15 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   line, non-text row, or an nvim without `vim.diagnostic`, guarded by
   pcall) forwards the original press, so behavior outside the feature is
   unchanged. The rest of the intercepted gesture (drag/release) is always
-  swallowed so nvim never sees orphan events. The popover is a transient
+  swallowed so nvim never sees orphan events. The popover sizes its message
+  labels from the labels' own cells (`cellSize(forBounds:)`), not from
+  `NSString.size(withAttributes:)`/`boundingRect`: the cell insets its text
+  by 2 pt per side, so a message that only just fits measured one line wide
+  and wrapped its last word onto a second line that the old bounding-rect
+  height did not reserve — the popover showed "E302 expected 2 blank lines,
+  found " with the count clipped. Width comes from the cell's single-line
+  size (clamped 220…440 pt), height from the same cell at that width. The
+  popover is a transient
   `NSPopover` (click-outside dismissal); typing or scrolling closes it too.
 - **Problems panel (LSP diagnostics):** the app listens to every language
   server through one nvim-side hook, not per-language plumbing. At bootstrap
