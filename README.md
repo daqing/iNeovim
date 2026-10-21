@@ -139,6 +139,15 @@ in-buffer terminal. The embedded GhosttyKit binary and its adapted Swift
 bindings are vendored under `Packages/GhosttySupport` (built from a pinned
 Ghostty source snapshot; see its `ADAPTATION.md`).
 
+### Command-line tool
+
+**Neovim ▸ Install Command Line Tool…** installs an `ineovim` command into the
+first of `~/.local/bin`, `/opt/homebrew/bin`, or `/usr/local/bin` that your
+shell already searches, asking for administrator rights only when the folder
+requires them. `ineovim [file ...]` then opens those files in iNeovim through
+the running app; missing paths are created first, matching
+`nvim newfile.txt`.
+
 ## Requirements
 
 - macOS 14.6 or later

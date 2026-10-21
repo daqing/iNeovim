@@ -147,3 +147,24 @@ of the editor instead of an in-buffer terminal. Manual checks:
 
 Automated checks: `TerminalPaneCommandTests` pins the cmdline matcher
 (abbreviations, `vert[ical]`, bang, arguments, non-matches).
+
+## Command-line tool
+
+**Neovim ▸ Install Command Line Tool…** installs an `ineovim` launcher into
+`~/.local/bin`, `/opt/homebrew/bin`, or `/usr/local/bin` — the first in the
+login shell's PATH. Manual checks:
+
+1. Run the menu item: the success alert names the installed path (normally
+   `~/.local/bin/ineovim`), and the file exists and is executable.
+2. In a new terminal, `ineovim --help` prints usage; `ineovim README.md` opens
+   the file in the running app (no second process); `ineovim newfile.txt`
+   creates the empty file and opens it as a new buffer.
+3. On a machine where the chosen directory is root-owned (typically
+   `/usr/local/bin`), the confirmation alert appears first, then the macOS
+   administrator prompt; cancelling the prompt changes nothing.
+4. Running the menu item again silently replaces the launcher; a foreign
+   (non-iNeovim) file at that path asks Replace/Cancel first.
+
+Automated checks: `CommandLineToolTests` pins destination selection (PATH
+membership, `~/.local/bin` creation, fallback) and the launcher script's
+quoting.

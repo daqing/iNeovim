@@ -48,6 +48,8 @@ struct EditorCommands: Commands {
             Divider()
             Button("Toggle Problems") { AppModel.active?.toggleProblemsPanel() }
                 .keyboardShortcut("p", modifiers: .option)
+            Divider()
+            Button("Install Command Line Tool\u{2026}") { CommandLineTool.install() }
         }
     }
 

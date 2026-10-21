@@ -50,7 +50,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── QuicklyFileSource.swift  first-level directory listing for the panel
 │   ├── DiagnosticsStore.swift  per-session aggregated LSP diagnostics
 │   ├── ProblemsPanel.swift   docked non-modal issues sidebar
-│   └── FuzzyMatcher.swift    fzf --filter front end with in-process fallback
+│   ├── FuzzyMatcher.swift    fzf --filter front end with in-process fallback
+│   └── CommandLineTool.swift  installs the ineovim launcher into PATH
 ├── Logging.swift         os.Logger categories (rpc, render, input, app)
 ├── NvimDiscovery.swift   Locates the nvim binary and checks its version
 ├── NvimProcess.swift     Actor owning the nvim --embed child process
@@ -415,6 +416,24 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   ⌥P menu equivalent but never fires it (a bare AppKit item with the same
   registration does match a real Option keypress), so the monitor does the
   work and the menu entry is display-only.
+- **Command-line tool (Neovim ▸ Install Command Line Tool…):** writes an
+  `ineovim` shell script into the first of `~/.local/bin`, `/opt/homebrew/bin`,
+  `/usr/local/bin` that the user's login shell PATH actually contains —
+  `CommandLineTool.loginShellPath` asks `$SHELL -l -c` because a GUI app
+  inherits launchd's minimal PATH (zsh only reads `.zprofile` for a login
+  shell, where Homebrew and user-bin entries usually live). A `~/.local/bin`
+  on PATH is used even when it does not exist yet (it is created); when none
+  of the candidates is on PATH the script still lands in `~/.local/bin` and
+  the success alert shows the `export PATH=…` line to add. A directory the
+  user cannot write (typically `/usr/local/bin`) asks first, then elevates
+  through Standard Additions (`do shell script … with administrator
+  privileges`), passing the script as base64 so no quoting layer sees its
+  contents; a cancelled auth prompt (-128) is silent. The launcher calls
+  `open -a <the app that installed it>`, falling back to `open -b
+  com.mzevo.iNeovim` if the app has moved, creates missing path arguments so
+  `ineovim newfile.txt` behaves like nvim's new buffer, and supports
+  `-h`/`--help`. An existing file not carrying the launcher's marker is only
+  replaced after an explicit confirmation.
 - **Native terminal pane (Ghostty):** a typed `:terminal` (and its `term`…
   `terminal` abbreviations, optional `vert[ical]` modifier, optional `!`,
   optional trailing command) never reaches nvim: `TerminalView.sendKeys`

@@ -112,6 +112,14 @@ surface(libghostty),而不是 Neovim 内的终端缓冲区。面板在 Neovim �
 适配后的 Swift 绑定位于 `Packages/GhosttySupport`(基于固定版本的 Ghostty 源码快照
 自建,详见其中的 `ADAPTATION.md`)。
 
+### 命令行工具
+
+**Neovim ▸ Install Command Line Tool…** 会把 `ineovim` 命令安装到
+`~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 中你的 shell 已经搜索的
+第一个目录;只有该目录需要写入权限时才会请求管理员授权。之后
+`ineovim [file ...]` 会通过正在运行的 iNeovim 打开这些文件;不存在的路径会先被
+创建,与 `nvim newfile.txt` 的行为一致。
+
 ## 环境要求
 
 - macOS 14.6 或更高版本
