@@ -1,13 +1,14 @@
 import AppKit
 
-/// Translates `scrollWheel` events into pixel offsets plus whole-line wheel
-/// requests for Neovim, then folds the `grid_scroll` events Neovim answers
-/// with back into the offset (see `ScrollAccumulator`).
+/// Translates `scrollWheel` events into whole-line wheel requests for Neovim
+/// and folds the `grid_scroll` events Neovim answers with back into the visual
+/// lead (see `ScrollAccumulator`).
 ///
 /// Trackpad gestures report `NSEventPhase` directly. Traditional wheel events
 /// carry no phase, so an idle timer synthesizes the "ended" transition. The
-/// content follows both 1:1 while the gesture lasts; the animator only eases
-/// the unconfirmed lead back to rest afterwards.
+/// content moves a line as soon as a wheel step or a line's worth of trackpad
+/// travel is requested; the animator only eases a lead Neovim never confirmed
+/// (the buffer's edge) back to rest after the gesture.
 final class ScrollController {
     weak var view: TerminalView?
     var settings = ScrollAnimationSettings.default
@@ -38,7 +39,7 @@ final class ScrollController {
         guard let view else { return }
         let lineHeight = view.metrics.cellSize.height
         let rawDelta = event.scrollingDeltaY
-        guard rawDelta != 0, rawDelta.isFinite else { return }
+        guard rawDelta.isFinite else { return }
         updateLeadCap()
         let viewPoint = view.convert(event.locationInWindow, from: nil)
         // Grid space starts contentInset into the view (see MouseHandler).
@@ -49,16 +50,18 @@ final class ScrollController {
         lastModifierFlags = event.modifierFlags
 
         if event.hasPreciseScrollingDeltas {
-            // The gesture must be open before the first delta it carries: a
-            // `began` (or momentum `began`) phase that reports no movement
-            // returns above without opening it, and a gesture opened late
-            // ignores the confirmations answering it, so the lead would grow
-            // against a stationary grid.
+            // Phase edges carry no delta of their own (the finger landing or
+            // lifting), but they are what opens and closes the gesture. They
+            // must be read before the delta check: dropping a zero-delta
+            // `.ended` left the gesture open — and its lead standing — after a
+            // trackpad scroll had stopped.
             if !gestureActive || event.phase == .began || event.momentumPhase == .began {
                 beginGesture()
             }
-            apply(delta: rawDelta, lineHeight: lineHeight)
-            notifyScrollActivity()
+            if rawDelta != 0 {
+                apply(delta: rawDelta, lineHeight: lineHeight)
+                notifyScrollActivity()
+            }
             // A phase ended without momentum can be followed by a momentum
             // began, so close the gesture on a short delay that a momentum
             // start cancels. (`.none` would resolve to Optional.none and
@@ -70,6 +73,7 @@ final class ScrollController {
                 wheelEndTask?.cancel()
             }
         } else {
+            guard rawDelta != 0 else { return }
             // Wheel ticks arrive as discrete events with phase .none; batch
             // them into one gesture and end it shortly after the last tick.
             if !gestureActive { beginGesture() }

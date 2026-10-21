@@ -267,9 +267,9 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   (`TerminalView.cursorLayer`) but their geometry math is unchanged; the
   footer is positioned by `updateFooterGeometry()`, which every snapshot,
   metrics, resize, and appearance path calls next to `updateStatuslineLayer()`.
-  At most a sub-cell band of blank background opens between the last text row
-  and the footer while the lead lasts — the same sub-line blank the top edge
-  shows, and the price of leading Neovim at all (T7.4).
+  At most a one-line band of blank background opens between the last text row
+  and the footer while the lead lasts — the same blank the top edge shows, and
+  the price of leading Neovim at all (T7.4).
 - **RPC read path:** nvim's stdout is drained by a dedicated blocking-read
   thread (POSIX `read(2)` loop → `AsyncStream<Data>` → a single consumer task
   feeding `RPCSession.feed`), **not** by `FileHandle.readabilityHandler` (can
@@ -610,10 +610,22 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   Horizontal wheel input is not sent yet (`wheelleft`/`wheelright` require
   nvim 0.10; the minimum is 0.9) — horizontal deltas are ignored for now.
 - **Scroll lead (T7.4, revised):** the content may lead Neovim's scroll by at
-  most one line — exactly one wheel notch (`ScrollAccumulator.offset`). A
-  notch therefore moves the content in the wheel's own frame instead of
-  waiting for the round trip, which is what makes wheel scrolling feel like a
-  native scroll instead of a sequence of steps. A single grid has no pixels
+  most one line — exactly one wheel notch — and the lead is whole lines only:
+  `ScrollAccumulator.offset` is the *requested but unconfirmed* part of the
+  gesture (`sent - confirmed`), not the finger's pixel travel. A request
+  therefore moves the content in the wheel's own frame instead of waiting for
+  the round trip, which is what makes wheel scrolling feel like a native
+  scroll instead of a sequence of steps; a trackpad's sub-line deltas stay in
+  `credit` until they add up to a line. Following the pixels too
+  (`credit - confirmed`) left a sub-line remainder that Neovim can never
+  confirm — it scrolls whole rows only — so every trackpad gesture ended with
+  the content sliding back by up to a line, visibly, after
+  `confirmationGrace` (measured against the real app: 13 of 16 points at the
+  end of one gesture). Trackpad phase edges carry no delta of their own, so
+  `ScrollController.scrollWheel` reads `.began`/`.ended` before the zero-delta
+  check: dropping a zero-delta `.ended` left the gesture open — and
+  `acceptConfirmations` on, so a background redraw could move the offset —
+  after the fingers had lifted. A single grid has no pixels
   beyond the visible screenful, so that lead is one line Neovim has not
   painted yet; the `grid_scroll` it answers with arrives a frame or two later,
   and the flush that carries it swaps the lead for the newly painted row in

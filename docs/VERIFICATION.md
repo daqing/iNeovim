@@ -120,16 +120,21 @@ layer let the statusline text slide off its bar mid-gesture.
 
 Manual check in the GUI:
 
-1. Open a long file and scroll with a precision trackpad gesture that moves
-   the grid by less than one line (a slow two-finger drag).
+1. Open a long file and scroll with a precision trackpad gesture (a two-finger
+   drag that scrolls the grid).
 2. Watch the statusline row while the text above it is still moving.
+3. Lift the fingers and keep watching until the momentum dies out.
 
 Expected: the statusline text and its full-width bar stay planted; at most a
-sub-cell band of blank background opens between the last text row and the
-statusline, and it closes as soon as the gesture settles. Scrolling the other
-way shows the mirror behavior (blank at the top edge, footer still planted).
+one-line band of blank background opens between the last text row and the
+statusline, and it closes as soon as Neovim confirms the line. The content must
+not slide back after the gesture ends — the lead is whole lines only, so there
+is no sub-line remainder to give up (a snap-back here means the lead is being
+drawn from `credit` instead of `sent`). Scrolling the other way shows the
+mirror behavior (blank at the top edge, footer still planted).
 Automated check: `FrozenFooterTests` pins the row slices, the layers' tiling,
-and which layer draws a cursor in the cmdline row.
+and which layer draws a cursor in the cmdline row; `ScrollAccumulatorTests`
+pins the whole-line lead and its confirmation.
 
 Wheel check (traditional mouse wheel, no trackpad):
 

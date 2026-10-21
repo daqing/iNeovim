@@ -25,15 +25,22 @@ enum ScrollLineRequest: Equatable, Sendable {
 /// - `confirmed`: the portion Neovim actually scrolled, reported back through
 ///   `grid_scroll`.
 ///
-/// The visual offset is the *unconfirmed* part of `credit`, so the content
-/// layer can follow the wheel or the finger while Neovim's scroll is in
-/// flight. Neovim only ever draws the visible screenful, so a lead is space
-/// it has not painted: the content may lead by at most one line, which is
-/// exactly one wheel notch. A notch moves the content at once and the
-/// `grid_scroll` Neovim answers with replaces the lead a frame or two later
-/// with the row it painted; a burst that gets further ahead is clamped to the
-/// same line and caught up by the confirmations. A lead Neovim never confirms
-/// — the buffer's edge — is given up by the controller once the gesture ends.
+/// The visual offset is the *requested but not yet confirmed* part of the
+/// gesture, so the content layer moves a whole line the moment a wheel step or
+/// a trackpad delta crosses one, instead of waiting for Neovim's answer.
+/// Neovim only ever draws the visible screenful, so a lead is space it has not
+/// painted: the content may lead by at most one line, which is exactly one
+/// wheel notch. A burst that gets further ahead is clamped to the same line
+/// and caught up by the confirmations. A lead Neovim never confirms — the
+/// buffer's edge — is given up by the controller once the gesture ends.
+///
+/// The lead is whole lines only, even for a trackpad's pixel deltas. Neovim
+/// can only confirm whole lines, so a sub-line lead (`credit - confirmed`)
+/// could never be paid back: it would sit there until the end of the gesture
+/// and then have to be given up — the content visibly sliding back by up to
+/// one line after every scroll. The sub-line part of the gesture stays in
+/// `credit` instead, where it simply becomes the start of the next whole-line
+/// step.
 struct ScrollAccumulator: Equatable, Sendable {
     /// Largest visual lead allowed — one cell height, i.e. exactly one
     /// whole-line wheel step.
@@ -47,7 +54,7 @@ struct ScrollAccumulator: Equatable, Sendable {
     }
 
     var offset: CGFloat {
-        let lead = credit - confirmed
+        let lead = sent - confirmed
         // Clamp to the gesture's direction as well as to the cap: a
         // confirmation that outruns the gesture (a late one, or Neovim
         // scrolling by itself) must not drag the content back the other way.
@@ -109,6 +116,6 @@ struct ScrollAccumulator: Equatable, Sendable {
     /// left alone, so a confirmation still in flight cannot move the content
     /// against the gesture; the direction clamp keeps it at rest.
     mutating func collapse() {
-        confirmed = credit
+        confirmed = sent
     }
 }

@@ -57,12 +57,17 @@ final class ScrollAccumulatorTests: XCTestCase {
 
     // MARK: - Visual lead
 
-    func testSubLineLeadFollowsTheGesture() {
+    func testSubLineTravelWaitsForAWholeLine() {
+        // A trackpad's pixel deltas only move the content once they add up to
+        // a line: the lead is whole lines, so none of it is left over to give
+        // back when the gesture ends.
         var accumulator = makeAccumulator()
-        _ = accumulator.addDelta(4, lineHeight: line)
-        XCTAssertEqual(accumulator.offset, 4)
-        _ = accumulator.addDelta(3, lineHeight: line)
-        XCTAssertEqual(accumulator.offset, 7)
+        XCTAssertEqual(accumulator.addDelta(4, lineHeight: line), [])
+        XCTAssertEqual(accumulator.offset, 0)
+        XCTAssertEqual(accumulator.addDelta(3, lineHeight: line), [])
+        XCTAssertEqual(accumulator.offset, 0)
+        XCTAssertEqual(accumulator.addDelta(3, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.offset, 10)
     }
 
     func testWholeLineLeadFollowsTheWheel() {
@@ -106,47 +111,54 @@ final class ScrollAccumulatorTests: XCTestCase {
         // Neovim scrolled the window up by one line in response to wheelup.
         accumulator.confirmScroll(rows: -1, lineHeight: line)
         XCTAssertTrue(accumulator.isSettled)
-        _ = accumulator.addDelta(3, lineHeight: line)
-        XCTAssertEqual(accumulator.offset, 3)
+        XCTAssertEqual(accumulator.addDelta(3, lineHeight: line), [])
+        XCTAssertEqual(accumulator.offset, 0)
+        XCTAssertEqual(accumulator.addDelta(7, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.offset, 10)
     }
 
-    func testConfirmationShrinksAnOutstandingLead() {
+    func testConfirmationSettlesTheRequestedLine() {
         var accumulator = makeAccumulator()
-        _ = accumulator.addDelta(4, lineHeight: line)
-        XCTAssertEqual(accumulator.offset, 4)
-        _ = accumulator.addDelta(4, lineHeight: line)
-        XCTAssertEqual(accumulator.offset, 8)
-        // Neovim scrolled a whole line: the lead is spent, leaving the
-        // sub-line part of the gesture outstanding.
+        XCTAssertEqual(accumulator.addDelta(13, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.offset, 10)
         accumulator.confirmScroll(rows: -1, lineHeight: line)
+        // Three points of travel are still outstanding, but they are not a
+        // line, so the content sits on the grid instead of three points off.
         XCTAssertEqual(accumulator.offset, 0)
+        XCTAssertEqual(accumulator.addDelta(7, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.offset, 10)
     }
 
     func testOffsetNeverCrossesZeroAgainstTheGesture() {
         // A confirmation that outruns the gesture (Neovim scrolling on its
         // own, or a late one) must not drag the content the other way.
         var accumulator = makeAccumulator()
-        _ = accumulator.addDelta(4, lineHeight: line)
+        _ = accumulator.addDelta(10, lineHeight: line)
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, 0)
         accumulator.confirmScroll(rows: -1, lineHeight: line)
         XCTAssertEqual(accumulator.offset, 0)
 
         var downward = makeAccumulator()
-        _ = downward.addDelta(-4, lineHeight: line)
+        _ = downward.addDelta(-10, lineHeight: line)
+        downward.confirmScroll(rows: 1, lineHeight: line)
         downward.confirmScroll(rows: 1, lineHeight: line)
         XCTAssertEqual(downward.offset, 0)
     }
 
-    func testBeginGesturePreservesTheSubLineOffset() {
+    func testBeginGesturePreservesTheWholeLineLead() {
         var accumulator = makeAccumulator()
         _ = accumulator.addDelta(13, lineHeight: line)
-        accumulator.confirmScroll(rows: -1, lineHeight: line)
-        XCTAssertEqual(accumulator.offset, 3)
+        XCTAssertEqual(accumulator.offset, 10)
 
         accumulator.beginGesture()
-        XCTAssertEqual(accumulator.offset, 3)
-        // The unrequested sub-line remainder survives the gesture change.
+        XCTAssertEqual(accumulator.offset, 10)
+        // The unrequested sub-line remainder survives the gesture change:
+        // three points were never requested, so seven more cross a line.
         XCTAssertEqual(accumulator.addDelta(4, lineHeight: line), [])
-        XCTAssertEqual(accumulator.addDelta(4, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.addDelta(6, lineHeight: line), [.up])
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, 10)
     }
 
     func testBeginGestureDoesNotReRequestAnInFlightLine() {
@@ -161,12 +173,13 @@ final class ScrollAccumulatorTests: XCTestCase {
         XCTAssertEqual(accumulator.offset, 10)
         XCTAssertEqual(accumulator.addDelta(1, lineHeight: line), [])
         accumulator.confirmScroll(rows: -1, lineHeight: line)
-        XCTAssertEqual(accumulator.offset, 1)
+        XCTAssertEqual(accumulator.offset, 0)
     }
 
     func testCollapseDropsTheLeadWithoutBackwardsJump() {
         var accumulator = makeAccumulator()
-        _ = accumulator.addDelta(4, lineHeight: line)
+        _ = accumulator.addDelta(10, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, 10)
         accumulator.collapse()
         XCTAssertTrue(accumulator.isSettled)
         // A confirmation still in flight leaves the content at rest.
