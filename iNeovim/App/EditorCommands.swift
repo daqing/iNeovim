@@ -41,8 +41,10 @@ struct EditorCommands: Commands {
             Divider()
             Button("Toggle Terminal Pane") { AppModel.active?.toggleTerminalPane() }
                 .keyboardShortcut("d", modifiers: .command)
-            Button("Switch Focus Between Editor and Terminal") { AppModel.active?.toggleTerminalPaneFocus() }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
+            Button("Focus Editor") { AppModel.active?.focusEditor() }
+                .keyboardShortcut("l", modifiers: .command)
+            Button("Focus Terminal Pane") { AppModel.active?.focusTerminalPane() }
+                .keyboardShortcut("r", modifiers: .command)
             Divider()
             Button("Toggle Problems") { AppModel.active?.toggleProblemsPanel() }
                 .keyboardShortcut("p", modifiers: .command)

@@ -100,7 +100,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
             case (.command, "p"):
                 return MainActor.assumeIsolated(Self.claimProblemsPanelChord) ? nil : event
-            case ([.command, .shift], "t"):
+            case (.command, "l"):
+                return MainActor.assumeIsolated(Self.claimEditorFocusChord) ? nil : event
+            case (.command, "r"):
                 return MainActor.assumeIsolated(Self.claimTerminalPaneFocusChord) ? nil : event
             default:
                 return event
@@ -135,14 +137,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// ⌘⇧T hands keyboard focus between the editor and the terminal pane,
-    /// opening the pane when it is hidden. A local monitor sees the keydown
-    /// before the responder chain and before Ghostty's
-    /// `SurfaceView.performKeyEquivalent`, so the pane keeps handing focus
-    /// back to the editor even though it owns the keyboard.
+    /// ⌘L returns keyboard focus to the editor from the terminal pane or the
+    /// problems panel. Claimed by the local monitor like the other chords.
+    private static func claimEditorFocusChord() -> Bool {
+        guard NSApp.modalWindow == nil else { return false }
+        AppModel.active?.focusEditor()
+        return true
+    }
+
+    /// ⌘R focuses the terminal pane, opening it when it is hidden. A local
+    /// monitor sees the keydown before the responder chain and before
+    /// Ghostty's `SurfaceView.performKeyEquivalent`, so the chord works while
+    /// the pane already owns the keyboard.
     private static func claimTerminalPaneFocusChord() -> Bool {
         guard NSApp.modalWindow == nil else { return false }
-        AppModel.active?.toggleTerminalPaneFocus()
+        AppModel.active?.focusTerminalPane()
         return true
     }
 

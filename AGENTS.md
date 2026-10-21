@@ -406,7 +406,7 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   hidden. It opens only on demand — ⌘P or the Neovim menu's "Toggle
   Problems" — and closes via the header ✕ or the same toggle; nothing pops
   it open automatically and no settings gate exists. The ⌘P chord is claimed
-  by the same `AppDelegate` keyDown monitor as ⌘D and ⌘⇧T: SwiftUI registers
+  by the same `AppDelegate` keyDown monitor as ⌘D and ⌘L/⌘R: SwiftUI registers
   the ⌘P menu equivalent but never fires it (a bare AppKit item with the
   same registration does match a real keypress), so the monitor does the
   work and the menu entry is display-only.
@@ -504,12 +504,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   claims ⌘D (and its ⌃` alternate) before dispatch because Ghostty's
   `SurfaceView.performKeyEquivalent` would otherwise consume ⌘D for its
   default `new_split:right` binding while the pane is focused, so the menu
-  shortcut alone only ever opened the pane. The same monitor claims ⌘⇧T (the
-  focus toggle) and ⌘P (the problems panel). ⌘⇧T
-  switches keyboard focus between the editor and the pane (an `AppModel`
-  `.toggleFocus` intent that `EditorSplitView` resolves from
-  `window.firstResponder`: focus inside the pane → editor, anything else →
-  pane), opening and focusing the pane first when it is hidden; the
+  shortcut alone only ever opened the pane. The same monitor claims ⌘L, ⌘R,
+  and ⌘P (the problems panel). ⌘L focuses the editor and ⌘R focuses the
+  terminal pane, opening it first when it is hidden (the pane's `.focus`
+  intent and the editor's `.focusEditor` intent); the
   settings toggle
   "Open :terminal in native pane" only gates the cmdline interception
   (mappings/plugins/RPC `:terminal` bypass `sendKeys` and keep nvim's

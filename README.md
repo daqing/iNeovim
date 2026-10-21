@@ -132,10 +132,10 @@ inside Neovim. The pane starts in Neovim's working directory
 (`:term <cmd>` runs a command instead of a shell), mirrors the editor's font
 and colors, and follows `⌘D` (or `⌃\``) or
 **Neovim ▸ Toggle Terminal Pane**.
-`⌘⇧T` switches keyboard focus between the editor and the pane — opening the
-pane first when it is hidden — so you can move back and forth without the
-mouse. The interception can be disabled in Settings to fall back to Neovim's
-in-buffer terminal. The embedded GhosttyKit binary and its adapted Swift
+`⌘L` moves keyboard focus to the editor and `⌘R` to the pane (opening it first
+when it is hidden), so you can move back and forth without the mouse. The
+interception can be disabled in Settings to fall back to Neovim's in-buffer
+terminal. The embedded GhosttyKit binary and its adapted Swift
 bindings are vendored under `Packages/GhosttySupport` (built from a pinned
 Ghostty source snapshot; see its `ADAPTATION.md`).
 
