@@ -93,7 +93,8 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── ScrollAnimator.swift     display-link offset chase (settle/glide)
 │   ├── CursorAnimator.swift     cursor glide between cells (~80 ms)
 │   ├── ScrollAnimationSettings.swift  shared durations/thresholds knobs
-│   └── DisplayLinkDriver.swift  CVDisplayLink → Swift closure trampoline
+│   ├── DisplayLinkDriver.swift  CVDisplayLink → Swift closure trampoline
+│   └── ScrollIndicator.swift    transient overlay scrollbar while scrolling
 ├── TerminalPane/         native Ghostty terminal pane (see design decisions)
 │   ├── EditorSplitView.swift    editor|divider|pane container, pane intents
 │   ├── TerminalPaneView.swift   pane header + surface lifecycle
@@ -658,6 +659,23 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   that arrive while one apply is queued only add their dirty cells, and the
   apply reads the newest snapshot, so a wheel burst costs one repaint rather
   than one per flush.
+- **Scroll indicator:** wheel and trackpad deltas flash a transient overlay
+  scrollbar (`ScrollIndicator`): a 6 pt rounded thumb at the window's right
+  edge, spanning the scrolling region but never the frozen footer, faded out
+  0.7 s after the last delta — the system overlay scrollers' show-on-scroll,
+  hide-when-idle behavior. A single linegrid's `redraw` stream carries no
+  buffer position (`win_viewport` needs `ext_multigrid`, out of scope), so
+  the thumb's place and size come from `NvimClient.windowScrollMetrics`: Lua
+  that finds the window under the pointer cell via `getwininfo` rects
+  (falling back to the current window when the pointer is over the
+  statusline/cmdline rows) and returns `topline`, the buffer's line count,
+  and the window height. One query per delta with at most one in flight
+  (sub-millisecond round trips; against a blocked nvim the queries would
+  otherwise pile up behind the input it is not processing). A buffer that
+  fits the window shows no thumb; a failed query leaves the geometry as it
+  was. The knob follows the nvim theme (white on dark, black on light, 34%
+  alpha) and is informational only: it takes no mouse events, so it never
+  intercepts a click on the text beneath it.
 
 ## Security considerations
 

@@ -26,6 +26,10 @@ final class ScrollController {
     /// asks for an animated chase (gesture ended) vs. direct application.
     var onOffsetChange: ((CGFloat, Bool) -> Void)?
 
+    /// Every wheel or trackpad delta that moves the content, with the
+    /// pointer's grid cell: drives the transient scroll indicator.
+    var onScrollActivity: ((Int, Int) -> Void)?
+
     init(dispatcher: InputDispatcher) {
         self.dispatcher = dispatcher
     }
@@ -54,6 +58,7 @@ final class ScrollController {
                 beginGesture()
             }
             apply(delta: rawDelta, lineHeight: lineHeight)
+            notifyScrollActivity()
             // A phase ended without momentum can be followed by a momentum
             // began, so close the gesture on a short delay that a momentum
             // start cancels. (`.none` would resolve to Optional.none and
@@ -69,6 +74,7 @@ final class ScrollController {
             // them into one gesture and end it shortly after the last tick.
             if !gestureActive { beginGesture() }
             apply(delta: rawDelta * lineHeight, lineHeight: lineHeight)
+            notifyScrollActivity()
             scheduleWheelEnd()
         }
     }
@@ -120,16 +126,27 @@ final class ScrollController {
         onOffsetChange?(accumulator.offset, false)
     }
 
-    private func send(_ requests: [ScrollLineRequest]) {
-        guard let view, !requests.isEmpty else { return }
-        // The pointer cell targets the window Neovim scrolls.
+    /// The grid cell under the pointer: it targets the window Neovim scrolls,
+    /// and the window the scroll indicator reports on.
+    private var pointerCell: (row: Int, col: Int)? {
+        guard let view else { return nil }
         let dimensions = view.gridDimensions
-        let (row, col) = MouseHandler.cellLocation(
+        return MouseHandler.cellLocation(
             for: lastPointerLocation,
             cellSize: view.metrics.cellSize,
             gridWidth: dimensions?.width,
             gridHeight: dimensions?.height
         )
+    }
+
+    private func notifyScrollActivity() {
+        guard let cell = pointerCell else { return }
+        onScrollActivity?(cell.row, cell.col)
+    }
+
+    private func send(_ requests: [ScrollLineRequest]) {
+        guard !requests.isEmpty, let cell = pointerCell else { return }
+        let (row, col) = cell
         let modifier = MouseHandler.modifierString(for: lastModifierFlags)
         for request in requests {
             let wheel = request.wheelButton

@@ -145,6 +145,13 @@ final class TerminalView: NSView {
     private let diagnosticPopover = DiagnosticPopover()
     private let scrollAnimator = ScrollAnimator()
     private let cursorAnimator = CursorAnimator()
+    /// The transient overlay scrollbar shown while the wheel or trackpad
+    /// scrolls and hidden shortly after it stops (see `ScrollIndicator`).
+    private let scrollIndicator = ScrollIndicator()
+    /// At most one metrics query is in flight: a wheel spin against a blocked
+    /// nvim (a running `:!`, a prompt) would otherwise pile queries up behind
+    /// the input it is not processing, and they would all run on unblock.
+    private var scrollMetricsQueryInFlight = false
     private let resizeController: ResizeController
     private var keyHandler = KeyInputHandler()
     private let mouseHandler: MouseHandler
@@ -290,6 +297,7 @@ final class TerminalView: NSView {
         layer?.addSublayer(scrollClipLayer)
         scrollClipLayer.addSublayer(contentLayer)
         layer?.addSublayer(footerLayer)
+        layer?.addSublayer(scrollIndicator.layer)
         completionPanel.onSelect = { [weak self] index in
             guard let self else { return }
             Task { try? await self.model.client.selectPopupmenuItem(index) }
@@ -302,6 +310,9 @@ final class TerminalView: NSView {
         scrollController.view = self
         scrollController.onOffsetChange = { [weak self] offset, animated in
             self?.scrollAnimator.setTarget(offset, animated: animated)
+        }
+        scrollController.onScrollActivity = { [weak self] row, col in
+            self?.scrollActivity(row: row, col: col)
         }
         scrollAnimator.onUpdate = { [weak self] offset in
             guard let self else { return }
@@ -716,6 +727,32 @@ final class TerminalView: NSView {
         scrollController.scrollWheel(with: event)
     }
 
+    // MARK: - Scroll indicator
+
+    /// A wheel or trackpad delta moved the content: show the scrollbar from
+    /// what is already known and ask nvim for the viewport under the pointer.
+    /// The query is issued per delta unless one is still in flight — a round
+    /// trip is sub-millisecond, and its answer is what keeps the thumb in
+    /// step with the scrolling.
+    private func scrollActivity(row: Int, col: Int) {
+        scrollIndicator.flash()
+        guard !scrollMetricsQueryInFlight else { return }
+        scrollMetricsQueryInFlight = true
+        Task { [weak self] in
+            guard let self else { return }
+            let metrics = try? await self.model.client.windowScrollMetrics(row: row, col: col)
+            self.scrollMetricsQueryInFlight = false
+            self.scrollIndicator.setMetrics(metrics)
+        }
+    }
+
+    /// The theme the scrollbar knob follows; an unknown nvim background falls
+    /// back to the window appearance, like the statusline bar.
+    private var scrollIndicatorIsDark: Bool {
+        if let theme = Self.hasDarkBackground(snapshot?.defaultBackground) { return theme }
+        return effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
     // MARK: - Link opening
 
     /// The http(s) URL rendered at a grid cell, used by ⌘-click. Read from the
@@ -1113,6 +1150,9 @@ final class TerminalView: NSView {
         defer { CATransaction.commit() }
         guard let grid = snapshot?.grid, !grid.isEmpty else {
             scrollClipLayer.frame = .zero
+            scrollIndicator.layout(
+                track: .zero, isDark: scrollIndicatorIsDark, scale: backingScale
+            )
             return
         }
         let cellHeight = metrics.cellSize.height
@@ -1127,6 +1167,13 @@ final class TerminalView: NSView {
             height: footerTop
         )
         footerLayer.position = CGPoint(x: Self.contentInset, y: Self.contentInset + footerTop)
+        // The thumb spans the rows the content scrolls through — never the
+        // frozen footer — but hugs the window edge like a system scroller.
+        scrollIndicator.layout(
+            track: CGRect(x: 0, y: Self.contentInset, width: bounds.width, height: footerTop),
+            isDark: scrollIndicatorIsDark,
+            scale: backingScale
+        )
     }
 
     /// Paint the statusline row with the opposite theme mode's default

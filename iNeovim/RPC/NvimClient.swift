@@ -15,6 +15,31 @@ nonisolated struct LineDiagnostic: Equatable {
     var code: String
 }
 
+/// Viewport metrics for the window under the pointer, used to place the
+/// transient scroll indicator's thumb.
+nonisolated struct ScrollMetrics: Equatable {
+    /// First buffer line on screen, 1-based (`getwininfo().topline`).
+    var topline: Int
+    var lineCount: Int
+    /// Screen lines the window shows (its text height in the grid).
+    var visibleLines: Int
+
+    var isScrollable: Bool { lineCount > visibleLines }
+
+    /// Visible share of the buffer, clamped to 0…1.
+    var proportion: CGFloat {
+        guard lineCount > 0 else { return 0 }
+        return min(max(CGFloat(visibleLines) / CGFloat(lineCount), 0), 1)
+    }
+
+    /// Where the visible part sits over the scrollable range, 0 (top of the
+    /// buffer) … 1 (bottom).
+    var position: CGFloat {
+        let span = max(1, lineCount - visibleLines)
+        return min(max(CGFloat(topline - 1) / CGFloat(span), 0), 1)
+    }
+}
+
 struct NvimClient {
     let session: RPCSession
 
@@ -157,6 +182,55 @@ struct NvimClient {
           end
         end
         return { lnum = lnum, items = items }
+        """
+
+    /// The viewport metrics of the window covering a grid cell, for the
+    /// scroll indicator: which buffer line is at the top, how long the buffer
+    /// is, and how many screen lines the window shows. A single linegrid
+    /// carries no buffer position of its own (`win_viewport` needs
+    /// `ext_multigrid`), so this asks nvim; nil when there is no window.
+    func windowScrollMetrics(row: Int, col: Int) async throws -> ScrollMetrics? {
+        let value = try await execLua(Self.scrollMetricsLua, args: [
+            .int(Int64(row)), .int(Int64(col)),
+        ])
+        return Self.parseScrollMetrics(value)
+    }
+
+    static func parseScrollMetrics(_ value: MsgPackValue) -> ScrollMetrics? {
+        guard case let .map(fields) = value,
+              let topline = fields[.string("topline")]?.intValue,
+              let lineCount = fields[.string("linecount")]?.intValue,
+              let height = fields[.string("height")]?.intValue,
+              height > 0 else { return nil }
+        return ScrollMetrics(topline: topline, lineCount: lineCount, visibleLines: height)
+    }
+
+    /// Find the window covering the pointer's cell (`getwininfo` reports
+    /// window rects in the same global grid coordinates `nvim_input_mouse`
+    /// uses); a pointer over the statusline or cmdline row falls back to the
+    /// current window, which is the one Neovim scrolls there anyway.
+    private static let scrollMetricsLua = """
+        local row, col = ...
+        local function metrics(w)
+          local info = vim.fn.getwininfo(w)[1]
+          if not info then return nil end
+          return {
+            topline = info.topline,
+            linecount = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(w)),
+            height = info.height,
+          }
+        end
+        for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          local info = vim.fn.getwininfo(w)[1]
+          if info
+            and row + 1 >= info.winrow and row + 1 < info.winrow + info.height
+            and col + 1 >= info.wincol and col + 1 < info.wincol + info.width then
+            return metrics(w)
+          end
+        end
+        local win = vim.api.nvim_get_current_win()
+        if not vim.api.nvim_win_is_valid(win) then return nil end
+        return metrics(win)
         """
 
     /// Install the diagnostics hook in the embedded nvim: autocmds broadcast

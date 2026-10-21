@@ -145,6 +145,22 @@ is held only while the wheel is moving and eases back once it stops, instead
 of staying blank. Automated check: `ScrollAccumulatorTests` pins the one-line
 lead, the burst clamp, and the confirmation.
 
+Scroll indicator:
+
+1. Scroll a long file with the wheel and with a trackpad: a rounded thumb
+   appears at the right edge from the first delta and follows the viewport
+   (top of the buffer → thumb at the top, `G`/bottom → at the bottom, a short
+   buffer → a long thumb), spanning the text rows only, not the statusline
+   and cmdline rows.
+2. Stop scrolling: the thumb fades out about 0.7 s after the last delta, and
+   moving the wheel again brings it back at once.
+3. Open a file shorter than the window and scroll: no thumb appears.
+4. Switch the colorscheme between dark and light: the knob inverts with the
+   theme.
+
+Automated check: `ScrollMetricsTests` pins the thumb proportion and the
+clamped position.
+
 ## Native terminal pane (Ghostty)
 
 A typed `:terminal` opens a native Ghostty terminal pane docked to the right

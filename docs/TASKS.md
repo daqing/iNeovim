@@ -131,6 +131,9 @@ Hand-rolled, no third-party dependency. Pure, stateless, and testable.
 - **T7.5** Cursor glide: interpolate cursor position over ~50–100 ms instead of
   jumping.
 - **T7.6** Animation tuning: curves, and 120 Hz ProMotion behavior.
+- **T7.7** Scroll indicator: overlay thumb shown while the wheel or trackpad
+  scrolls, placed from the window's `topline`/line count/height queried over
+  RPC, faded out shortly after scrolling stops.
 
 ## Phase 8 — App shell (SwiftUI)
 
