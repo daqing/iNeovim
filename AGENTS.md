@@ -507,7 +507,18 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   shortcut alone only ever opened the pane. The same monitor claims ⌘L, ⌘R,
   and ⌘P (the problems panel). ⌘L focuses the editor and ⌘R focuses the
   terminal pane, opening it first when it is hidden (the pane's `.focus`
-  intent and the editor's `.focusEditor` intent); the
+  intent and the editor's `.focusEditor` intent). A focus change is often
+  invisible — two panes both filled with text, or a second ⌘R — so
+  `EditorSplitView` answers every successful `makeFirstResponder` for these
+  intents (and for a pane that opens and takes focus) with a short
+  `FocusToastView` card at the center of the window ("Focus: Editor" /
+  "Focus: Terminal"), a `.popover`-material `NSVisualEffectView` rounded 10 pt
+  that fades in over 0.12 s, holds ~0.9 s, and fades out over 0.25 s from a
+  cancellable main-actor task; it hit-tests to nil so clicks fall through, is
+  re-raised above its siblings on show, and is re-centered in
+  `placeSubviews`. The
+  toast only appears when the responder change actually succeeded, so it also
+  reports a pane that refused focus by staying silent. The
   settings toggle
   "Open :terminal in native pane" only gates the cmdline interception
   (mappings/plugins/RPC `:terminal` bypass `sendKeys` and keep nvim's

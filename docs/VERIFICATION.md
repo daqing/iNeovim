@@ -147,7 +147,12 @@ of the editor instead of an in-buffer terminal. Manual checks:
 4. ⌘L (**Neovim ▸ Focus Editor**) puts keyboard focus back in the editor,
    and ⌘R (**Neovim ▸ Focus Terminal Pane**) moves it to the pane, opening
    the pane when hidden. Typing lands in whichever side now has focus, and
-   both chords work while the pane has focus.
+   both chords work while the pane has focus. Each successful switch shows a
+   small rounded card at the center of the window — "Focus: Editor" or
+   "Focus: Terminal" — that fades in, holds about a second, and fades out; it
+   also appears when ⌘R opens a hidden pane. Clicking on the card's spot
+   while it is visible still reaches the editor/pane underneath (it ignores
+   the mouse), and resizing the window keeps it centered both ways.
 5. `:terminal` while the pane is open just focuses it. Typing `exit` in the
    pane (or the ⓧ button) closes the pane and returns focus to the editor.
 6. Settings ▸ Terminal ▸ "Open :terminal in native pane" off: `:terminal`

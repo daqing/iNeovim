@@ -133,7 +133,8 @@ inside Neovim. The pane starts in Neovim's working directory
 and colors, and follows `⌘D` (or `⌃\``) or
 **Neovim ▸ Toggle Terminal Pane**.
 `⌘L` moves keyboard focus to the editor and `⌘R` to the pane (opening it first
-when it is hidden), so you can move back and forth without the mouse. The
+when it is hidden), so you can move back and forth without the mouse; a brief
+toast centered in the window confirms which side now has focus. The
 interception can be disabled in Settings to fall back to Neovim's in-buffer
 terminal. The embedded GhosttyKit binary and its adapted Swift
 bindings are vendored under `Packages/GhosttySupport` (built from a pinned

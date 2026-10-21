@@ -20,6 +20,7 @@ final class EditorSplitView: NSView {
     private let model: AppModel
     private let divider = PaneDividerView()
     private let problemsDivider = PaneDividerView()
+    private let focusToast = FocusToastView()
     private var pane: TerminalPaneView?
     private var problemsPanel: ProblemsPanelController?
     private var paneWidth: CGFloat = EditorSplitView.defaultPaneWidth
@@ -45,6 +46,7 @@ final class EditorSplitView: NSView {
             setPanelWidth(panelWidth + deltaX, animated: false)
         }
         addSubview(problemsDivider)
+        addSubview(focusToast)
         model.$terminalPaneIntent
             .receive(on: DispatchQueue.main)
             .sink { [weak self] intent in
@@ -172,11 +174,13 @@ final class EditorSplitView: NSView {
         case .open(let request):
             openPane(request)
         case .focus:
-            if let pane {
-                window?.makeFirstResponder(pane.surfaceView)
+            if let pane, window?.makeFirstResponder(pane.surfaceView) == true {
+                showFocusToast("Focus: Terminal")
             }
         case .focusEditor:
-            window?.makeFirstResponder(terminalView)
+            if window?.makeFirstResponder(terminalView) == true {
+                showFocusToast("Focus: Editor")
+            }
         case .close:
             closePane(removeImmediately: false)
         }
@@ -184,7 +188,9 @@ final class EditorSplitView: NSView {
 
     private func openPane(_ request: AppModel.TerminalPaneRequest) {
         if let pane {
-            window?.makeFirstResponder(pane.surfaceView)
+            if window?.makeFirstResponder(pane.surfaceView) == true {
+                showFocusToast("Focus: Terminal")
+            }
             return
         }
         guard let surface = GhosttyTerminalController.shared.makeSurface(
@@ -203,7 +209,26 @@ final class EditorSplitView: NSView {
             Self.clampedPaneWidth(paneWidth, containerWidth: bounds.width),
             animated: bounds.width > 0
         )
-        window?.makeFirstResponder(surface)
+        if window?.makeFirstResponder(surface) == true {
+            showFocusToast("Focus: Terminal")
+        }
+    }
+
+    /// ⌘L / ⌘R change keyboard focus without necessarily changing anything
+    /// else on screen (a second ⌘R looks like a no-op), so a short HUD reports
+    /// where focus went. It sits above every sibling and ignores the mouse.
+    private func showFocusToast(_ text: String) {
+        focusToast.show(text)
+        addSubview(focusToast, positioned: .above, relativeTo: nil)
+        positionFocusToast()
+    }
+
+    private func positionFocusToast() {
+        guard !focusToast.isHidden else { return }
+        focusToast.setFrameOrigin(NSPoint(
+            x: floor((bounds.width - focusToast.frame.width) / 2),
+            y: floor((bounds.height - focusToast.frame.height) / 2)
+        ))
     }
 
     /// Graceful close asks the surface to exit first; the close callback
@@ -285,6 +310,7 @@ final class EditorSplitView: NSView {
             divider.frame = frames.divider
             pane?.frame = frames.pane
         }
+        positionFocusToast()
     }
 }
 
