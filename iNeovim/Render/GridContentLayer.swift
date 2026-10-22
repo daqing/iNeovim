@@ -67,9 +67,6 @@ final class GridContentLayer: CALayer {
     /// Layer-space rect the cursor was last drawn at, so a glide can invalidate
     /// the position it is leaving in addition to the one it is moving to.
     private var lastDrawnCursorRect: CGRect?
-    /// Cell regions pending redraw for the next `draw(in:)`, so a flush that
-    /// touched two far-apart cells doesn't make us shape every row between.
-    private var pendingCellRects: [CellRect] = []
 
     /// Shaped lines and their cell-pinning groups, keyed by everything that
     /// affects shaping. A scroll repaints the whole viewport, but the rows it
@@ -201,7 +198,6 @@ final class GridContentLayer: CALayer {
     func invalidate(cellRects: [CellRect]) {
         let mine = cellRects.compactMap(clipped(toSlice:))
         guard !mine.isEmpty else { return }
-        pendingCellRects.append(contentsOf: mine)
         for rect in mine {
             setNeedsDisplay(snappedToPixels(pixelRect(for: rect)))
         }
@@ -244,25 +240,25 @@ final class GridContentLayer: CALayer {
         let clip = context.boundingBoxOfClipPath.intersection(bounds)
         guard !clip.isEmpty else { return }
 
-        // The regions to repaint: the flushed cells if this cycle came from a
-        // flush, otherwise the clip (a cursor blink or preedit change). Using
-        // the individual regions — not their bounding box — keeps a flush that
-        // touched two far-apart cells from shaping every row in between.
-        var dirtyRects = pendingCellRects.compactMap { rect -> CGRect? in
-            let pixelRect = snappedToPixels(pixelRect(for: rect)).intersection(bounds)
-            return pixelRect.isEmpty ? nil : pixelRect
-        }
-        pendingCellRects.removeAll(keepingCapacity: true)
-        if dirtyRects.isEmpty { dirtyRects = [clip] }
-
-        let minY = dirtyRects.map(\.minY).min() ?? 0
-        let maxY = dirtyRects.map(\.maxY).max() ?? 0
+        // The clip is the contract: Core Animation clears every pixel inside
+        // it before this call, so whatever is not repainted here is erased.
+        // Invalidations come from several paths — a flush's cells, the
+        // cursor's blink and glide, the link underline, the IME preedit — and
+        // a display pass can carry more than one of them, so the clip, not a
+        // record of the flushed cells, decides what is repainted. (Painting
+        // only the flushed rects left the rest of a merged clip blank: after
+        // a search jump, the cursor invalidation's band ran from the cell the
+        // cursor was last drawn at to the new one, and every character in
+        // between stayed missing until nvim repainted those rows.) The clip's
+        // band narrows the rows and the shaped-line cache absorbs the
+        // repeats.
+        let minY = clip.minY
+        let maxY = clip.maxY
         // Rows of this layer's slice that overlap the dirty band. Testing the
         // rows instead of dividing y by the cell height keeps rows clear of
         // the cmdline gap — the last row sits that gap lower than its slot.
         let rows = sliceRange.filter { rowY($0) < maxY && rowY($0) + cellHeight > minY }
         guard !rows.isEmpty else { return }
-        let dirtyBounds = CGRect(x: clip.minX, y: minY, width: clip.width, height: maxY - minY)
 
         // Resolve each highlight id once per frame instead of once per run.
         var colorCache: [Int: ResolvedColors] = [:]
@@ -282,7 +278,7 @@ final class GridContentLayer: CALayer {
             // default-background fill show through.
             for run in runs {
                 let runRect = rect(for: run, row: row)
-                guard dirtyRects.contains(where: { $0.intersects(runRect) }) else { continue }
+                guard runRect.intersects(clip) else { continue }
                 guard row != statuslineRow,
                       let background = color(for: run.attrId, cache: &colorCache).fillBackground else { continue }
                 context.setFillColor(background.cgColor)
@@ -294,7 +290,7 @@ final class GridContentLayer: CALayer {
             context.translateBy(x: 0, y: bounds.height)
             context.scaleBy(x: 1, y: -1)
             for run in runs where !run.text.isEmpty {
-                guard dirtyRects.contains(where: { $0.intersects(rect(for: run, row: row)) }) else { continue }
+                guard rect(for: run, row: row).intersects(clip) else { continue }
                 drawText(
                     run: run,
                     row: row,
@@ -313,8 +309,8 @@ final class GridContentLayer: CALayer {
             context.restoreGState()
         }
 
-        drawCursor(dirtyBounds, context: context)
-        drawPreedit(dirtyBounds, context: context)
+        drawCursor(clip, context: context)
+        drawPreedit(clip, context: context)
         drawLinkUnderline(context: context)
     }
 

@@ -43,6 +43,11 @@ queued, later flushes only accumulate dirty cells, and the apply reads the
 newest snapshot. A wheel burst that nvim answers with several flushes now
 costs one repaint instead of one per flush.
 
+The layer repaints the display clip, not a per-flush list of cells. Core
+Animation clears the whole dirty clip before `draw(in:)`, so a pass that
+merges a flush with another invalidation (a cursor glide, say) would
+otherwise leave the unrepainted part of the clip blank.
+
 **RPC (`RPCSession.feed`/`handleMessage`)** — the incremental `MsgPackDecoder`
 is the hot path; encoding is batched per notification and cheap. No changes
 were needed; baselines below guard regressions.

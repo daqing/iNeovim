@@ -670,7 +670,13 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   and slot array per cell). `TerminalView` coalesces flush applies: flushes
   that arrive while one apply is queued only add their dirty cells, and the
   apply reads the newest snapshot, so a wheel burst costs one repaint rather
-  than one per flush.
+  than one per flush. `GridContentLayer.draw(in:)` repaints the display clip,
+  never a record of the flushed cells: Core Animation clears every pixel of
+  the dirty clip before the call, so a display pass that merges a flush with
+  another invalidation — a cursor blink or glide, the link underline, the IME
+  preedit — must repaint the whole clip. Painting only the flushed cells
+  erased the rest, which showed up as blank characters along a search jump's
+  cursor glide until nvim repainted those rows.
 - **Scroll indicator:** wheel and trackpad deltas flash a transient overlay
   scrollbar (`ScrollIndicator`): a 6 pt rounded thumb at the window's right
   edge, spanning the scrolling region but never the frozen footer, faded out
