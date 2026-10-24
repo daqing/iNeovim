@@ -16,7 +16,8 @@ Usage: scripts/publish.sh [--skip-notarize]
 
 Builds a Release archive, exports it with the project's Developer ID signing
 configuration, notarizes it, staples the ticket, and verifies Gatekeeper
-acceptance. Artifacts are written to build/publish/<timestamp>-<pid>/.
+acceptance. Creates a ZIP and a drag-to-Applications DMG in
+build/publish/<timestamp>-<pid>/.
 
 A full release requires an app-specific password stored once with:
   xcrun notarytool store-credentials "iNeovim-notary" \
@@ -24,9 +25,9 @@ A full release requires an app-specific password stored once with:
     --password "<app-specific-password>"
 
 Options:
-  --skip-notarize  Build and verify the Developer ID signature only. The
-                   resulting ZIP is marked unnotarized and is not suitable
-                   for normal Internet distribution.
+  --skip-notarize  Build and verify the Developer ID signatures only. The
+                   resulting ZIP and DMG are marked unnotarized and are not
+                   suitable for normal Internet distribution.
   -h, --help       Show this help.
 
 Environment:
@@ -46,6 +47,57 @@ fail() {
     exit 1
 }
 
+notarize() {
+    local submission_path="$1"
+    local result_path="$2"
+    local log_path="$3"
+    local submit_status=0
+    local notary_status=""
+    local submission_id=""
+
+    log "Submitting ${submission_path##*/} with keychain profile $NOTARY_KEYCHAIN_PROFILE"
+    xcrun notarytool submit "$submission_path" \
+        --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+        --wait \
+        --output-format json >"$result_path" || submit_status=$?
+
+    if [[ -s "$result_path" ]]; then
+        notary_status="$(plutil -extract status raw -o - "$result_path" 2>/dev/null || true)"
+        submission_id="$(plutil -extract id raw -o - "$result_path" 2>/dev/null || true)"
+    fi
+
+    if [[ "$notary_status" != "Accepted" ]]; then
+        if [[ -n "$submission_id" ]]; then
+            if xcrun notarytool log "$submission_id" \
+                --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+                "$log_path"; then
+                printf 'Notarization log: %s\n' "$log_path" >&2
+            fi
+        fi
+        fail "notarization failed for $submission_path (command status $submit_status, Apple status ${notary_status:-unknown}); see $result_path and docs/RELEASE.md"
+    fi
+
+    printf 'Notarization accepted for %s: %s\n' "${submission_path##*/}" "$submission_id"
+}
+
+create_installer_dmg() {
+    local dmg_path="$1"
+    local staging_path="$2"
+
+    log "Creating the drag-to-Applications DMG"
+    mkdir -p "$staging_path"
+    ditto "$APP_PATH" "$staging_path/$APP_NAME.app"
+    ln -s /Applications "$staging_path/Applications"
+    diskutil image create from \
+        --format UDZO \
+        --volumeName "$APP_NAME" \
+        "$staging_path" \
+        "$dmg_path"
+    hdiutil verify "$dmg_path"
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp "$dmg_path"
+    codesign --verify --verbose=2 "$dmg_path"
+}
+
 while (($# > 0)); do
     case "$1" in
         --skip-notarize)
@@ -63,7 +115,7 @@ while (($# > 0)); do
     shift
 done
 
-for tool in xcodebuild xcrun security codesign spctl ditto plutil; do
+for tool in xcodebuild xcrun security codesign spctl ditto plutil hdiutil diskutil; do
     command -v "$tool" >/dev/null 2>&1 || fail "required tool not found: $tool"
 done
 
@@ -132,48 +184,27 @@ VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$INFO_PLIST")" |
 BUILD_NUMBER="$(plutil -extract CFBundleVersion raw -o - "$INFO_PLIST")" || fail "could not read CFBundleVersion"
 ARTIFACT_BASE="$RUN_DIR/$APP_NAME-$VERSION-$BUILD_NUMBER"
 SUBMISSION_ZIP="$ARTIFACT_BASE-submission.zip"
+DMG_STAGING="$RUN_DIR/dmg-root"
 
 if ((NOTARIZE == 0)); then
     RELEASE_ZIP="$ARTIFACT_BASE-unnotarized.zip"
+    RELEASE_DMG="$ARTIFACT_BASE-unnotarized.dmg"
     log "Creating the unnotarized ZIP"
     ditto -c -k --keepParent "$APP_PATH" "$RELEASE_ZIP"
+    create_installer_dmg "$RELEASE_DMG" "$DMG_STAGING"
     printf '\nSigned app (not notarized): %s\n' "$APP_PATH"
     printf 'Signed ZIP (not notarized): %s\n' "$RELEASE_ZIP"
+    printf 'Signed DMG (not notarized): %s\n' "$RELEASE_DMG"
     printf 'Do not use this output for normal Internet distribution.\n'
     exit 0
 fi
 
-log "Creating the notarization submission"
+RELEASE_ZIP="$ARTIFACT_BASE.zip"
+RELEASE_DMG="$ARTIFACT_BASE.dmg"
+
+log "Creating the app notarization submission"
 ditto -c -k --keepParent "$APP_PATH" "$SUBMISSION_ZIP"
-NOTARY_RESULT="$RUN_DIR/notarization.json"
-NOTARY_LOG="$RUN_DIR/notary-log.json"
-
-log "Submitting to Apple notarization with keychain profile $NOTARY_KEYCHAIN_PROFILE"
-SUBMIT_STATUS=0
-xcrun notarytool submit "$SUBMISSION_ZIP" \
-    --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
-    --wait \
-    --output-format json >"$NOTARY_RESULT" || SUBMIT_STATUS=$?
-
-NOTARY_STATUS=""
-SUBMISSION_ID=""
-if [[ -s "$NOTARY_RESULT" ]]; then
-    NOTARY_STATUS="$(plutil -extract status raw -o - "$NOTARY_RESULT" 2>/dev/null || true)"
-    SUBMISSION_ID="$(plutil -extract id raw -o - "$NOTARY_RESULT" 2>/dev/null || true)"
-fi
-
-if [[ "$NOTARY_STATUS" != "Accepted" ]]; then
-    if [[ -n "$SUBMISSION_ID" ]]; then
-        if xcrun notarytool log "$SUBMISSION_ID" \
-            --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
-            "$NOTARY_LOG"; then
-            printf 'Notarization log: %s\n' "$NOTARY_LOG" >&2
-        fi
-    fi
-    fail "notarization failed (command status $SUBMIT_STATUS, Apple status ${NOTARY_STATUS:-unknown}); see $NOTARY_RESULT and docs/RELEASE.md"
-fi
-
-printf 'Notarization accepted: %s\n' "$SUBMISSION_ID"
+notarize "$SUBMISSION_ZIP" "$RUN_DIR/app-notarization.json" "$RUN_DIR/app-notary-log.json"
 
 log "Stapling and validating the app"
 xcrun stapler staple "$APP_PATH"
@@ -181,10 +212,18 @@ xcrun stapler validate "$APP_PATH"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 spctl --assess --type execute --verbose=4 "$APP_PATH"
 
-RELEASE_ZIP="$ARTIFACT_BASE.zip"
 log "Creating the distributable ZIP with the stapled app"
 ditto -c -k --keepParent "$APP_PATH" "$RELEASE_ZIP"
 
-printf '\nRelease app: %s\n' "$APP_PATH"
-printf 'Release ZIP: %s\n' "$RELEASE_ZIP"
-printf 'Version:     %s (%s)\n' "$VERSION" "$BUILD_NUMBER"
+create_installer_dmg "$RELEASE_DMG" "$DMG_STAGING"
+notarize "$RELEASE_DMG" "$RUN_DIR/dmg-notarization.json" "$RUN_DIR/dmg-notary-log.json"
+
+log "Stapling and validating the DMG"
+xcrun stapler staple "$RELEASE_DMG"
+xcrun stapler validate "$RELEASE_DMG"
+codesign --verify --verbose=2 "$RELEASE_DMG"
+
+printf '\nRelease app:  %s\n' "$APP_PATH"
+printf 'Release ZIP:  %s\n' "$RELEASE_ZIP"
+printf 'Release DMG:  %s\n' "$RELEASE_DMG"
+printf 'Version:      %s (%s)\n' "$VERSION" "$BUILD_NUMBER"
