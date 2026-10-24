@@ -1,0 +1,135 @@
+import AppKit
+
+/// Translates mouse events into `nvim_input_mouse` calls on grid 1.
+/// Dragging extends selections because nvim treats "drag" actions as
+/// selection extension.
+final class MouseHandler {
+    /// The gutter cells (sign column) where a plain left click opens the
+    /// diagnostics popover instead of moving nvim's cursor.
+    static let signColumnMaxCol = 1
+
+    weak var view: TerminalView?
+    private let dispatcher: InputDispatcher
+    private var pressedButton: String?
+    /// The current gesture was routed to the diagnostics popover; its drag
+    /// and release must not reach nvim as orphans.
+    private var isSwallowingGesture = false
+
+    init(dispatcher: InputDispatcher) {
+        self.dispatcher = dispatcher
+    }
+
+    func mouseDown(_ event: NSEvent) {
+        guard let button = Self.buttonName(for: event) else { return }
+        view?.window?.makeFirstResponder(view)
+        pressedButton = button
+        // ⌘-click on an http(s) URL opens it in the default browser instead of
+        // reaching nvim; the rest of the gesture is swallowed so nvim never
+        // sees an orphan drag/release.
+        if button == "left",
+           event.modifierFlags.contains(.command),
+           let cell = cellLocation(for: event),
+           let url = view?.linkTarget(atRow: cell.row, col: cell.col) {
+            isSwallowingGesture = true
+            _ = NSWorkspace.shared.open(url)
+            return
+        }
+        if button == "left",
+           Self.modifierString(for: event.modifierFlags).isEmpty,
+           let cell = cellLocation(for: event),
+           cell.col <= Self.signColumnMaxCol {
+            isSwallowingGesture = true
+            view?.presentDiagnostics(atRow: cell.row, col: cell.col)
+            return
+        }
+        handle(event, button: button, action: "press")
+    }
+
+    func mouseDragged(_ event: NSEvent) {
+        guard let pressedButton, !isSwallowingGesture else { return }
+        handle(event, button: pressedButton, action: "drag")
+    }
+
+    func mouseUp(_ event: NSEvent) {
+        guard let pressedButton else { return }
+        self.pressedButton = nil
+        if isSwallowingGesture {
+            isSwallowingGesture = false
+            return
+        }
+        handle(event, button: pressedButton, action: "release")
+    }
+
+    private func handle(_ event: NSEvent, button: String, action: String) {
+        guard let cell = cellLocation(for: event) else { return }
+        let modifier = Self.modifierString(for: event.modifierFlags)
+        dispatcher.send(.mouse(
+            button: button,
+            action: action,
+            modifier: modifier,
+            grid: 1,
+            row: cell.row,
+            col: cell.col
+        ))
+    }
+
+    private func cellLocation(for event: NSEvent) -> (row: Int, col: Int)? {
+        guard let view else { return nil }
+        let point = view.convert(event.locationInWindow, from: nil)
+        // The grid starts contentInset into the view, and the content may be
+        // leading Neovim's grid mid-scroll; convert to grid space before
+        // dividing into cells.
+        let dimensions = view.gridDimensions
+        return Self.cellLocation(
+            for: view.gridPoint(forViewPoint: point),
+            cellSize: view.metrics.cellSize,
+            gridWidth: dimensions?.width,
+            gridHeight: dimensions?.height
+        )
+    }
+
+    static func buttonName(for event: NSEvent) -> String? {
+        switch event.type {
+        case .leftMouseDown, .leftMouseDragged, .leftMouseUp: return "left"
+        case .rightMouseDown, .rightMouseDragged, .rightMouseUp: return "right"
+        case .otherMouseDown, .otherMouseDragged, .otherMouseUp: return "middle"
+        default: return nil
+        }
+    }
+
+    /// nvim mouse modifier string: shift S, control C, option A, command M.
+    static func modifierString(for flags: NSEvent.ModifierFlags) -> String {
+        let flags = flags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .function])
+        var result = ""
+        if flags.contains(.shift) { result += "S" }
+        if flags.contains(.control) { result += "C" }
+        if flags.contains(.option) { result += "A" }
+        if flags.contains(.command) { result += "M" }
+        return result
+    }
+
+    /// View point (y-down, flipped view) to grid cell, clamped to the grid.
+    /// Row mapping goes through `TerminalView.gridRow` so the gap above the
+    /// cmdline row is accounted for.
+    static func cellLocation(
+        for point: CGPoint,
+        cellSize: CGSize,
+        gridWidth: Int?,
+        gridHeight: Int?
+    ) -> (row: Int, col: Int) {
+        let col = min(max(Int(point.x / cellSize.width), 0), gridWidth.map { $0 - 1 } ?? .max)
+        let row: Int
+        if let gridHeight {
+            row = TerminalView.gridRow(
+                atY: point.y,
+                gridHeight: gridHeight,
+                cellHeight: cellSize.height
+            )
+        } else {
+            row = max(Int(point.y / cellSize.height), 0)
+        }
+        return (row, col)
+    }
+}

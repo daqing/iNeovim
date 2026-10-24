@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Build output
+build/
+.build/
+DerivedData/
+
+# Test coverage profiles
+*.profraw
+.zcode
+.scratch

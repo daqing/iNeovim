@@ -1,17 +1,103 @@
+import AppKit
 import SwiftUI
-import Playgrounds
 
+/// Window shell: hosts the AppKit terminal surface and provides a sane
+/// minimum size so the grid never collapses below usable dimensions.
 struct ContentView: View {
+    @ObservedObject var settings: AppSettings
+    @StateObject private var model = AppModel()
+    @Environment(\.openWindow) private var openWindow
+
     var body: some View {
-        Text("Hello, world!")
-            .padding()
+        EditorSplitRepresentable(settings: settings, model: model)
+            .frame(minWidth: 480, minHeight: 320)
+            .background(seededBackground)
+            .overlay { statusOverlay }
+            .preferredColorScheme(model.themeIsDark.map { $0 ? .dark : .light })
+            .navigationTitle(model.windowTitle ?? "iNeovim")
+            .task { await model.bootstrap() }
+            .onAppear { registerWindowOpener() }
+            .alert(
+                "Neovim exited",
+                isPresented: Binding(
+                    get: { model.crash != nil },
+                    set: { if !$0 { model.dismissCrash() } }
+                ),
+                presenting: model.crash
+            ) { _ in
+                Button("Restart") { model.restart() }
+                Button("Quit", role: .destructive) { NSApp.terminate(nil) }
+            } message: { crash in
+                Text("The embedded Neovim process exited unexpectedly (status \(crash.status)).")
+            }
+    }
+
+    /// The window backdrop. Prefer nvim's reported default background once it
+    /// arrives, so transparent chrome (the terminal pane header, the splitters)
+    /// matches the editor after a `:colorscheme` flip instead of holding the
+    /// window's original theme. Before the first report it uses the seeded
+    /// background (a native tab's host), then the adaptive system color
+    /// (⌘N / first launch), so no light frame shows while the hosting
+    /// WindowGroup is still applying the seeded `preferredColorScheme`.
+    private var seededBackground: Color {
+        if let packed = model.terminalColors.background ?? model.seededBackground,
+           let color = NSColor(packedRGB: packed) {
+            return Color(color)
+        }
+        return Color(nsColor: .textBackgroundColor)
+    }
+
+    /// Hand SwiftUI's openWindow action to the app delegate so ⌘T and the
+    /// tab bar's + button can open editor windows from AppKit.
+    private func registerWindowOpener() {
+        AppDelegate.shared?.registerWindowOpener { [openWindow] in
+            openWindow(id: "editor")
+        }
+    }
+
+    /// A blank grid can mean Neovim is still starting or failed to start; show
+    /// that state instead of an empty window.
+    @ViewBuilder
+    private var statusOverlay: some View {
+        if model.isReady || model.crash != nil {
+            // A crash is surfaced by the alert; an empty grid is expected then.
+            EmptyView()
+        } else if let setup = model.setup {
+            SetupView(setup: setup) { model.restart() }
+        } else if let error = model.bootstrapError {
+            ContentUnavailableView {
+                Label("Could not start Neovim", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { model.restart() }
+            }
+        } else {
+            ProgressView("Starting Neovim…")
+                .controlSize(.small)
+                .padding(16)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
+struct EditorSplitRepresentable: NSViewRepresentable {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var model: AppModel
+
+    func makeNSView(context: Context) -> EditorSplitView {
+        let view = EditorSplitView(model: model, metrics: FontMetrics(font: settings.resolvedFont()))
+        view.apply(settings: settings)
+        view.sessionDidChangeReady(model.isReady)
+        return view
+    }
+
+    func updateNSView(_ nsView: EditorSplitView, context: Context) {
+        nsView.apply(settings: settings)
+        nsView.sessionDidChangeReady(model.isReady)
     }
 }
 
 #Preview {
-    ContentView()
-}
-
-#Playground {
-    _ = 1 + 2
+    ContentView(settings: AppSettings.shared)
 }
