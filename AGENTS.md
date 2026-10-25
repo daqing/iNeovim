@@ -215,8 +215,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `window.animationBehavior = .none` so AppKit contributes no order-in or
   tab-bar-entrance motion on top of the redraw. The 80x24 fallback only
   applies if bootstrap beats the first layout.
-- **Content inset & cmdline gap:** the grid is inset `TerminalView.contentInset`
-  (6 pt) from the view on all sides, and the last grid row (nvim's
+- **Content inset & cmdline gap:** the grid is inset
+  `TerminalView.contentInset` (6 pt) above and below and
+  `TerminalView.horizontalContentInset` (8 pt) left and right — 2 pt of extra
+  horizontal room so the transient scroll thumb, which hugs the window's
+  right edge, never covers the rightmost glyph — and the last grid row (nvim's
   cmdline/message area) is drawn `TerminalView.cmdlineGap` (4 pt) below the
   row above it, so the statusline and the cmdline never touch. Every grid
   cell-count computation (`ResizeController.cellCount` via
@@ -697,7 +700,9 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   cursor glide until nvim repainted those rows.
 - **Scroll indicator:** wheel and trackpad deltas flash a transient overlay
   scrollbar (`ScrollIndicator`): a 6 pt rounded thumb at the window's right
-  edge, spanning the scrolling region but never the frozen footer, faded out
+  edge, `rightInset` 2 pt from it so the thumb spans exactly the 8 pt
+  horizontal content inset and never overlaps the grid, spanning the scrolling
+  region but never the frozen footer, faded out
   0.7 s after the last delta — the system overlay scrollers' show-on-scroll,
   hide-when-idle behavior. A single linegrid's `redraw` stream carries no
   buffer position (`win_viewport` needs `ext_multigrid`, out of scope), so

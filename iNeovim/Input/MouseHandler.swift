@@ -76,7 +76,7 @@ final class MouseHandler {
     private func cellLocation(for event: NSEvent) -> (row: Int, col: Int)? {
         guard let view else { return nil }
         let point = view.convert(event.locationInWindow, from: nil)
-        // The grid starts contentInset into the view, and the content may be
+        // The grid starts inside the content insets, and the content may be
         // leading Neovim's grid mid-scroll; convert to grid space before
         // dividing into cells.
         let dimensions = view.gridDimensions

@@ -179,7 +179,9 @@ Scroll indicator:
    appears at the right edge from the first delta and follows the viewport
    (top of the buffer → thumb at the top, `G`/bottom → at the bottom, a short
    buffer → a long thumb), spanning the text rows only, not the statusline
-   and cmdline rows.
+   and cmdline rows. The thumb sits in the window's right margin beside the
+   text (the grid is inset 8 pt horizontally), so it never covers the last
+   character of a row.
 2. Stop scrolling: the thumb fades out about 0.7 s after the last delta, and
    moving the wheel again brings it back at once.
 3. Open a file shorter than the window and scroll: no thumb appears.

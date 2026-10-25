@@ -5,10 +5,15 @@ import os
 /// The terminal surface: hosts the scrollable grid content layer, paints
 /// the background behind it, and routes keyboard, mouse, and scroll input.
 final class TerminalView: NSView {
-    /// Breathing room around the grid on every side. The grid is sized from
-    /// the inset area only, so the last line (statusline/cmdline) can never
+    /// Breathing room above and below the grid. The grid is sized from the
+    /// inset area only, so the last line (statusline/cmdline) can never
     /// touch the window edges.
     static let contentInset: CGFloat = 6
+
+    /// Breathing room left and right: 2 pt wider than the vertical inset so
+    /// the transient scroll indicator, which hugs the window's right edge,
+    /// stays off the rightmost glyph.
+    static let horizontalContentInset: CGFloat = contentInset + 2
 
     /// Extra vertical space between the statusline row and the cmdline row
     /// below it: the last grid row is drawn this far below its uniform slot,
@@ -22,15 +27,14 @@ final class TerminalView: NSView {
     /// lead never translates — nvim does not scroll them either.
     static let frozenFooterRows = 2
 
-    /// View size minus the content inset on both sides and the cmdline gap:
-    /// the area the grid (rows plus gap) may occupy. Grid cell counts must
-    /// always be derived from this, never from the raw bounds, or the grid
-    /// fills the view edge to edge.
+    /// View size minus the horizontal and vertical insets and the cmdline
+    /// gap: the area the grid (rows plus gap) may occupy. Grid cell counts
+    /// must always be derived from this, never from the raw bounds, or the
+    /// grid fills the view edge to edge.
     static func gridAreaSize(_ size: CGSize) -> CGSize {
-        let inset = contentInset * 2
         return CGSize(
-            width: max(0, size.width - inset),
-            height: max(0, size.height - inset - cmdlineGap)
+            width: max(0, size.width - horizontalContentInset * 2),
+            height: max(0, size.height - contentInset * 2 - cmdlineGap)
         )
     }
 
@@ -271,7 +275,7 @@ final class TerminalView: NSView {
         super.init(frame: NSRect(
             origin: .zero,
             size: CGSize(
-                width: metrics.cellSize.width * 80 + Self.contentInset * 2,
+                width: metrics.cellSize.width * 80 + Self.horizontalContentInset * 2,
                 height: metrics.cellSize.height * 24 + Self.contentInset * 2 + Self.cmdlineGap
             )
         ))
@@ -599,7 +603,7 @@ final class TerminalView: NSView {
     /// candidate windows anchor to this (see `firstRect(forCharacterRange:)`).
     func preeditRect(forCharacterRange range: NSRange) -> CGRect {
         guard let (layer, rect) = preeditLayerRect(forCharacterRange: range) else { return .zero }
-        return rect.offsetBy(dx: Self.contentInset, dy: layerOriginY(layer))
+        return rect.offsetBy(dx: Self.horizontalContentInset, dy: layerOriginY(layer))
     }
 
     /// The layer drawing the marked text plus the preedit rect within it; nil
@@ -822,7 +826,7 @@ final class TerminalView: NSView {
             )
             if y < footerTop { y -= scrollAnimator.presentationOffset }
         }
-        return CGPoint(x: point.x - Self.contentInset, y: y)
+        return CGPoint(x: point.x - Self.horizontalContentInset, y: y)
     }
 
     /// Grid cell under a point in view coordinates.
@@ -866,7 +870,7 @@ final class TerminalView: NSView {
         let cell = metrics.cellSize
         let gridHeight = gridDimensions?.height ?? 0
         return CGRect(
-            x: Self.contentInset + CGFloat(col) * cell.width,
+            x: Self.horizontalContentInset + CGFloat(col) * cell.width,
             y: Self.contentInset + Self.gridRowY(row, gridHeight: gridHeight, cellHeight: cell.height),
             width: cell.width * 2,
             height: cell.height
@@ -1161,12 +1165,14 @@ final class TerminalView: NSView {
             footerStart, gridHeight: grid.height, cellHeight: cellHeight
         )
         scrollClipLayer.frame = CGRect(
-            x: Self.contentInset,
+            x: Self.horizontalContentInset,
             y: Self.contentInset,
             width: CGFloat(grid.width) * metrics.cellSize.width,
             height: footerTop
         )
-        footerLayer.position = CGPoint(x: Self.contentInset, y: Self.contentInset + footerTop)
+        footerLayer.position = CGPoint(
+            x: Self.horizontalContentInset, y: Self.contentInset + footerTop
+        )
         // The thumb spans the rows the content scrolls through — never the
         // frozen footer — but hugs the window edge like a system scroller.
         scrollIndicator.layout(
@@ -1223,12 +1229,12 @@ final class TerminalView: NSView {
         let size = completionPanel.update(
             popup,
             metrics: metrics,
-            maxWidth: bounds.width - Self.contentInset * 2
+            maxWidth: bounds.width - Self.horizontalContentInset * 2
         )
         let cellWidth = metrics.cellSize.width
         let cellHeight = metrics.cellSize.height
         let anchorRowTop = Self.contentInset + CGFloat(popup.row) * cellHeight
-        let x = Self.contentInset + CGFloat(popup.col) * cellWidth
+        let x = Self.horizontalContentInset + CGFloat(popup.col) * cellWidth
         var y = Self.contentInset + Self.gridRowY(
             popup.row, gridHeight: grid.height, cellHeight: cellHeight
         )
