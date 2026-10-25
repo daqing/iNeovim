@@ -133,6 +133,9 @@ Manual check in the GUI:
   uses the same wording as the typed command would.
 - **Settings (T8.3):** ⌘, opens Settings. Changing font/size reflows the grid;
   Option-as-Meta and Command passthrough change key behavior immediately.
+  Layout ▸ Left/Right padding moves the grid live and reflows the column
+  count; the right slider cannot go below the scroll indicator's strip, so
+  the wheel's thumb never covers text.
 - **Window title (T8.5):** opening a file updates the window title from
   neovim's `set_title`.
 - **File opening (T8.6):** dragging a text file onto the editor opens it as a

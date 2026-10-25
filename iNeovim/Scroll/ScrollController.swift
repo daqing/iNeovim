@@ -44,7 +44,7 @@ final class ScrollController {
         let viewPoint = view.convert(event.locationInWindow, from: nil)
         // Grid space starts contentInset into the view (see MouseHandler).
         lastPointerLocation = CGPoint(
-            x: viewPoint.x - TerminalView.leadingContentInset,
+            x: viewPoint.x - view.leadingContentInset,
             y: viewPoint.y - TerminalView.contentInset
         )
         lastModifierFlags = event.modifierFlags

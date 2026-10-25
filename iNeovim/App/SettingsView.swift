@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Settings window: appearance (font family/size), input behavior, and
-/// animation toggles. Changes apply live — `AppSettings` is shared with the
-/// render view.
+/// Settings window: appearance (font family/size), grid layout padding, input
+/// behavior, and animation toggles. Changes apply live — `AppSettings` is
+/// shared with the render view.
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
 
@@ -21,6 +21,29 @@ struct SettingsView: View {
                     HStack {
                         Slider(value: $settings.fontSize, in: 8...32, step: 1)
                         Text("\(Int(settings.fontSize)) pt")
+                            .monospacedDigit()
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                }
+            }
+
+            Section("Layout") {
+                LabeledContent("Left padding") {
+                    HStack {
+                        Slider(value: $settings.leadingPadding, in: 0...48, step: 1)
+                        Text("\(Int(settings.leadingPadding)) pt")
+                            .monospacedDigit()
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                }
+                LabeledContent("Right padding") {
+                    HStack {
+                        Slider(
+                            value: $settings.trailingPadding,
+                            in: Double(TerminalView.minimumTrailingPadding)...48,
+                            step: 1
+                        )
+                        Text("\(Int(settings.trailingPadding)) pt")
                             .monospacedDigit()
                             .frame(width: 44, alignment: .trailing)
                     }

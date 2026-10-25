@@ -15,6 +15,16 @@ final class AppSettings: ObservableObject {
     @Published var fontSize: Double {
         didSet { defaults.set(fontSize, forKey: Keys.fontSize) }
     }
+    /// Breathing room between the window's left edge and the grid.
+    @Published var leadingPadding: Double {
+        didSet { defaults.set(leadingPadding, forKey: Keys.leadingPadding) }
+    }
+    /// Breathing room between the grid and the window's right edge. Never
+    /// takes effect below `TerminalView.minimumTrailingPadding`, the strip
+    /// the scroll indicator needs.
+    @Published var trailingPadding: Double {
+        didSet { defaults.set(trailingPadding, forKey: Keys.trailingPadding) }
+    }
     @Published var optionAsMeta: Bool {
         didSet { defaults.set(optionAsMeta, forKey: Keys.optionAsMeta) }
     }
@@ -38,6 +48,8 @@ final class AppSettings: ObservableObject {
     private enum Keys {
         static let fontFamily = "settings.fontFamily"
         static let fontSize = "settings.fontSize"
+        static let leadingPadding = "settings.leadingPadding"
+        static let trailingPadding = "settings.trailingPadding"
         static let optionAsMeta = "settings.optionAsMeta"
         static let passCmdKeysThrough = "settings.passCmdKeysThrough"
         static let scrollAnimationEnabled = "settings.scrollAnimationEnabled"
@@ -50,6 +62,8 @@ final class AppSettings: ObservableObject {
         defaults.register(defaults: [
             Keys.fontFamily: "",
             Keys.fontSize: Double(FontMetrics.defaultSize),
+            Keys.leadingPadding: Double(TerminalView.defaultLeadingPadding),
+            Keys.trailingPadding: Double(TerminalView.defaultTrailingPadding),
             Keys.optionAsMeta: false,
             Keys.passCmdKeysThrough: false,
             Keys.scrollAnimationEnabled: true,
@@ -58,6 +72,11 @@ final class AppSettings: ObservableObject {
         ])
         fontFamily = defaults.string(forKey: Keys.fontFamily) ?? ""
         fontSize = defaults.double(forKey: Keys.fontSize)
+        leadingPadding = max(0, defaults.double(forKey: Keys.leadingPadding))
+        trailingPadding = max(
+            Double(TerminalView.minimumTrailingPadding),
+            defaults.double(forKey: Keys.trailingPadding)
+        )
         optionAsMeta = defaults.bool(forKey: Keys.optionAsMeta)
         passCmdKeysThrough = defaults.bool(forKey: Keys.passCmdKeysThrough)
         scrollAnimationEnabled = defaults.bool(forKey: Keys.scrollAnimationEnabled)
@@ -105,6 +124,8 @@ final class AppSettings: ObservableObject {
     func resetToDefaults() {
         fontFamily = ""
         fontSize = Double(FontMetrics.defaultSize)
+        leadingPadding = Double(TerminalView.defaultLeadingPadding)
+        trailingPadding = Double(TerminalView.defaultTrailingPadding)
         optionAsMeta = false
         passCmdKeysThrough = false
         scrollAnimationEnabled = true

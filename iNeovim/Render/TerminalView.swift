@@ -11,18 +11,30 @@ final class TerminalView: NSView {
     /// touch the window edges.
     static let contentInset: CGFloat = 6
 
-    /// Breathing room from the window's left edge to the grid. Tighter than
-    /// the vertical inset: the gutter is chrome, not text, and the 2 pt gap
-    /// between it and the buffer text comes from `NvimTextLayout.textShift`.
-    static let leadingContentInset: CGFloat = 2
-
-    /// Breathing room from the grid to the window's right edge: the strip the
-    /// scroll indicator occupies along that edge plus a 2 pt gap to the thumb,
-    /// both measured from where the text actually ends — buffer text is drawn
-    /// `NvimTextLayout.textShift` right of its cells, so that shift is
-    /// reserved again here.
-    static let trailingContentInset: CGFloat =
+    /// The narrowest right padding that keeps the text clear of the scroll
+    /// indicator: the strip the thumb occupies along the window edge plus a
+    /// 2 pt gap to the text, both measured from where the text actually ends
+    /// — buffer text is drawn `NvimTextLayout.textShift` right of its cells,
+    /// so that shift is reserved again here.
+    static let minimumTrailingPadding: CGFloat =
         ScrollIndicator.rightInset + ScrollIndicator.width + NvimTextLayout.textShift + 2
+
+    /// Padding used by a view before `apply(settings:)` supplies the user's
+    /// values; also the reset default.
+    static let defaultLeadingPadding: CGFloat = 4
+    static let defaultTrailingPadding: CGFloat = 12
+
+    /// Breathing room from the window's left edge to the grid. The gutter is
+    /// chrome, not text: the gap between it and the buffer text comes from
+    /// `NvimTextLayout.textShift`.
+    private(set) var leadingPadding: CGFloat = TerminalView.defaultLeadingPadding
+
+    /// Breathing room from the grid to the window's right edge, clamped to
+    /// `minimumTrailingPadding` so the scroll thumb never sits on the text.
+    private(set) var trailingPadding: CGFloat = TerminalView.defaultTrailingPadding
+
+    var leadingContentInset: CGFloat { leadingPadding }
+    var trailingContentInset: CGFloat { max(trailingPadding, Self.minimumTrailingPadding) }
 
     /// Extra vertical space between the statusline row and the cmdline row
     /// below it: the last grid row is drawn this far below its uniform slot,
@@ -40,10 +52,10 @@ final class TerminalView: NSView {
     /// gap: the area the grid (rows plus gap) may occupy. Grid cell counts
     /// must always be derived from this, never from the raw bounds, or the
     /// grid fills the view edge to edge.
-    static func gridAreaSize(_ size: CGSize) -> CGSize {
+    func gridAreaSize(_ size: CGSize) -> CGSize {
         return CGSize(
             width: max(0, size.width - leadingContentInset - trailingContentInset),
-            height: max(0, size.height - contentInset * 2 - cmdlineGap)
+            height: max(0, size.height - Self.contentInset * 2 - Self.cmdlineGap)
         )
     }
 
@@ -195,19 +207,38 @@ final class TerminalView: NSView {
     /// region is translated by the scroll lead.
     private var gridLayers: [GridContentLayer] { [contentLayer, footerLayer] }
 
-    /// Apply user settings: font metrics, input switches, and animation
-    /// toggles. Changing the font reflows the grid at the new cell size.
+    /// Apply user settings: font metrics, horizontal padding, input switches,
+    /// and animation toggles. Changing the font reflows the grid at the new
+    /// cell size; changing a padding moves the grid and re-requests its size.
     func apply(settings: AppSettings) {
         let font = settings.resolvedFont()
         if metrics.font != font {
             applyMetrics(FontMetrics(font: font))
         }
+        applyPadding(
+            leading: CGFloat(settings.leadingPadding),
+            trailing: CGFloat(settings.trailingPadding)
+        )
         inputSettings = settings.inputSettings
         nativeTerminalPaneEnabled = settings.nativeTerminalPane
         let animations = settings.animationSettings
         scrollController.settings = animations
         scrollAnimator.settings = animations
         cursorAnimator.settings = animations
+    }
+
+    /// Move the grid for a padding change. The layers are repositioned here
+    /// rather than in `layout()` (this view has no layout override), and the
+    /// smaller area re-requests the grid size so nvim reflows its columns.
+    private func applyPadding(leading: CGFloat, trailing: CGFloat) {
+        let clampedTrailing = max(trailing, Self.minimumTrailingPadding)
+        guard leading != leadingPadding || clampedTrailing != trailingPadding else { return }
+        leadingPadding = leading
+        trailingPadding = clampedTrailing
+        updateFooterGeometry()
+        updateStatuslineLayer()
+        updateCompletionPanel()
+        requestResize(to: bounds.size)
     }
 
     /// Notified when the embedded session becomes ready. The very first resize
@@ -224,7 +255,7 @@ final class TerminalView: NSView {
     /// resize below.
     private func requestResize(to size: CGSize) {
         reconciledViewSize = nil
-        let area = Self.gridAreaSize(size)
+        let area = gridAreaSize(size)
         let cellCount = ResizeController.cellCount(for: area, cellSize: metrics.cellSize)
         // Record the size so `ui_attach` can use it instead of 80x24.
         model.noteGridSize(cols: cellCount.cols, rows: cellCount.rows)
@@ -239,13 +270,13 @@ final class TerminalView: NSView {
     private func reconcileGridSize(with snapshot: ScreenSnapshot) {
         guard sessionReady, let grid = snapshot.grid, !grid.isEmpty else { return }
         let expected = ResizeController.cellCount(
-            for: Self.gridAreaSize(bounds.size),
+            for: gridAreaSize(bounds.size),
             cellSize: metrics.cellSize
         )
         guard grid.width != expected.cols || grid.height != expected.rows else { return }
         guard reconciledViewSize != bounds.size else { return }
         reconciledViewSize = bounds.size
-        Task { await resizeController.viewDidResize(to: Self.gridAreaSize(bounds.size)) }
+        Task { await resizeController.viewDidResize(to: gridAreaSize(bounds.size)) }
     }
 
     private func applyMetrics(_ newMetrics: FontMetrics) {
@@ -264,7 +295,7 @@ final class TerminalView: NSView {
         Task { [weak self] in
             guard let self else { return }
             await self.resizeController.setCellSize(newMetrics.cellSize)
-            await self.resizeController.viewDidResize(to: Self.gridAreaSize(size))
+            await self.resizeController.viewDidResize(to: gridAreaSize(size))
         }
         reconciledViewSize = nil
     }
@@ -285,7 +316,7 @@ final class TerminalView: NSView {
         super.init(frame: NSRect(
             origin: .zero,
             size: CGSize(
-                width: metrics.cellSize.width * 80 + Self.leadingContentInset + Self.trailingContentInset,
+                width: metrics.cellSize.width * 80 + Self.defaultLeadingPadding + Self.defaultTrailingPadding,
                 height: metrics.cellSize.height * 24 + Self.contentInset * 2 + Self.cmdlineGap
             )
         ))
@@ -625,7 +656,7 @@ final class TerminalView: NSView {
     /// candidate windows anchor to this (see `firstRect(forCharacterRange:)`).
     func preeditRect(forCharacterRange range: NSRange) -> CGRect {
         guard let (layer, rect) = preeditLayerRect(forCharacterRange: range) else { return .zero }
-        return rect.offsetBy(dx: Self.leadingContentInset, dy: layerOriginY(layer))
+        return rect.offsetBy(dx: leadingContentInset, dy: layerOriginY(layer))
     }
 
     /// The layer drawing the marked text plus the preedit rect within it; nil
@@ -848,7 +879,7 @@ final class TerminalView: NSView {
             )
             if y < footerTop { y -= scrollAnimator.presentationOffset }
         }
-        return CGPoint(x: point.x - Self.leadingContentInset, y: y)
+        return CGPoint(x: point.x - leadingContentInset, y: y)
     }
 
     /// Grid cell under a point in view coordinates.
@@ -892,7 +923,7 @@ final class TerminalView: NSView {
         let cell = metrics.cellSize
         let gridHeight = gridDimensions?.height ?? 0
         return CGRect(
-            x: Self.leadingContentInset + CGFloat(col) * cell.width,
+            x: leadingContentInset + CGFloat(col) * cell.width,
             y: Self.contentInset + Self.gridRowY(row, gridHeight: gridHeight, cellHeight: cell.height),
             width: cell.width * 2,
             height: cell.height
@@ -1187,7 +1218,7 @@ final class TerminalView: NSView {
             footerStart, gridHeight: grid.height, cellHeight: cellHeight
         )
         scrollClipLayer.frame = CGRect(
-            x: Self.leadingContentInset,
+            x: leadingContentInset,
             y: Self.contentInset,
             // The clip follows the content layers' width, which carries the
             // extra band a shifted last column needs.
@@ -1195,7 +1226,7 @@ final class TerminalView: NSView {
             height: footerTop
         )
         footerLayer.position = CGPoint(
-            x: Self.leadingContentInset, y: Self.contentInset + footerTop
+            x: leadingContentInset, y: Self.contentInset + footerTop
         )
         // The thumb spans the rows the content scrolls through — never the
         // frozen footer — but hugs the window edge like a system scroller.
@@ -1253,12 +1284,12 @@ final class TerminalView: NSView {
         let size = completionPanel.update(
             popup,
             metrics: metrics,
-            maxWidth: bounds.width - Self.leadingContentInset - Self.trailingContentInset
+            maxWidth: bounds.width - leadingContentInset - trailingContentInset
         )
         let cellWidth = metrics.cellSize.width
         let cellHeight = metrics.cellSize.height
         let anchorRowTop = Self.contentInset + CGFloat(popup.row) * cellHeight
-        let x = Self.leadingContentInset + CGFloat(popup.col) * cellWidth
+        let x = leadingContentInset + CGFloat(popup.col) * cellWidth
         var y = Self.contentInset + Self.gridRowY(
             popup.row, gridHeight: grid.height, cellHeight: cellHeight
         )

@@ -42,7 +42,7 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── AppDelegate.swift     NSApplicationDelegate: bootstrap, open-file requests, teardown
 ├── App/                  SwiftUI app shell (Phase 8)
 │   ├── AppModel.swift        per-window session stack, command routing, file queues, title
-│   ├── AppSettings.swift     persisted font/input/animation settings
+│   ├── AppSettings.swift     persisted font/layout/input/animation settings
 │   ├── SettingsView.swift    settings window
 │   ├── SetupView.swift       first-run guidance when no nvim is installed
 │   ├── EditorCommands.swift  File + Neovim menu commands
@@ -216,10 +216,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   tab-bar-entrance motion on top of the redraw. The 80x24 fallback only
   applies if bootstrap beats the first layout.
 - **Content inset & cmdline gap:** the grid is inset
-  `TerminalView.contentInset` (6 pt) above and below,
-  `TerminalView.leadingContentInset` (2 pt) on the left, and
-  `TerminalView.trailingContentInset` (12 pt) on the right — the trailing
-  side reserves the transient scroll thumb that hugs the window's right edge
+  `TerminalView.contentInset` (6 pt) above and below, the user's
+  `leadingPadding` on the left and `trailingPadding` on the right (Settings ▸
+  Layout; defaults 4 pt and 12 pt) — the trailing value is clamped to
+  `TerminalView.minimumTrailingPadding`, which reserves the transient scroll
+  thumb that hugs the window's right edge
   (`ScrollIndicator` width plus `rightInset`), a 2 pt gap to it, and the
   gutter shift buffer text carries (see "Gutter-to-text padding" below) — and
   the last grid row (nvim's cmdline/message area) is drawn
