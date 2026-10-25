@@ -64,6 +64,17 @@ final class GridContentLayer: CALayer {
     var cursorGlideOffset: CGSize = .zero {
         didSet { invalidateCursor() }
     }
+    /// Buffer text areas of the current tabpage (from nvim's
+    /// `ineovim:textlayout` notification). Cells in these ranges are drawn
+    /// `NvimTextLayout.textShift` right of their cell origin, so buffer text
+    /// clears the window's gutter; the gutter, the statusline row, and the
+    /// cmdline row are outside every region and stay on the grid.
+    var textRegions: [NvimTextRegion] = [] {
+        didSet {
+            guard textRegions != oldValue else { return }
+            setNeedsDisplay()
+        }
+    }
     /// Layer-space rect the cursor was last drawn at, so a glide can invalidate
     /// the position it is leaving in addition to the one it is moving to.
     private var lastDrawnCursorRect: CGRect?
@@ -136,6 +147,7 @@ final class GridContentLayer: CALayer {
             cursorVisible = source.cursorVisible
             cursorGlideOffset = source.cursorGlideOffset
             linkUnderline = source.linkUnderline
+            textRegions = source.textRegions
         }
     }
 
@@ -160,7 +172,9 @@ final class GridContentLayer: CALayer {
                 sliceRange.upperBound - 1, gridHeight: grid.height, cellHeight: cellHeight
             ) + cellHeight
             size = CGSize(
-                width: CGFloat(grid.width) * metrics.cellSize.width,
+                // The extra band beyond the last cell keeps a shifted last
+                // column (glyph, cursor) inside the layer and its clip.
+                width: CGFloat(grid.width) * metrics.cellSize.width + NvimTextLayout.textShift,
                 height: bottom - top
             )
         } else {
@@ -352,17 +366,36 @@ final class GridContentLayer: CALayer {
         return CellRect(minRow: minRow, minCol: rect.minCol, maxRow: maxRow, maxCol: rect.maxCol)
     }
 
+    /// A cell rect in layer space, a little wider than the cells: the glyphs
+    /// and the cursor of a text region are drawn up to `textShift` right of
+    /// their cell, and the cursor's block starts that far past its left edge,
+    /// so the dirty band has to cover them.
     private func pixelRect(for cellRect: CellRect) -> CGRect {
         let cellWidth = metrics.cellSize.width
         let cellHeight = metrics.cellSize.height
+        let shift = NvimTextLayout.textShift
         let y = rowY(cellRect.minRow)
         let bottom = rowY(cellRect.maxRow - 1) + cellHeight
         return CGRect(
-            x: CGFloat(cellRect.minCol) * cellWidth,
+            x: CGFloat(cellRect.minCol) * cellWidth - shift,
             y: y,
-            width: CGFloat(cellRect.maxCol - cellRect.minCol) * cellWidth,
+            width: CGFloat(cellRect.maxCol - cellRect.minCol) * cellWidth + shift * 2,
             height: bottom - y
         )
+    }
+
+    /// The horizontal shift for a cell's glyphs: the text inset inside a
+    /// window's text area, zero for the gutter, the statusline, and the
+    /// cmdline. A run shifts as a whole (by its first cell), because its
+    /// pinned glyph groups are shaped and cached without an offset; a run
+    /// spanning the gutter boundary can only happen when the gutter and the
+    /// text share one highlight, and then it keeps the gutter's alignment.
+    private func textShift(row: Int, column: Int) -> CGFloat {
+        for region in textRegions
+        where region.rows.contains(row) && region.columns.contains(column) {
+            return NvimTextLayout.textShift
+        }
+        return 0
     }
 
     private func rect(for run: StyledRun, row: Int) -> CGRect {
@@ -457,12 +490,13 @@ final class GridContentLayer: CALayer {
 
         let baseline = rowY(row) + metrics.baseline + translation.height
         let textY = bounds.height - baseline
-        let originX = CGFloat(run.startCol) * metrics.cellSize.width + translation.width
+        let shift = translation.width + textShift(row: row, column: run.startCol)
+        let originX = CGFloat(run.startCol) * metrics.cellSize.width + shift
         drawPinned(groups: shaped.groups, originX: originX, textY: textY, context: context)
 
         let thickness = max(1, CTFontGetUnderlineThickness(ctFont))
-        let startX = CGFloat(run.startCol) * metrics.cellSize.width + translation.width
-        let endX = CGFloat(run.endCol) * metrics.cellSize.width + translation.width
+        let startX = CGFloat(run.startCol) * metrics.cellSize.width + shift
+        let endX = CGFloat(run.endCol) * metrics.cellSize.width + shift
         let underlineY = textY + CTFontGetUnderlinePosition(ctFont)
 
         if attr.underline || attr.undercurl {
@@ -579,7 +613,8 @@ final class GridContentLayer: CALayer {
             return nil
         }
         return CGRect(
-            x: CGFloat(snapshot.cursor.col) * metrics.cellSize.width,
+            x: CGFloat(snapshot.cursor.col) * metrics.cellSize.width
+                + textShift(row: snapshot.cursor.row, column: snapshot.cursor.col),
             y: rowY(snapshot.cursor.row),
             width: metrics.cellSize.width * CGFloat(cursorCellCols(grid)),
             height: metrics.cellSize.height
@@ -694,10 +729,11 @@ final class GridContentLayer: CALayer {
             color = resolvedColors(for: grid[sliced.minRow, sliced.minCol].attrId).foreground
         }
         let y = rowY(sliced.minRow) + metrics.baseline - CTFontGetUnderlinePosition(ctFont)
+        let shift = textShift(row: sliced.minRow, column: sliced.minCol)
         context.setStrokeColor(color.cgColor)
         context.setLineWidth(max(1, CTFontGetUnderlineThickness(ctFont)))
-        context.move(to: CGPoint(x: CGFloat(sliced.minCol) * metrics.cellSize.width, y: y))
-        context.addLine(to: CGPoint(x: CGFloat(sliced.maxCol) * metrics.cellSize.width, y: y))
+        context.move(to: CGPoint(x: CGFloat(sliced.minCol) * metrics.cellSize.width + shift, y: y))
+        context.addLine(to: CGPoint(x: CGFloat(sliced.maxCol) * metrics.cellSize.width + shift, y: y))
         context.strokePath()
     }
 

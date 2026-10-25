@@ -56,6 +56,26 @@ the cursor (wide chars spanning two cells, selection bar at the caret), the
 candidate window anchors below it, and committed text inserts and renders
 aligned.
 
+## Gutter padding
+
+nvim's gutter columns (sign, fold, number) are whole cells wide, so the 2 pt
+gap between buffer text and the gutter is drawn by the renderer: the glyphs,
+the block cursor, the IME preedit, and the ⌘-hover underline of a window's
+text area sit 2 pt right of their cells, while the gutter itself stays on the
+grid. nvim pushes each window's text area (rows plus the columns past
+`textoff`) as `ineovim:textlayout`; `NvimClient.installTextLayoutHook` keeps
+it current.
+
+Manual check in the GUI:
+
+1. Open a file with `number` on: the text starts 2 pt clear of the number
+   column. A vertical split keeps the gap in both windows.
+2. Make a sign column appear (`:set signcolumn=yes`, an LSP diagnostic, or a
+   gitsigns change) and collapse again (`:set signcolumn=auto`): the text
+   keeps its 2 pt gap and no row is left 2 pt off.
+3. Turn `number` off with no sign column: the text starts at the normal left
+   inset, with no extra indent.
+
 ## Soft wrap
 
 The app enables nvim's own `wrap` before `ui_attach`, because a single
@@ -180,8 +200,7 @@ Scroll indicator:
    (top of the buffer → thumb at the top, `G`/bottom → at the bottom, a short
    buffer → a long thumb), spanning the text rows only, not the statusline
    and cmdline rows. The thumb sits in the window's right margin beside the
-   text (the grid is inset 8 pt horizontally), so it never covers the last
-   character of a row.
+   text — 2 pt clear of the last character of a row — so it never covers it.
 2. Stop scrolling: the thumb fades out about 0.7 s after the last delta, and
    moving the wheel again brings it back at once.
 3. Open a file shorter than the window and scroll: no thumb appears.

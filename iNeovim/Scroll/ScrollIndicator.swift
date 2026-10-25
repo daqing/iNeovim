@@ -6,9 +6,9 @@ import AppKit
 /// — the same show-on-scroll / hide-when-idle behavior as the system overlay
 /// scrollers. Informational only; it never takes mouse events.
 final class ScrollIndicator {
-    /// Thumb width and its inset from the view's right edge. Together they
-    /// fill `TerminalView.horizontalContentInset` (8 pt), so the thumb sits
-    /// entirely in the margin beside the grid and never covers a glyph.
+    /// Thumb width and its inset from the view's right edge. The grid's
+    /// trailing inset reserves this strip plus a 2 pt gap, so the text never
+    /// runs into the scrollbar.
     static let width: CGFloat = 6
     static let rightInset: CGFloat = 2
     /// A long buffer's thumb never gets shorter than this, so it still reads

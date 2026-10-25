@@ -140,6 +140,17 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Buffer text areas of the current tabpage's windows, as nvim reports
+    /// them (see `NvimClient.installTextLayoutHook`). The renderer draws their
+    /// glyphs a few points right of the grid so buffer text clears the gutter.
+    @Published private(set) var textRegions: [NvimTextRegion] = []
+
+    func setTextRegions(_ regions: [NvimTextRegion]) {
+        if textRegions != regions {
+            textRegions = regions
+        }
+    }
+
     let session: RPCSession
     let screen: Screen
     let inputDispatcher: InputDispatcher
@@ -382,6 +393,13 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 Task { @MainActor in self.handleDiagnosticUpdate(update) }
             }
+            // The gutter layout (how many columns each window's `textoff`
+            // gutter occupies) arrives as `ineovim:textlayout` notifications.
+            await session.addNotificationHandler(for: NvimTextLayout.rpcMethod) { [weak self] params in
+                guard let regions = NvimTextLayout.parse(params) else { return }
+                guard let self else { return }
+                Task { @MainActor in self.setTextRegions(regions) }
+            }
             // Long lines soft-wrap at the window's right edge. A single
             // linegrid exposes no horizontal scrolling, so without wrap the
             // rest of the line is unreachable; applied before attaching so
@@ -402,6 +420,13 @@ final class AppModel: ObservableObject {
                 }
             } catch {
                 Log.app.error("Failed to install diagnostics hook: \(error.localizedDescription, privacy: .public)")
+            }
+            do {
+                if try await client.installTextLayoutHook() != true {
+                    Log.render.warning("Text layout hook did not install; text keeps its cell origin")
+                }
+            } catch {
+                Log.render.error("Failed to install text layout hook: \(error.localizedDescription, privacy: .public)")
             }
             await inputDispatcher.startConsuming(with: client)
             startObservingTermination()

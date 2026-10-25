@@ -308,6 +308,77 @@ struct NvimClient {
         )
     }
 
+    /// Watch the text areas of the current tabpage's windows and report them
+    /// as `NvimTextLayout.rpcMethod` notifications, so the renderer can draw
+    /// buffer text clear of the gutter. A window's `textoff` changes with
+    /// options (`number`, `signcolumn`, …) and with signs a language server
+    /// or plugin places, which fire no autocmd, so the hook re-checks on each
+    /// redraw — the decoration provider's first callback — and notifies only
+    /// when the layout actually changed. Idempotent per nvim instance.
+    func installTextLayoutHook() async throws -> Bool {
+        let value = try await execLua(Self.textLayoutHookLua, args: [])
+        return value.boolValue ?? false
+    }
+
+    /// The decoration provider only schedules work: the docs allow `vim.rpcnotify`
+    /// in a redraw callback but call anything else experimental, so the scan
+    /// runs from a scheduled function. Redraws can arrive every frame while
+    /// scrolling, so a pending scan collapses them and runs at most every
+    /// 100 ms; the layout is compared with the last one pushed and an
+    /// unchanged one sends nothing.
+    private static let textLayoutHookLua = """
+        if vim.g.ineovim_textlayout_hooked then return true end
+        vim.g.ineovim_textlayout_hooked = true
+        local ns = vim.api.nvim_create_namespace('ineovim_textlayout')
+        local last = nil
+        local pending = false
+        local function collect()
+          local wins = {}
+          for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+            if vim.api.nvim_win_is_valid(win)
+              and vim.api.nvim_win_get_config(win).relative == '' then
+              local info = vim.fn.getwininfo(win)[1]
+              if info and info.textoff > 0 and info.width > info.textoff then
+                wins[#wins + 1] = {
+                  row = info.winrow - 1,
+                  col = info.wincol - 1 + info.textoff,
+                  height = info.height,
+                  width = info.width - info.textoff,
+                }
+              end
+            end
+          end
+          return wins
+        end
+        local function push()
+          local wins = collect()
+          local parts = {}
+          for _, w in ipairs(wins) do
+            parts[#parts + 1] = w.row .. ',' .. w.col .. ',' .. w.height .. ',' .. w.width
+          end
+          local key = table.concat(parts, ';')
+          if key == last then return end
+          local uis = vim.api.nvim_list_uis()
+          local chan = uis and uis[1] and uis[1].chan or 0
+          if chan == 0 then return end
+          last = key
+          vim.rpcnotify(chan, 'ineovim:textlayout', wins)
+        end
+        local function schedule_push()
+          if pending then return end
+          pending = true
+          vim.schedule(function()
+            vim.defer_fn(function()
+              pending = false
+              push()
+            end, 100)
+          end)
+        end
+        vim.api.nvim_set_decoration_provider(ns, { on_start = schedule_push })
+        vim.schedule(push)
+        return true
+        """
+
     /// The diagnostics hook: re-collects the full per-buffer snapshot through
     /// `vim.diagnostic.get` inside the autocmd (instead of trusting the event
     /// payload) so the shape is canonical across nvim versions, and notifies

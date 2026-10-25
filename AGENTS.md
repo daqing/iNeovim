@@ -216,11 +216,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   tab-bar-entrance motion on top of the redraw. The 80x24 fallback only
   applies if bootstrap beats the first layout.
 - **Content inset & cmdline gap:** the grid is inset
-  `TerminalView.contentInset` (6 pt) above and below and
-  `TerminalView.horizontalContentInset` (8 pt) left and right — 2 pt of extra
-  horizontal room so the transient scroll thumb, which hugs the window's
-  right edge, never covers the rightmost glyph — and the last grid row (nvim's
-  cmdline/message area) is drawn `TerminalView.cmdlineGap` (4 pt) below the
+  `TerminalView.contentInset` (6 pt) above and below,
+  `TerminalView.leadingContentInset` (2 pt) on the left, and
+  `TerminalView.trailingContentInset` (12 pt) on the right — the trailing
+  side reserves the transient scroll thumb that hugs the window's right edge
+  (`ScrollIndicator` width plus `rightInset`), a 2 pt gap to it, and the
+  gutter shift buffer text carries (see "Gutter-to-text padding" below) — and
+  the last grid row (nvim's cmdline/message area) is drawn
+  `TerminalView.cmdlineGap` (5 pt) below the
   row above it, so the statusline and the cmdline never touch. Every grid
   cell-count computation (`ResizeController.cellCount` via
   `TerminalView.gridAreaSize`) derives from the inset- and gap-adjusted size,
@@ -228,13 +231,40 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   to edge and the last line hugs — or, while resizes race, overflows — the
   window's bottom edge. All view-space→grid-space conversions (mouse
   `MouseHandler`, wheel pointer `ScrollController`, IME preedit rects)
-  subtract the inset, and row↔y math everywhere goes through
+  subtract the leading inset, and row↔y math everywhere goes through
   `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent.
   Pointer hit-testing (`MouseHandler`, link hover) goes through
   `TerminalView.gridPoint(forViewPoint:)`, which also subtracts the live
   scroll lead for points in the scrolling region — with a one-line lead the
   cell under the pointer is one row further along the grid — but not in the
   frozen footer, which never moves.
+- **Gutter-to-text padding:** nvim's gutter (sign, fold, and number columns)
+  is whole cells wide, so the extra 2 pt of air the buffer text needs between
+  itself and the gutter cannot come from an option; the renderer draws a text
+  region's glyphs `NvimTextLayout.textShift` (2 pt) right of their cell
+  origins instead. The gutter, the statusline row, and the cmdline row are
+  outside every region and stay on the grid, and a window with no gutter
+  (`textoff` 0) reports no region — its text starts at the leading inset with
+  nothing to clear. Cell backgrounds, the statusline bar, and all hit-testing
+  stay on cell origins; only glyphs, the block cursor, the cursor glyph reuse,
+  the IME preedit, and the ⌘-hover underline carry the shift, which is why the
+  layers and the scroll clip are `textShift` wider (a shifted last column must
+  not be clipped) and the trailing inset reserves the shift again. nvim
+  reports each window's text area — its rows plus the columns past `textoff`,
+  from `getwininfo` in global grid coordinates, floats excluded — as
+  `ineovim:textlayout` notifications. `textoff` changes with options
+  (`number`, `signcolumn`, …) but also when a language server or plugin places
+  signs, which fire no autocmd (`signcolumn=auto` collapsing is the everyday
+  case), so `NvimClient.installTextLayoutHook` re-checks the layout from a
+  decoration provider's `on_start` — the only callback that sees every
+  redraw — and pushes only when the collected layout changed. The provider
+  may only schedule work (the docs call anything but `vim.rpcnotify`
+  experimental), so the scan runs from `vim.schedule` plus a 100 ms
+  `vim.defer_fn`, with a pending flag collapsing a scrolling frame burst.
+  A run shifts as a whole by its first cell, because `GridContentLayer`'s
+  pinned glyph groups are shaped and cached without an offset; a run spanning
+  the gutter boundary only happens when both share one highlight, and then it
+  keeps the gutter's alignment.
 - **Soft wrap:** `NvimClient.installWrap` sets `wrap` in every window and
   as the global default before `ui_attach`, so the first full screen is
   already wrapped instead of reflowing after the paint. An embedded nvim
@@ -700,9 +730,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   cursor glide until nvim repainted those rows.
 - **Scroll indicator:** wheel and trackpad deltas flash a transient overlay
   scrollbar (`ScrollIndicator`): a 6 pt rounded thumb at the window's right
-  edge, `rightInset` 2 pt from it so the thumb spans exactly the 8 pt
-  horizontal content inset and never overlaps the grid, spanning the scrolling
-  region but never the frozen footer, faded out
+  edge (`rightInset` 2 pt), leaving the text 2 pt clear of the thumb (the
+  trailing inset reserves the shifted text's edge, see "Gutter-to-text
+  padding"), spanning the scrolling region but never the frozen
+  footer, faded out
   0.7 s after the last delta — the system overlay scrollers' show-on-scroll,
   hide-when-idle behavior. A single linegrid's `redraw` stream carries no
   buffer position (`win_viewport` needs `ext_multigrid`, out of scope), so
