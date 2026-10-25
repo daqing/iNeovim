@@ -70,6 +70,12 @@ actor InputDispatcher {
                     } catch {
                         Log.input.error("nvim_input_mouse failed: \(error.localizedDescription, privacy: .public)")
                     }
+                case let .reloadChangedFile(row, col):
+                    do {
+                        _ = try await client.reloadChangedFile(row: row, col: col)
+                    } catch {
+                        Log.input.error("checktime failed: \(error.localizedDescription, privacy: .public)")
+                    }
                 }
             }
         }

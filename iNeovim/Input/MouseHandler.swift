@@ -11,6 +11,9 @@ final class MouseHandler {
     weak var view: TerminalView?
     private let dispatcher: InputDispatcher
     private var pressedButton: String?
+    private var pressedCell: (row: Int, col: Int)?
+    private var pressedClick = false
+    private var didDrag = false
     /// The current gesture was routed to the diagnostics popover; its drag
     /// and release must not reach nvim as orphans.
     private var isSwallowingGesture = false
@@ -23,12 +26,16 @@ final class MouseHandler {
         guard let button = Self.buttonName(for: event) else { return }
         view?.window?.makeFirstResponder(view)
         pressedButton = button
+        pressedCell = cellLocation(for: event)
+        pressedClick = button == "left" && event.clickCount == 1
+            && Self.modifierString(for: event.modifierFlags).isEmpty
+        didDrag = false
         // ⌘-click on an http(s) URL opens it in the default browser instead of
         // reaching nvim; the rest of the gesture is swallowed so nvim never
         // sees an orphan drag/release.
         if button == "left",
            event.modifierFlags.contains(.command),
-           let cell = cellLocation(for: event),
+           let cell = pressedCell,
            let url = view?.linkTarget(atRow: cell.row, col: cell.col) {
             isSwallowingGesture = true
             _ = NSWorkspace.shared.open(url)
@@ -36,7 +43,7 @@ final class MouseHandler {
         }
         if button == "left",
            Self.modifierString(for: event.modifierFlags).isEmpty,
-           let cell = cellLocation(for: event),
+           let cell = pressedCell,
            cell.col <= Self.signColumnMaxCol {
             isSwallowingGesture = true
             view?.presentDiagnostics(atRow: cell.row, col: cell.col)
@@ -46,18 +53,28 @@ final class MouseHandler {
     }
 
     func mouseDragged(_ event: NSEvent) {
-        guard let pressedButton, !isSwallowingGesture else { return }
+        guard let pressedButton else { return }
+        didDrag = true
+        guard !isSwallowingGesture else { return }
         handle(event, button: pressedButton, action: "drag")
     }
 
     func mouseUp(_ event: NSEvent) {
         guard let pressedButton else { return }
         self.pressedButton = nil
+        let cell = pressedCell
+        let shouldReload = pressedClick && !didDrag
+        pressedCell = nil
+        pressedClick = false
+        didDrag = false
         if isSwallowingGesture {
             isSwallowingGesture = false
-            return
+        } else {
+            handle(event, button: pressedButton, action: "release")
         }
-        handle(event, button: pressedButton, action: "release")
+        if shouldReload, let cell {
+            dispatcher.send(.reloadChangedFile(row: cell.row, col: cell.col))
+        }
     }
 
     private func handle(_ event: NSEvent, button: String, action: String) {

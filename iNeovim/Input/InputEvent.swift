@@ -5,4 +5,6 @@ enum InputEvent: Equatable, Sendable {
     case keys(String)
     /// A mouse action, ready for `nvim_input_mouse`.
     case mouse(button: String, action: String, modifier: String, grid: Int, row: Int, col: Int)
+    /// Check the file backing the clicked text area for external changes.
+    case reloadChangedFile(row: Int, col: Int)
 }

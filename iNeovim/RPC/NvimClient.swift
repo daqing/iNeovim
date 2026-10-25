@@ -299,6 +299,33 @@ struct NvimClient {
         return value.boolValue ?? false
     }
 
+    /// Reload the clicked buffer when its file changed on disk. The grid cell
+    /// selects the window rather than relying on mouse input having changed
+    /// the current window first; gutter and footer cells do not trigger a
+    /// check, and insert mode is checked in nvim to avoid a stale UI snapshot.
+    func reloadChangedFile(row: Int, col: Int) async throws -> Bool {
+        let value = try await execLua(Self.reloadChangedFileLua, args: [
+            .int(Int64(row)), .int(Int64(col)),
+        ])
+        return value.boolValue ?? false
+    }
+
+    private static let reloadChangedFileLua = """
+        local row, col = ...
+        if vim.api.nvim_get_mode().mode:sub(1, 1) == 'i' then return false end
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          local info = vim.fn.getwininfo(win)[1]
+          if info
+            and row + 1 >= info.winrow and row + 1 < info.winrow + info.height
+            and col + 1 >= info.wincol and col + 1 < info.wincol + info.width then
+            if col + 1 < info.wincol + (info.textoff or 0) then return false end
+            vim.cmd('checktime ' .. info.bufnr)
+            return true
+          end
+        end
+        return false
+        """
+
     /// Move the cursor in the active window (problems-sheet jump target).
     /// `line` is 1-based, `column` the zero-based byte offset nvim reports.
     func moveCursor(line: Int, column: Int) async throws {

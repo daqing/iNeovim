@@ -102,16 +102,100 @@ final class MouseHandlerTests: XCTestCase {
         XCTAssertNil(MouseHandler.buttonName(for: keyEvent))
     }
 
-    private func mouseEvent(_ type: NSEvent.EventType) -> NSEvent {
+    func testSingleClickQueuesChangedFileReloadAfterMouseRelease() async {
+        let dispatcher = InputDispatcher()
+        let (handler, view) = makeMouseHandler(dispatcher: dispatcher)
+        let stream = await dispatcher.makeStream()
+        let point = textPoint(view: view, row: 2, col: 5)
+
+        handler.mouseDown(mouseEvent(.leftMouseDown, location: point))
+        handler.mouseUp(mouseEvent(.leftMouseUp, location: point))
+
+        let events = await collectEvents(from: stream)
+        XCTAssertEqual(events, [
+            .mouse(button: "left", action: "press", modifier: "", grid: 1, row: 2, col: 5),
+            .mouse(button: "left", action: "release", modifier: "", grid: 1, row: 2, col: 5),
+            .reloadChangedFile(row: 2, col: 5),
+        ])
+    }
+
+    func testDragDoesNotQueueChangedFileReload() async {
+        let dispatcher = InputDispatcher()
+        let (handler, view) = makeMouseHandler(dispatcher: dispatcher)
+        let stream = await dispatcher.makeStream()
+        let start = textPoint(view: view, row: 2, col: 5)
+        let end = textPoint(view: view, row: 2, col: 6)
+
+        handler.mouseDown(mouseEvent(.leftMouseDown, location: start))
+        handler.mouseDragged(mouseEvent(.leftMouseDragged, location: end))
+        handler.mouseUp(mouseEvent(.leftMouseUp, location: end))
+
+        let events = await collectEvents(from: stream)
+        XCTAssertEqual(events, [
+            .mouse(button: "left", action: "press", modifier: "", grid: 1, row: 2, col: 5),
+            .mouse(button: "left", action: "drag", modifier: "", grid: 1, row: 2, col: 6),
+            .mouse(button: "left", action: "release", modifier: "", grid: 1, row: 2, col: 6),
+        ])
+    }
+
+    func testDoubleClickDoesNotQueueChangedFileReload() async {
+        let dispatcher = InputDispatcher()
+        let (handler, view) = makeMouseHandler(dispatcher: dispatcher)
+        let stream = await dispatcher.makeStream()
+        let point = textPoint(view: view, row: 2, col: 5)
+
+        handler.mouseDown(mouseEvent(.leftMouseDown, location: point, clickCount: 2))
+        handler.mouseUp(mouseEvent(.leftMouseUp, location: point, clickCount: 2))
+
+        let events = await collectEvents(from: stream)
+        XCTAssertEqual(events, [
+            .mouse(button: "left", action: "press", modifier: "", grid: 1, row: 2, col: 5),
+            .mouse(button: "left", action: "release", modifier: "", grid: 1, row: 2, col: 5),
+        ])
+    }
+
+    private func makeMouseHandler(dispatcher: InputDispatcher) -> (MouseHandler, TerminalView) {
+        let view = TerminalView(model: AppModel(inputDispatcher: dispatcher))
+        let handler = MouseHandler(dispatcher: dispatcher)
+        handler.view = view
+        return (handler, view)
+    }
+
+    private func textPoint(view: TerminalView, row: Int, col: Int) -> CGPoint {
+        CGPoint(
+            x: view.leadingContentInset + (CGFloat(col) + 0.5) * view.metrics.cellSize.width,
+            y: TerminalView.contentInset + (CGFloat(row) + 0.5) * view.metrics.cellSize.height
+        )
+    }
+
+    private func collectEvents(from stream: AsyncStream<InputEvent>) async -> [InputEvent] {
+        let collector = Task.detached {
+            var events: [InputEvent] = []
+            for await event in stream {
+                events.append(event)
+            }
+            return events
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+        collector.cancel()
+        return await collector.value
+    }
+
+    private func mouseEvent(
+        _ type: NSEvent.EventType,
+        location: CGPoint = .zero,
+        modifiers: NSEvent.ModifierFlags = [],
+        clickCount: Int = 1
+    ) -> NSEvent {
         NSEvent.mouseEvent(
             with: type,
-            location: .zero,
-            modifierFlags: [],
+            location: location,
+            modifierFlags: modifiers,
             timestamp: 0,
             windowNumber: 0,
             context: nil,
             eventNumber: 0,
-            clickCount: 1,
+            clickCount: clickCount,
             pressure: 0
         )!
     }
