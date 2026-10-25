@@ -232,6 +232,23 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   scroll lead for points in the scrolling region — with a one-line lead the
   cell under the pointer is one row further along the grid — but not in the
   frozen footer, which never moves.
+- **Soft wrap:** `NvimClient.installWrap` sets `wrap` in every window and
+  as the global default before `ui_attach`, so the first full screen is
+  already wrapped instead of reflowing after the paint. An embedded nvim
+  does not finish startup until the UI attaches: bootstrap's RPC commands
+  run before `init.lua` is sourced (measured: `vim.v.vim_did_enter == 0`
+  and no scripts loaded when they execute), so a plain `set wrap` is
+  undone by a user config's `set nowrap` moments later. While startup is
+  still in flight the setting is therefore applied again from a one-shot
+  `VimEnter` autocmd, the last startup event. (Any other option
+  bootstrap must own needs the same treatment.) A single linegrid offers
+  no horizontal scrolling (the wheel's horizontal deltas are ignored), so
+  a clipped tail would be unreachable. Wrapping is nvim's, not the
+  renderer's: continuation rows arrive as ordinary `grid_line`s and nvim
+  leaves the number column blank on them, so a buffer line keeps exactly
+  one number. Any screen-row→buffer-line math must therefore use
+  `screenpos` (see the gutter diagnostics popover below), because one
+  line can cover several rows.
 - **Full-width statusline bar:** the statusline row (the one above the cmdline
   row) gets a backdrop layer (`TerminalView.statuslineLayer`, below the grid
   layers) filled with the OPPOSITE theme mode's default background — a
@@ -369,7 +386,8 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `MouseHandler` before `nvim_input_mouse`: `TerminalView` asks nvim via
   `nvim_exec_lua` (`NvimClient.lineDiagnostics`) to map the screen row to a
   buffer line — across splits, using `getwininfo` window rects in global
-  grid coordinates — and to collect the diagnostics. An empty result (clean
+  grid coordinates, and `screenpos` because a wrapped line covers several
+  rows — and to collect the diagnostics. An empty result (clean
   line, non-text row, or an nvim without `vim.diagnostic`, guarded by
   pcall) forwards the original press, so behavior outside the feature is
   unchanged. The rest of the intercepted gesture (drag/release) is always
@@ -687,7 +705,9 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   that finds the window under the pointer cell via `getwininfo` rects
   (falling back to the current window when the pointer is over the
   statusline/cmdline rows) and returns `topline`, the buffer's line count,
-  and the window height. One query per delta with at most one in flight
+  and the number of visible buffer lines (`botline - topline + 1`, so a
+  wrapped line counts once and a fully wrapped buffer still reports as
+  scrollable). One query per delta with at most one in flight
   (sub-millisecond round trips; against a blocked nvim the queries would
   otherwise pile up behind the input it is not processing). A buffer that
   fits the window shows no thumb; a failed query leaves the geometry as it

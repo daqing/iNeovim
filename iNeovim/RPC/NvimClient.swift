@@ -21,7 +21,7 @@ nonisolated struct ScrollMetrics: Equatable {
     /// First buffer line on screen, 1-based (`getwininfo().topline`).
     var topline: Int
     var lineCount: Int
-    /// Screen lines the window shows (its text height in the grid).
+    /// Buffer lines the window shows; a wrapped line counts once.
     var visibleLines: Int
 
     var isScrollable: Bool { lineCount > visibleLines }
@@ -56,6 +56,31 @@ struct NvimClient {
             .int(Int64(width)), .int(Int64(height)), options,
         ])
     }
+
+    /// Soft-wrap long lines, in every window and as the default for windows
+    /// created later. `bootstrap` can reach nvim while `init.lua` is still
+    /// being sourced (a fresh `nvim --embed` answers RPC before `VimEnter`),
+    /// so a user config's `set nowrap` runs *after* a plain `set wrap` and
+    /// wins; while startup is still in flight, apply again on `VimEnter`.
+    func installWrap() async throws {
+        _ = try await execLua(Self.installWrapLua, args: [])
+    }
+
+    private static let installWrapLua = """
+        local function apply()
+          vim.o.wrap = true
+          for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+            for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+              vim.wo[win].wrap = true
+            end
+          end
+        end
+        apply()
+        if vim.v.vim_did_enter == 0 then
+          vim.api.nvim_create_autocmd('VimEnter', { once = true, callback = apply })
+        end
+        return true
+        """
 
     func input(_ keys: String) async throws {
         _ = try await session.call("nvim_input", params: [.string(keys)])
@@ -153,8 +178,11 @@ struct NvimClient {
     /// Find the window covering the clicked cell, map the screen row to a
     /// buffer line (`getwininfo` reports window rects in the same global
     /// grid coordinates `nvim_input_mouse` uses), and list that line's
-    /// `vim.diagnostic` entries. Guarded by pcall so nvim versions without
-    /// the module still return an empty list and the click falls through.
+    /// `vim.diagnostic` entries. A wrapped line covers several screen rows,
+    /// so the line is found from `screenpos` rather than by adding the row
+    /// offset to `topline`; a row past the text (the `~` filler) belongs to
+    /// no line. Guarded by pcall so nvim versions without the module still
+    /// return an empty list and the click falls through.
     private static let lineDiagnosticsLua = """
         local row, col = ...
         local target = nil
@@ -168,7 +196,33 @@ struct NvimClient {
           end
         end
         if not target then return { items = {} } end
-        local lnum = target.info.topline + (row + 1 - target.info.winrow)
+        local screen_row = row + 1
+        local last = target.info.botline
+          or vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(target.win))
+        local lnum = nil
+        local start_row = 0
+        for line = target.info.topline, last do
+          local start = vim.fn.screenpos(target.win, line, 1)
+          if start.row == 0 or start.row > screen_row then break end
+          lnum = line
+          start_row = start.row
+        end
+        if lnum then
+          local length = vim.fn.col({ lnum, '$' }) - 1
+          local end_row = start_row
+          if length > 0 then
+            local ending = vim.fn.screenpos(target.win, lnum, length)
+            if ending.row ~= 0 then
+              end_row = ending.row
+            else
+              -- The line is taller than the window, so its tail is
+              -- off-screen; the clicked row is still inside it.
+              end_row = math.huge
+            end
+          end
+          if screen_row > end_row then lnum = nil end
+        end
+        if not lnum then return { items = {} } end
         local items = {}
         local ok, diags = pcall(vim.diagnostic.get, vim.api.nvim_win_get_buf(target.win), { lnum = lnum - 1 })
         if ok then
@@ -186,7 +240,7 @@ struct NvimClient {
 
     /// The viewport metrics of the window covering a grid cell, for the
     /// scroll indicator: which buffer line is at the top, how long the buffer
-    /// is, and how many screen lines the window shows. A single linegrid
+    /// is, and how many buffer lines the window shows. A single linegrid
     /// carries no buffer position of its own (`win_viewport` needs
     /// `ext_multigrid`), so this asks nvim; nil when there is no window.
     func windowScrollMetrics(row: Int, col: Int) async throws -> ScrollMetrics? {
@@ -200,9 +254,9 @@ struct NvimClient {
         guard case let .map(fields) = value,
               let topline = fields[.string("topline")]?.intValue,
               let lineCount = fields[.string("linecount")]?.intValue,
-              let height = fields[.string("height")]?.intValue,
-              height > 0 else { return nil }
-        return ScrollMetrics(topline: topline, lineCount: lineCount, visibleLines: height)
+              let visible = fields[.string("visible")]?.intValue,
+              visible > 0 else { return nil }
+        return ScrollMetrics(topline: topline, lineCount: lineCount, visibleLines: visible)
     }
 
     /// Find the window covering the pointer's cell (`getwininfo` reports
@@ -217,7 +271,9 @@ struct NvimClient {
           return {
             topline = info.topline,
             linecount = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(w)),
-            height = info.height,
+            -- Buffer lines, not screen rows: a wrapped line can cover
+            -- several rows, and the thumb measures the buffer.
+            visible = info.botline - info.topline + 1,
           }
         end
         for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do

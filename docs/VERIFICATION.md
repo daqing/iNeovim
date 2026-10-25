@@ -56,6 +56,29 @@ the cursor (wide chars spanning two cells, selection bar at the caret), the
 candidate window anchors below it, and committed text inserts and renders
 aligned.
 
+## Soft wrap
+
+The app enables nvim's own `wrap` before `ui_attach`, because a single
+linegrid has no horizontal scrolling: a line wider than the window would
+otherwise be unreachable past the right edge. An embedded nvim defers
+startup until the UI attaches, so bootstrap's command runs before `init.lua`;
+`installWrap` therefore re-applies `wrap` from a one-shot `VimEnter` autocmd
+so the user config's `set nowrap` cannot win.
+
+Manual check in the GUI:
+
+1. Open a file with a line longer than the editor width (with the user's
+   config, `:set nowrap` is overridden by the app).
+2. Confirm the line continues on the following screen rows, that only the
+   first row carries the line number (the number column is blank on the
+   continuation rows), and that the next buffer line keeps its own number.
+3. With an LSP diagnostic on such a line, click the gutter on any of its
+   screen rows: every row maps to the same buffer line and shows the same
+   popover.
+4. Scroll with the wheel: Neovim scrolls whole buffer lines (one long
+   wrapped line can move several rows at once), and the transient scroll
+   thumb still appears because it measures buffer lines.
+
 ## App shell checks
 
 - **Tabs (native window tabs):** ⌘T opens a new editor window as a native

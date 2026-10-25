@@ -382,6 +382,11 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 Task { @MainActor in self.handleDiagnosticUpdate(update) }
             }
+            // Long lines soft-wrap at the window's right edge. A single
+            // linegrid exposes no horizontal scrolling, so without wrap the
+            // rest of the line is unreachable; applied before attaching so
+            // the first full screen is already wrapped instead of reflowing.
+            try await client.installWrap()
             let attach = pendingGridSize ?? (cols: 80, rows: 24)
             try await client.uiAttach(width: attach.cols, height: attach.rows, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
