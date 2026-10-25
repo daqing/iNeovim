@@ -86,6 +86,36 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.object(forKey: persistedBackgroundKey) as? Int
     }
 
+    /// Notification carrying nvim's working directory (see
+    /// `NvimClient.installWorkingDirectoryHook`).
+    private static let workingDirectoryNotification = "ineovim:dirchanged"
+
+    /// The active session's working directory, persisted so a launch by
+    /// clicking the app starts where the user left off. A window opened by an
+    /// `ineovim` command never uses it: that window's directory comes from the
+    /// command, which would otherwise be shadowed by this value on a cold
+    /// launch (the launch window boots before the request reaches it).
+    private static let persistedWorkingDirectoryKey = "lastWorkingDirectory"
+
+    /// The persisted directory, or nil when there is none or it no longer
+    /// exists (nvim then starts in `$HOME`).
+    static var persistedWorkingDirectory: URL? {
+        guard let path = UserDefaults.standard.string(forKey: persistedWorkingDirectoryKey) else {
+            return nil
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    static func persistWorkingDirectory(_ directory: URL?) {
+        guard let path = directory?.path(percentEncoded: false) else { return }
+        if UserDefaults.standard.string(forKey: persistedWorkingDirectoryKey) != path {
+            UserDefaults.standard.set(path, forKey: persistedWorkingDirectoryKey)
+        }
+    }
+
     /// The seeded packed default background, used to paint this window until
     /// nvim reports its own (the first flush replaces it in the snapshot).
     private(set) var seededBackground: Int?
@@ -151,6 +181,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Take the working directory nvim reported, saving it when this is the
+    /// active window so the next launch resumes there.
+    func setWorkingDirectory(_ path: String) {
+        guard !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        if currentWorkingDirectory != directory {
+            currentWorkingDirectory = directory
+        }
+        if AppModel.active === self {
+            Self.persistWorkingDirectory(directory)
+        }
+    }
+
     let session: RPCSession
     let screen: Screen
     let inputDispatcher: InputDispatcher
@@ -180,6 +223,14 @@ final class AppModel: ObservableObject {
     /// nvim child process (so init.lua sees it) and doubles as the
     /// post-attach `:cd` when the request arrives after startup began.
     private var workingDirectory: URL?
+    /// The session's live working directory, reported by nvim on startup and
+    /// on every `DirChanged`. Persisted while this window is active (and again
+    /// as the app terminates) so the next launch can start there.
+    private(set) var currentWorkingDirectory: URL?
+    /// True for the window SwiftUI opened at launch, marked by
+    /// `AppDelegate.registerEditorWindow`. It is the only window that starts
+    /// in the saved working directory; `$HOME` stays the default otherwise.
+    var isLaunchWindow = false
     private var terminationTask: Task<Void, Never>?
     private var isShuttingDown = false
     private var isBootstrapping = false
@@ -227,9 +278,11 @@ final class AppModel: ObservableObject {
 
     /// Called when the hosting window becomes (or is installed in) the key
     /// window so menu commands and system file opens reach the session the
-    /// user is driving.
+    /// user is driving. The window's directory is saved on the way: the active
+    /// window's is the one the next launch resumes in.
     func becameActive() {
         AppModel.active = self
+        AppModel.persistWorkingDirectory(currentWorkingDirectory)
     }
 
     /// Remember the window hosting this session (used by the clean-exit
@@ -374,7 +427,11 @@ final class AppModel: ObservableObject {
         do {
             bootstrapError = nil
             setup = nil
-            try await session.start(workingDirectory: workingDirectory)
+            // The launch window resumes in the directory the last session
+            // was in; a window an `ineovim` command opened starts in the
+            // directory the command ran in, which takes precedence.
+            let resumed = isLaunchWindow ? Self.persistedWorkingDirectory : nil
+            try await session.start(workingDirectory: workingDirectory ?? resumed)
             try await session.handshake()
             // Subscribe before attaching: nvim sends its first full screen as
             // the redraw batch that immediately follows ui_attach, and that
@@ -400,11 +457,25 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 Task { @MainActor in self.setTextRegions(regions) }
             }
+            // The working directory follows `:cd` in the session; the latest
+            // one is remembered for the next launch.
+            await session.addNotificationHandler(for: Self.workingDirectoryNotification) { [weak self] params in
+                guard let path = params.first?.stringValue else { return }
+                guard let self else { return }
+                Task { @MainActor in self.setWorkingDirectory(path) }
+            }
             // Long lines soft-wrap at the window's right edge. A single
             // linegrid exposes no horizontal scrolling, so without wrap the
             // rest of the line is unreachable; applied before attaching so
             // the first full screen is already wrapped instead of reflowing.
             try await client.installWrap()
+            // A directory an `ineovim` command asked for must be in effect
+            // before `ui_attach`: nvim finishes startup — and sources
+            // init.lua — only once the UI attaches, so a `:cd` after that
+            // would leave a config that reads `getcwd()` at startup in the
+            // wrong directory. The request can land at any point in the
+            // sequence, so it is re-read after every later suspension.
+            let appliedDirectory = await applyRequestedDirectory()
             let attach = pendingGridSize ?? (cols: 80, rows: 24)
             try await client.uiAttach(width: attach.cols, height: attach.rows, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
@@ -428,18 +499,18 @@ final class AppModel: ObservableObject {
             } catch {
                 Log.render.error("Failed to install text layout hook: \(error.localizedDescription, privacy: .public)")
             }
+            do {
+                if try await client.installWorkingDirectoryHook() != true {
+                    Log.app.warning("Working directory hook did not install; the next launch starts in $HOME")
+                }
+            } catch {
+                Log.app.error("Failed to install working directory hook: \(error.localizedDescription, privacy: .public)")
+            }
             await inputDispatcher.startConsuming(with: client)
             startObservingTermination()
-            // An `ineovim` request can land while startup is still running —
-            // the launch window adopts one after its nvim has already booted.
-            // Read the directory after the last suspension point and repeat
-            // when the `:cd` itself suspends, so the request that arrived last
-            // is the one applied before the queued files open.
-            var appliedDirectory: URL?
-            while let directory = workingDirectory, directory != appliedDirectory {
-                appliedDirectory = directory
-                await changeWorkingDirectory(to: directory)
-            }
+            // A request can also land while the attach and the hooks run; it
+            // must be applied before the queued files open.
+            await applyRequestedDirectory(after: appliedDirectory)
             isReady = true
             flushPendingFiles()
             AppModel.flushStagedFiles()
@@ -760,6 +831,20 @@ final class AppModel: ObservableObject {
                 "Failed to change directory to \(directory.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    /// Apply the directory a command-line request asked for, and return it.
+    /// The request can arrive (and the `:cd` itself can suspend) at any point
+    /// of `bootstrap`, so the current request is re-read after every
+    /// suspension and the last one wins.
+    @discardableResult
+    private func applyRequestedDirectory(after applied: URL? = nil) async -> URL? {
+        var applied = applied
+        while let directory = workingDirectory, directory != applied {
+            applied = directory
+            await changeWorkingDirectory(to: directory)
+        }
+        return applied
     }
 
     /// Open files in this window's session, queueing them until the session

@@ -175,6 +175,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Log.app.info("Application will terminate")
+        // Remember where the user was, before the sessions go away, so the
+        // next launch by clicking the app resumes there.
+        AppModel.persistWorkingDirectory(AppModel.active?.currentWorkingDirectory)
         for model in AppModel.live {
             model.beginShutdown()
             Task { await model.shutdownSession() }
@@ -327,6 +330,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // `pumpCommandLineRequests`); later windows never do.
             if launchWindowModel == nil, !launchWindowTookRequest {
                 launchWindowModel = model
+                // It is also the only window that resumes in the last saved
+                // working directory instead of `$HOME`.
+                model.isLaunchWindow = true
             }
         }
         // The red close button goes through the same confirmation a typed

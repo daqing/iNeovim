@@ -515,9 +515,13 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   session's theme). Its `AppModel.openFromCommandLine` seeds
   `NvimProcess.start(workingDirectory:)` when its session has not started —
   so init.lua already sees the directory — otherwise `:cd`s before opening
-  the files; startup re-reads the requested directory after its last
-  suspension point (and repeats when the `:cd` itself suspends), because a
-  launch request can arrive while nvim is already booting. It also marks the
+  the files. Startup re-reads the requested directory after every suspension
+  point and once more right before `ui_attach` (nvim sources init.lua only
+  when the UI attaches, so a later `:cd` would be too late for a config that
+  reads `getcwd()` at startup), because a launch request can arrive while
+  nvim is already booting. That also makes the request's directory win on a
+  cold launch over the one the launch window resumed in (see "Last working
+  directory"). It also marks the
   window (`focusAfterCommandLineOpen`) to activate the app and take keyboard
   focus as it is revealed (`fadeIn` uses `makeKeyAndOrderFront` instead of
   `orderFront`), so the command line can be typed into without clicking
@@ -636,8 +640,25 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   through `AppModel.active` (the key window's session, tracked via
   `NSWindow.didBecomeKey`); files that arrive before any session is ready are
   staged app-level and flushed to the first ready session. New sessions start
-  in `$HOME` (`NvimProcess` sets the child's cwd), and closing a window
+  in `$HOME` (`NvimProcess` sets the child's cwd) — except the launch window,
+  which resumes in the last working directory — and closing a window
   terminates its nvim in `AppModel.deinit`.
+- **Last working directory:** the launch window resumes where the last session
+  was. nvim reports its working directory once after
+  `NvimClient.installWorkingDirectoryHook` installs and again on every
+  `DirChanged` (`:cd`, `:tcd`, `:lcd`) as `ineovim:dirchanged`; `AppModel`
+  keeps the latest and writes it to `lastWorkingDirectory` whenever that
+  window is active (`becameActive`), plus once more from
+  `applicationWillTerminate` — so closing from another window or a crash
+  cannot save a stale directory. Only the launch window
+  (`registerEditorWindow` marks it) seeds `NvimProcess.start` from it; ⌘N and
+  native-tab windows keep starting in `$HOME`, and a directory that no longer
+  exists restores nothing. A window an `ineovim` command opened never uses the
+  saved value: the request's own directory takes precedence, and on a cold
+  launch — where the launch window may already have spawned in the saved
+  directory before the URL reaches it — the startup `:cd` is applied before
+  `ui_attach`, so nvim finishes startup with the requested directory, not the
+  saved one.
 - **⌘W (File > Close):** `EditorCommands.closeKeyWindow` closes the key
   editor window — with native tabs that is the current tab, and a window in
   a tab group with other tabs never quits the app. It closes the window with

@@ -379,6 +379,40 @@ struct NvimClient {
         return true
         """
 
+    /// Report the embedded nvim's working directory back to the GUI as
+    /// `ineovim:dirchanged` notifications: once after installing, then on
+    /// every `DirChanged`. The GUI persists the last one so the next launch
+    /// starts where the user left off. Idempotent per nvim instance.
+    func installWorkingDirectoryHook() async throws -> Bool {
+        let value = try await execLua(Self.workingDirectoryHookLua, args: [])
+        return value.boolValue ?? false
+    }
+
+    /// `DirChanged` fires for `:cd`, `:tcd`, and `:lcd`. The report is
+    /// scheduled so `getcwd()` reflects the settled state, and a directory
+    /// that repeats the last one sends nothing (a window-local `:lcd` falls
+    /// back to the same global directory, for instance).
+    private static let workingDirectoryHookLua = """
+        if vim.g.ineovim_workingdirectory_hooked then return true end
+        vim.g.ineovim_workingdirectory_hooked = true
+        local last = nil
+        local function push()
+          local uis = vim.api.nvim_list_uis()
+          local chan = uis and uis[1] and uis[1].chan or 0
+          if chan == 0 then return end
+          local cwd = vim.fn.getcwd()
+          if cwd == last then return end
+          last = cwd
+          vim.rpcnotify(chan, 'ineovim:dirchanged', cwd)
+        end
+        vim.api.nvim_create_autocmd('DirChanged', {
+          pattern = '*',
+          callback = function() vim.schedule(push) end,
+        })
+        vim.schedule(push)
+        return true
+        """
+
     /// The diagnostics hook: re-collects the full per-buffer snapshot through
     /// `vim.diagnostic.get` inside the autocmd (instead of trusting the event
     /// payload) so the shape is canonical across nvim versions, and notifies

@@ -99,6 +99,22 @@ Manual check in the GUI:
    wrapped line can move several rows at once), and the transient scroll
    thumb still appears because it measures buffer lines.
 
+## Last working directory
+
+The launch window resumes in the directory the last session was in, saved as
+the app quits. A window an `ineovim` command opens uses the directory the
+command ran in instead, never the saved one.
+
+Manual check in the GUI:
+
+1. Launch the app, `:cd` into a project, and quit (⌘Q). Launch it again by
+   clicking the app icon: the window's `:pwd` is that project, not `$HOME`.
+2. With the app not running, run `ineovim` from a different directory: its
+   window's `:pwd` is that directory — not the one saved in step 1 — and the
+   file named on the command line is the current buffer.
+3. Quit, rename (or move) the saved directory, and launch by clicking the
+   app: the window starts in `$HOME` instead of failing.
+
 ## App shell checks
 
 - **Tabs (native window tabs):** ⌘T opens a new editor window as a native
