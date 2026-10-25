@@ -671,6 +671,19 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `applicationWillTerminate` begins shutdown for every live session) —
   SwiftUI would otherwise leave the app running with no window. A non-editor
   key window (e.g. Settings) closes directly.
+- **Typed quit confirmation:** a typed `:q`/`:qu`/`:quit`/`:qa`/`:qall`
+  (with optional `!`) is held at Enter — `TerminalView.sendKeys` matches it
+  before sending anything — and only confirmed Enter reaches nvim; Cancel
+  sends `<Esc>` and the cmdline goes away. The red close button
+  (`confirmCloseEditorWindow`) routes through the same alert. Because the
+  embedded session's clean exit closes only its own tab — and quits the app
+  only when nothing else is left — the alert names that scope
+  (`QuitConfirmation.scope(for:)` → `QuitConfirmation.scope(tabCount:
+  editorWindowCount:)`): more than one native tab shows "Close Tab?" (only
+  that tab's session ends), a standalone window while another session is live
+  shows "Close Window?", and the last editor window keeps "Quit iNeovim?".
+  `editorWindowCount` is `AppModel.live.count`, the same measure the ⌘W path
+  uses to decide whether the app would have anything left to show.
 - **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
   so one wheel event scrolls exactly one line and the visual lead in
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.

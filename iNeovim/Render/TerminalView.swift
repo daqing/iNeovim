@@ -554,13 +554,15 @@ final class TerminalView: NSView {
     }
 
     /// Hold a typed quit command behind a confirmation: `:q` exits the
-    /// embedded nvim, closing the window — or the whole app when it is the
-    /// last one — so a stray quit must be confirmed. Cancel sends `<Esc>`
-    /// instead, leaving the session running.
+    /// embedded nvim, which closes this tab, this window, or the whole app
+    /// when it is the last editor window — so a stray quit must be confirmed,
+    /// in the words of what it will actually do. Cancel sends `<Esc>` instead,
+    /// leaving the session running.
     private func confirmQuit(pendingKeys: String) {
         cmdlineBuffer = ""
+        let window = self.window ?? model.hostWindow
         Task { @MainActor in
-            if QuitConfirmation.present() {
+            if QuitConfirmation.present(QuitConfirmation.scope(for: window)) {
                 model.inputDispatcher.send(.keys(pendingKeys))
             } else {
                 model.inputDispatcher.send(.keys("<Esc>"))

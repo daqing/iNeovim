@@ -271,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ?? (sender as? NSWindow)
             ?? NSApp.keyWindow
         guard let window else { return }
-        guard QuitConfirmation.present() else { return }
+        guard QuitConfirmation.present(QuitConfirmation.scope(for: window)) else { return }
         let hasOtherWindows = AppModel.live.count > 1
             || (window.tabGroup?.windows.count ?? 0) > 1
         if !hasOtherWindows {

@@ -124,6 +124,13 @@ Manual check in the GUI:
   resolve the file against nvim's cwd; **Next/Previous Tab** and ⌘1…⌘9 switch
   native tabs; **Close Tab** (⌘⇧W) closes the current tab; nvim tabpages stay
   reachable through `gt`/`gT` and `:tabnext`-style commands.
+- **Typed quit (`:q`):** with two or more native tabs, type `:q` and press
+  Return in any tab: the alert asks **Close Tab?** — not "Quit iNeovim?" — and
+  confirming closes only that tab while the other tabs' sessions keep
+  running; Cancel leaves the tab alone and dismisses the cmdline. A
+  standalone window beside another editor window asks **Close Window?**, and
+  only the last editor window asks **Quit iNeovim?**; the red close button
+  uses the same wording as the typed command would.
 - **Settings (T8.3):** ⌘, opens Settings. Changing font/size reflows the grid;
   Option-as-Meta and Command passthrough change key behavior immediately.
 - **Window title (T8.5):** opening a file updates the window title from
@@ -135,10 +142,11 @@ Manual check in the GUI:
   launch shows install guidance instead of the editor — `brew install neovim`
   with a copy button when Homebrew exists, otherwise a brew.sh link — and
   **Recheck** starts the session once Neovim is installed.
-- **Nvim exit handling:** `:q`/`:qa` on the last tab closes the window
-  silently (and quits the app when no editor window remains) with no dialog;
-  an abnormal exit (e.g. `kill` the nvim process) still shows the
-  **Neovim exited** alert with **Restart**.
+- **Nvim exit handling:** a clean exit — after confirming the typed quit, or
+  from a path the gate never sees (`:wq`, `:x`, a mapping, a plugin) — closes
+  the window silently (and quits the app when no editor window remains) with
+  no second dialog; an abnormal exit (e.g. `kill` the nvim process) still
+  shows the **Neovim exited** alert with **Restart**.
 - **Multiple windows (⌘N):** ⌘N opens a new window running its own embedded
   Neovim in `$HOME` (`:pwd`); typing, scrolling, and tab shortcuts act on the
   focused window only; menu commands and ⌘O opens route to the key window;
