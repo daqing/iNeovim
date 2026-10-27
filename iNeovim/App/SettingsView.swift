@@ -6,7 +6,17 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
 
-    private let families = AppSettings.monospacedFamilies()
+    /// Fixed-pitch families plus the current choice, so a saved family that is
+    /// no longer installed (or is not fixed pitch) still shows in the picker.
+    private var families: [String] {
+        var families = AppSettings.monospacedFamilies()
+        let current = settings.fontFamily
+        if !current.isEmpty && !families.contains(current) {
+            families.append(current)
+            families.sort()
+        }
+        return families
+    }
 
     var body: some View {
         Form {

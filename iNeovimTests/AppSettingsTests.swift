@@ -57,6 +57,10 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(second.nativeTerminalPane)
     }
 
+    func testMonospacedFamiliesIncludeInstalledFixedPitchFamilies() {
+        XCTAssertTrue(AppSettings.monospacedFamilies().contains("Menlo"))
+    }
+
     func testResolvedFontUsesRequestedSize() {
         let settings = AppSettings(defaults: makeDefaults())
         settings.fontSize = 17

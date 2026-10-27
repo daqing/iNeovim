@@ -109,12 +109,12 @@ final class AppSettings: ObservableObject {
         return .monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
-    /// Families with a fixed-pitch regular face, for the font picker.
+    /// Families with a fixed-pitch face, for the font picker.
     static func monospacedFamilies() -> [String] {
         NSFontManager.shared.availableFontFamilies.filter { family in
             let members = NSFontManager.shared.availableMembers(ofFontFamily: family) ?? []
             return members.contains { member in
-                guard member.count > 1, let name = member[1] as? String,
+                guard let name = member.first as? String,
                       let font = NSFont(name: name, size: 12) else { return false }
                 return font.isFixedPitch
             }
