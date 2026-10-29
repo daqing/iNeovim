@@ -9,17 +9,27 @@ nonisolated struct CursorState: Equatable, Sendable {
 }
 
 /// The ext_popupmenu completion menu state: items, the selected index
-/// (-1 = none), and the grid cell the panel anchors at.
+/// (-1 = none), and the grid cell the panel anchors at. Under multigrid the
+/// anchor row/col are local to `grid`.
 nonisolated struct PopupState: Equatable, Sendable {
     var items: [PopupItem]
     var selected: Int
     var row: Int
     var col: Int
+    var grid: Int = 1
 }
 
 /// An immutable copy of the applied UI state for one render pass.
 nonisolated struct ScreenSnapshot: Equatable, Sendable {
+    /// The global (root) grid: the screen background, separators, the
+    /// statusline rows, and message-area fill. Window text lives in the
+    /// grids positioned by `frames`.
     var grid: Grid?
+    /// Cell storage per grid id (the renderer draws `grids[gridId]`).
+    var grids: [Int: Grid]
+    /// Layout of every known grid in global coordinates; window grids are
+    /// tiled by `win_pos`, floats by `win_float_pos`/`msg_set_pos`.
+    var frames: [Int: GridFrame]
     var highlights: HighlightStore
     var defaultForeground: Int?
     var defaultBackground: Int?
@@ -62,6 +72,11 @@ nonisolated struct CellRect: Equatable, Sendable {
 /// from here instead of touching raw msgpack or events.
 actor Screen {
     private(set) var grids: [Int: Grid] = [:]
+    /// Layout (global position, visibility, z-order, viewport) per grid, from
+    /// the multigrid events. Grid 1 is implicit: full-size at the origin.
+    private(set) var frames: [Int: GridFrame] = [:]
+    /// The grid currently displaying messages/cmdline, from `msg_set_pos`.
+    private var messageGrid: Int?
     private(set) var highlights = HighlightStore()
     private(set) var defaultForeground: Int?
     private(set) var defaultBackground: Int?
@@ -140,6 +155,7 @@ actor Screen {
         case let .gridDestroy(grid):
             if grid != 1 {
                 grids[grid] = nil
+                frames[grid] = nil
             }
         case let .cursorGoto(grid, row, col):
             markCursorDirty(cursor.grid, cursor.row, cursor.col)
@@ -164,12 +180,80 @@ actor Screen {
             self.title = title
             titleHandler?(title)
         case let .popupmenuShow(items, selected, row, col, grid):
-            guard grid == 1 else { break }
-            popup = PopupState(items: items, selected: selected, row: row, col: col)
+            popup = PopupState(items: items, selected: selected, row: row, col: col, grid: grid)
         case let .popupmenuSelect(selected):
             popup?.selected = selected
         case .popupmenuHide:
             popup = nil
+        case let .winPos(grid, row, col, width, height):
+            var gridState = grids[grid, default: Grid(id: grid)]
+            gridState.resize(width: width, height: height)
+            grids[grid] = gridState
+            frames[grid] = GridFrame(row: row, col: col)
+            markGridDirty(grid)
+        case let .winFloatPos(grid, anchorGrid, anchorRow, anchorCol, corner, mouseEnabled, zindex, compindex, screenRow, screenCol):
+            if grids[grid] == nil { grids[grid] = Grid(id: grid) }
+            var frame = GridFrame(
+                row: 0, col: 0, isFloat: true, mouseEnabled: mouseEnabled,
+                zindex: zindex, compindex: compindex,
+                anchor: FloatAnchor(
+                    grid: anchorGrid, row: anchorRow, col: anchorCol, corner: corner
+                )
+            )
+            if let screenRow, let screenCol {
+                frame.row = Int(screenRow.rounded())
+                frame.col = Int(screenCol.rounded())
+            } else {
+                let base = floatAnchorBase(grid: anchorGrid)
+                let width = grids[grid]?.width ?? 0
+                let height = grids[grid]?.height ?? 0
+                switch corner {
+                case "NW":
+                    frame.row = base.row + Int(anchorRow.rounded())
+                    frame.col = base.col + Int(anchorCol.rounded())
+                case "NE":
+                    frame.row = base.row + Int(anchorRow.rounded())
+                    frame.col = base.col + Int(anchorCol.rounded()) - width
+                case "SW":
+                    frame.row = base.row + Int(anchorRow.rounded()) - height
+                    frame.col = base.col + Int(anchorCol.rounded())
+                default: // "SE"
+                    frame.row = base.row + Int(anchorRow.rounded()) - height
+                    frame.col = base.col + Int(anchorCol.rounded()) - width
+                }
+            }
+            frames[grid] = frame
+            markGridDirty(grid)
+        case let .winExternalPos(grid):
+            // No desktop-window representation: keep the grid's cells but
+            // stop displaying it.
+            frames[grid]?.hidden = true
+        case let .winHide(grid):
+            frames[grid]?.hidden = true
+        case let .winClose(grid):
+            frames[grid] = nil
+        case let .msgSetPos(grid, row, _, zindex, compindex):
+            guard grid != 0 else {
+                if let messageGrid { frames[messageGrid]?.hidden = true }
+                messageGrid = nil
+                return
+            }
+            messageGrid = grid
+            if grids[grid] == nil { grids[grid] = Grid(id: grid) }
+            frames[grid] = GridFrame(
+                row: row, col: 0, isMessage: true,
+                zindex: zindex, compindex: compindex
+            )
+            markGridDirty(grid)
+        case let .winViewport(grid, topline, botline, curline, curcol, lineCount, scrollDelta):
+            frames[grid]?.viewport = GridViewport(
+                topline: topline, botline: botline, curline: curline,
+                curcol: curcol, lineCount: lineCount, scrollDelta: scrollDelta
+            )
+        case let .winViewportMargins(_, _, _, _, _):
+            break
+        case let .gridMouseEnabled(grid, enabled):
+            frames[grid]?.mouseEnabled = enabled
         case .flush:
             for (grid, rects) in dirtyRects {
                 flushHandler?(grid, rects)
@@ -182,6 +266,15 @@ actor Screen {
         case let .unknown(name):
             Log.render.debug("Ignoring unknown redraw event \(name, privacy: .public)")
         }
+    }
+
+    /// The absolute position a float's anchor resolves against: the anchor
+    /// grid's own frame origin (grid 1 spans the screen from the origin).
+    /// An anchor grid that has no frame yet (or is grid 1) anchors to the
+    /// origin — nvim always orders float events after their anchor is placed.
+    private func floatAnchorBase(grid id: Int) -> (row: Int, col: Int) {
+        guard id != 1, let frame = frames[id] else { return (0, 0) }
+        return (frame.row, frame.col)
     }
 
     /// The cursor cell plus the continuation cell when it sits on a
@@ -244,6 +337,8 @@ actor Screen {
     func snapshot() -> ScreenSnapshot {
         ScreenSnapshot(
             grid: grids[1],
+            grids: grids,
+            frames: frames,
             highlights: highlights,
             defaultForeground: defaultForeground,
             defaultBackground: defaultBackground,
@@ -277,6 +372,8 @@ actor Screen {
         consumeTask?.cancel()
         consumeTask = nil
         grids = [:]
+        frames = [:]
+        messageGrid = nil
         highlights = HighlightStore()
         defaultForeground = nil
         defaultBackground = nil

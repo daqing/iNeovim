@@ -16,8 +16,9 @@
 - **T1.2** Neovim 发现机制:定位 `nvim` 二进制(配置覆盖 → `PATH` → 常见
   路径如 `/opt/homebrew/bin`、`/usr/local/bin`),读取版本
   (`nvim --version`)以校验最低 API 级别。
-- **T1.3** 确定并记录 `ext_multigrid` 策略:v1 用单 grid,但所有 redraw
-  处理保留 grid id,为将来开启 multigrid 留余地。
+- **T1.3** 确定并记录 `ext_multigrid` 策略:(已被取代)应用现已启用
+  `ext_multigrid`——按窗口/浮动/消息区分 grid,逐 grid 管理 frames、
+  layer、命中测试与滚动 lead;详见 `AGENTS.md` 的 "ext_multigrid policy"。
 - **T1.4** 应用生命周期:内嵌 `nvim` 随 App 启动/退出(正常退出时干净
   清理,崩溃时强杀)。
 - **T1.5** 项目卫生:添加 `.gitignore`,排除 `xcuserdata/` 等用户级 Xcode

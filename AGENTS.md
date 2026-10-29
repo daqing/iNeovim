@@ -3,8 +3,9 @@
 ## Project overview
 
 iNeovim is a native macOS desktop application written in Swift with SwiftUI. It embeds one
-`nvim --embed` child process per window over msgpack-RPC and renders Neovim's linegrid
-protocol itself (Core Text + `CALayer`), with macOS-native input, smooth scrolling, and an
+`nvim --embed` child process per window over msgpack-RPC and renders Neovim's linegrid +
+multigrid protocol itself (Core Text + `CALayer`), with macOS-native input, smooth
+scrolling, and an
 app shell. Phases 1–8 of `docs/TASKS.md` are implemented: RPC, UI state, rendering, input,
 scrolling, and the SwiftUI app shell (tabs, settings, menus, window title, file opening).
 Phase 9 (polish and release) added crash recovery, performance baselines/signposts, an
@@ -71,10 +72,9 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── Render/               Core Text + CALayer rendering layer (Phase 5)
 │   ├── FontMetrics.swift     NSFont → cell size/ascent/baseline metrics
 │   ├── CellRenderer.swift    grid rows → styled runs for CTLine shaping
-│   ├── GridContentLayer.swift  cells/cursor/preedit in a scrollable CALayer
-│   │                           (one row slice per layer: the scrolling
-│   │                           region and the frozen footer)
-│   ├── TerminalView.swift    layer-backed NSView hosting the content layer
+│   ├── GridContentLayer.swift  one grid's cells/cursor/preedit in a CALayer
+│   │                           (one instance per displayed grid)
+│   ├── TerminalView.swift    layer-backed NSView hosting the per-grid layers
 │   ├── CompletionPanelView.swift  native ext_popupmenu completion list
 │   ├── DiagnosticPopover.swift  native vim.diagnostic popover for gutter clicks
 │   ├── CursorBlinker.swift   cursor blink timing (wait/on/off)
@@ -231,14 +231,15 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   never the raw bounds — otherwise the floor-rounded grid fills the view edge
   to edge and the last line hugs — or, while resizes race, overflows — the
   window's bottom edge. All view-space→grid-space conversions (mouse
-  `MouseHandler`, wheel pointer `ScrollController`, IME preedit rects)
-  subtract the leading inset, and row↔y math everywhere goes through
-  `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent.
-  Pointer hit-testing (`MouseHandler`, link hover) goes through
-  `TerminalView.gridPoint(forViewPoint:)`, which also subtracts the live
-  scroll lead for points in the scrolling region — with a one-line lead the
-  cell under the pointer is one row further along the grid — but not in the
-  frozen footer, which never moves.
+  `MouseHandler`, wheel pointer `ScrollController`, IME preedit rects) subtract
+  the leading inset, and row↔y math everywhere goes through
+  `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent. Pointer
+  hit-testing (`MouseHandler`, link hover, wheel targeting) goes through
+  `TerminalView.gridHit(forViewPoint:)`, which resolves the topmost
+  mouse-enabled grid under the point — the message grid, floats by z order,
+  then window grids, then grid 1 — returns grid-local row/col plus the global
+  cell the frame puts it at, and subtracts the live scroll lead for points in
+  the lead grid (the only one that visually moves mid-gesture).
 - **Gutter-to-text padding:** nvim's gutter (sign, fold, and number columns)
   is whole cells wide, so the extra 2 pt of air the buffer text needs between
   itself and the gutter cannot come from an option; the renderer draws a text
@@ -275,12 +276,12 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   undone by a user config's `set nowrap` moments later. While startup is
   still in flight the setting is therefore applied again from a one-shot
   `VimEnter` autocmd, the last startup event. (Any other option
-  bootstrap must own needs the same treatment.) A single linegrid offers
-  no horizontal scrolling (the wheel's horizontal deltas are ignored), so
-  a clipped tail would be unreachable. Wrapping is nvim's, not the
-  renderer's: continuation rows arrive as ordinary `grid_line`s and nvim
-  leaves the number column blank on them, so a buffer line keeps exactly
-  one number. Any screen-row→buffer-line math must therefore use
+  bootstrap must own needs the same treatment.) The app offers no
+  horizontal scrolling (the wheel's horizontal deltas are ignored; vertical
+  smooth-scrolling only), so a clipped tail would be unreachable. Wrapping is
+  nvim's, not the renderer's: continuation rows arrive as ordinary `grid_line`s
+  and nvim leaves the number column blank on them, so a buffer line keeps
+  exactly one number. Any screen-row→buffer-line math must therefore use
   `screenpos` (see the gutter diagnostics popover below), because one
   line can cover several rows.
 - **Full-width statusline bar:** the statusline row (the one above the cmdline
@@ -293,34 +294,46 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   is nearly indistinguishable from the editor background (monokai pro dark:
   #2E323C on #26292C). The bar composites at 75% opacity
   (`TerminalView.statuslineBarOpacity`), blending toward the editor background
-  — the user found the full-strength inversion glaring at night. The footer
-  layer skips per-run background fills on that row and draws its text in the
-  opposite mode's default foreground — the theme's statusline text matches its
-  editor background and would vanish on the inverted bar. An unknown nvim
-  background (nil) follows the window appearance. `updateStatuslineLayer()`
-  keeps its frame/color in sync from the flush, initial-snapshot, metrics-,
-  resize-, and appearance-change paths; like the cmdline gap it assumes the
-  last row is the cmdline area and the row above it the statusline
-  (`laststatus` >= 2, `cmdheight` 1).
-- **Frozen footer (statusline + cmdline rows):** nvim never scrolls the last
-  two rows, so the app must not either. The grid is therefore drawn as two
-  `GridContentLayer`s — the scrolling region (`.head(excludingTrailing:
-  TerminalView.frozenFooterRows)`) and the frozen footer (`.tail(count:)`),
-  which share one snapshot and split `CellRect` invalidations by row — and
-  only the scrolling region takes the scroll lead's transform. The scrolling
-  region lives inside `scrollClipLayer` (`masksToBounds`), because a lead that
-  moves it *down* would otherwise paint the last text rows over the statusline
-  bar; the clip band ends exactly where the footer begins. Doing this in one
-  layer (the original design) dragged the statusline text off its bar mid-drag
-  while the sibling bar stayed put, which read as a style error. Because both
-  layers keep grid coordinates internally (`GridRowSlice` + `sliceOriginY`),
-  the cursor, the IME preedit, and the cursor glide were re-routed by row
-  (`TerminalView.cursorLayer`) but their geometry math is unchanged; the
-  footer is positioned by `updateFooterGeometry()`, which every snapshot,
-  metrics, resize, and appearance path calls next to `updateStatuslineLayer()`.
-  At most a one-line band of blank background opens between the last text row
-  and the footer while the lead lasts — the same blank the top edge shows, and
-  the price of leading Neovim at all (T7.4).
+  — the user found the full-strength inversion glaring at night. The global
+  grid's layer skips per-run background fills on that row and draws its text
+  in the opposite mode's default foreground — the theme's statusline text
+  matches its editor background and would vanish on the inverted bar. An
+  unknown nvim background (nil) follows the window appearance.
+  `updateStatuslineBar()` keeps its frame/color in sync from the flush,
+  initial-snapshot, metrics-, resize-, and appearance-change paths; like the
+  cmdline gap it assumes the last row is the cmdline area and the row above it
+  the statusline (`laststatus` >= 2, `cmdheight` 1).
+- **ext_multigrid layering:** nvim attaches with `ext_linegrid`,
+  `ext_popupmenu`, AND `ext_multigrid` (AppModel.bootstrap). Grid 1 stays the
+  GLOBAL grid — the screen background, vsplit separators, the statusline row,
+  and the message-area fill — while every window, float, and the
+  message/cmdline area arrive as their OWN grid (`grid_resize` +
+  `win_pos`/`win_float_pos`/`msg_set_pos`) laid out in grid-1 coordinates.
+  `Screen` stores that layout per grid in `frames: [Int: GridFrame]` (position,
+  hidden, isFloat/isMessage, mouseEnabled, zindex/compindex, `win_viewport`
+  metrics) and ships it inside every `ScreenSnapshot` next to `grids:
+  [Int: Grid]`. `TerminalView` keeps one `GridBox` (a clip layer plus a
+  `GridContentLayer`) per displayed grid: `syncGridBoxes(with:)` reconciles
+  the box set and z order (base < window grids < floats and the message grid
+  by zindex/compindex) on every applied snapshot, and `updateBoxGeometry()`
+  places each box at its frame's global position. The cmdline gap belongs to
+  the GLOBAL last row: `GridContentLayer` computes row y from the frame's
+  global offset, so a grid reaching the last row (grid 1 itself, the message
+  grid) carries the gap in its own row math and window grids never do. A grid
+  taller than the visible band (the message grid's capacity is a full screen)
+  draws only the visible band. The smooth-scroll lead binds to ONE grid — the
+  one the gesture grabbed (`ScrollController` resolves the hit per event and
+  calls `TerminalView.setScrollLead`); only that box translates mid-gesture
+  only that box translates mid-gesture and only its `grid_scroll`
+  confirmations collapse the lead (other grids' scrolls are ignored, so
+  `:windo`-style scrolling never smears). The cursor,
+  the IME preedit, and the cursor glide live entirely on the cursor grid's
+  layer — a cursor jumping between grids snaps instead of gliding.
+  `ineovim:textlayout` regions stay in global coordinates; each layer maps its
+  local cells through its frame before the gutter-shift lookup. nvim has no
+  window→grid Lua API, so the diagnostics lookup and `reloadChangedFile` keep
+  taking GLOBAL coordinates (`GridHit.globalRow/GlobalCol`) while
+  `nvim_input_mouse` gets the grid-local ones.
 - **RPC read path:** nvim's stdout is drained by a dedicated blocking-read
   thread (POSIX `read(2)` loop → `AsyncStream<Data>` → a single consumer task
   feeding `RPCSession.feed`), **not** by `FileHandle.readabilityHandler` (can
@@ -385,8 +398,9 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   paths. Keyboard navigation stays with nvim (`popupmenu_select` updates the
   panel); row clicks call `nvim_select_popupmenu_item`. The panel is the
   only completion UI while attached — there is no in-grid fallback. Hover /
-  signature-help floats still render as grid content; making those native
-  requires `ext_multigrid` and is a separate, much larger iteration.
+  signature-help floats render as float grids (`win_float_pos`) like any
+  other floating window; they are grid content, not native panels, but they
+  place, layer, and hit-test correctly through the ext_multigrid machinery.
 - **⌘-click opens URLs:** `MouseHandler.mouseDown` intercepts a left click
   carrying Command before anything reaches nvim: it hit-tests the clicked grid
   cell against the rendered snapshot via `TerminalView.linkTarget` and
@@ -594,10 +608,19 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   at `$(BUILT_PRODUCTS_DIR)/PackageFrameworks`), and the symptom of losing it
   is a dyld abort at launch — before `main` — on the exported app: "Library
   not loaded: @rpath/GhosttySupport.framework/Versions/A/GhosttySupport".
-- **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
-  (`ext_multigrid` off). All redraw and grid handling must still carry grid
-  IDs from day one — event cases take a `grid` identifier and grid state is
-  keyed by ID — so enabling multigrid later is a switch flip, not a rewrite.
+- **`ext_multigrid` policy:** the app attaches with `ext_linegrid`,
+  `ext_popupmenu`, AND `ext_multigrid` — there is no single-grid path and no
+  feature flag. Every grid is first-class: `Screen.grids`/`Screen.frames` key
+  state by grid ID, `ScreenSnapshot` carries both, and `TerminalView` renders
+  one `GridBox` per displayed grid with hit-testing (`gridHit`) and scrolling
+  (`setScrollLead`) resolving per grid. New per-window features should read
+  `frames` (position, z, mouseEnabled, viewport metrics) rather than assuming
+  one screen-sized grid. KNOWN DEFERRAL: the scroll indicator still queries
+  nvim per wheel event (`windowScrollMetrics` Lua, cursor's window — so it
+  reflects the focused window when wheeling an unfocused split). `Screen`
+  already stores `win_viewport` metrics per grid in `GridFrame.viewport`;
+  switching the indicator to those (per hit grid, no RPC) is the intended
+  follow-up.
 - **Wide-glyph rendering:** nvim signals double-width cells by following the
   character with an empty-text continuation cell in `grid_line` ("the right
   cell of a double-width char will be represented as the empty string"); cell
@@ -727,9 +750,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   stands. (The earlier policy suspended a whole-line lead outright, which is
   why wheel steps used to move only when Neovim answered.) Deltas are never
   dropped: throttling requests past the cap made the content fall behind the
-  wheel *and* left up to a screen of blank. The lead translates the scrolling
-  grid layer only — never the frozen footer, and never past the clip band
-  above it (see "Frozen footer" above).
+  wheel *and* left up to a screen of blank. The lead translates only the
+  grabbed grid's content layer, inside that grid's own clip layer — the other
+  boxes (statusline row, message area, floats) never move mid-gesture, and no
+  box's content can paint outside its clip.
 - **Animation pacing (T7.6):** all easing is time-based (elapsed/duration,
   sampled from `CVDisplayLink` frame timestamps), so animation speed is
   identical at 60 Hz and 120 Hz ProMotion; ProMotion just samples the curve
@@ -767,18 +791,22 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   scrollbar (`ScrollIndicator`): a 6 pt rounded thumb at the window's right
   edge (`rightInset` 2 pt), leaving the text 2 pt clear of the thumb (the
   trailing inset reserves the shifted text's edge, see "Gutter-to-text
-  padding"), spanning the scrolling region but never the frozen
-  footer, faded out
+  padding"), spanning the global grid's content rows (its last two rows —
+  statusline and cmdline — stay thumb-free), faded out
   0.7 s after the last delta — the system overlay scrollers' show-on-scroll,
-  hide-when-idle behavior. A single linegrid's `redraw` stream carries no
-  buffer position (`win_viewport` needs `ext_multigrid`, out of scope), so
-  the thumb's place and size come from `NvimClient.windowScrollMetrics`: Lua
-  that finds the window under the pointer cell via `getwininfo` rects
+  hide-when-idle behavior. The `redraw` stream's `win_viewport` metrics are
+  already stored per grid (`GridFrame.viewport`), but the thumb still gets its
+  geometry from `NvimClient.windowScrollMetrics`: Lua that finds the window
+  under the pointer cell via `getwininfo` rects
   (falling back to the current window when the pointer is over the
   statusline/cmdline rows) and returns `topline`, the buffer's line count,
   and the number of visible buffer lines (`botline - topline + 1`, so a
   wrapped line counts once and a fully wrapped buffer still reports as
-  scrollable). One query per delta with at most one in flight
+  scrollable) — so the thumb reflects the CURSOR's window when a wheel
+  gesture targets an unfocused split. Switching the thumb to
+  `GridFrame.viewport` of the hit grid (no RPC round trip, correct per-window
+  metrics) is the planned follow-up (see "ext_multigrid policy"). One query
+  per delta with at most one in flight
   (sub-millisecond round trips; against a blocked nvim the queries would
   otherwise pile up behind the input it is not processing). A buffer that
   fits the window shows no thumb; a failed query leaves the geometry as it

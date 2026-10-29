@@ -59,7 +59,53 @@ nonisolated struct ModeInfo: Equatable, Sendable {
     var blinkOff: Int?
 }
 
-/// A Neovim UI redraw event (linegrid protocol, `ext_multigrid` off).
+/// Where a floating window anchors: the anchor grid plus a fractional
+/// row/col within it and the corner of the float the anchor points at
+/// (`nvim_open_win` semantics). Kept as a struct — tuples do not conform to
+/// `Equatable`, which the snapshot comparisons need.
+nonisolated struct FloatAnchor: Equatable, Sendable {
+    var grid: Int
+    var row: Double
+    var col: Double
+    var corner: String
+}
+
+/// The multigrid layout of one window: its position in the global grid and
+/// whether it is currently displayed. Floating windows and the message grid
+/// carry z-ordering and the nvim-computed absolute position.
+nonisolated struct GridFrame: Equatable, Sendable {
+    var row: Int
+    var col: Int
+    var hidden: Bool = false
+    var isFloat: Bool = false
+    var isMessage: Bool = false
+    var mouseEnabled: Bool = true
+    var zindex: Int = 0
+    var compindex: Int = 0
+
+    /// Fallback positioning for floats whose event carries no absolute
+    /// position: anchor within `anchorGrid` per `nvim_open_win` semantics.
+    var anchor: FloatAnchor?
+
+    /// `win_viewport`: the buffer-text range the window displays (nil until
+    /// the grid's first event). Drives the scroll indicator without a Lua
+    /// round-trip.
+    var viewport: GridViewport?
+}
+
+/// The buffer-text range a window displays, from `win_viewport`. All
+/// positions are zero-based; `botline` may exceed the line count when filler
+/// lines (`~`) are shown.
+nonisolated struct GridViewport: Equatable, Sendable {
+    var topline: Int
+    var botline: Int
+    var curline: Int
+    var curcol: Int
+    var lineCount: Int
+    var scrollDelta: Int
+}
+
+/// A Neovim UI redraw event (linegrid protocol, `ext_multigrid` on).
 nonisolated enum RedrawEvent: Equatable, Sendable {
     case gridLine(grid: Int, row: Int, colStart: Int, runs: [GridCellRun])
     case gridScroll(grid: Int, top: Int, bot: Int, left: Int, right: Int, rows: Int, cols: Int)
@@ -75,6 +121,34 @@ nonisolated enum RedrawEvent: Equatable, Sendable {
     case popupmenuShow(items: [PopupItem], selected: Int, row: Int, col: Int, grid: Int)
     case popupmenuSelect(Int)
     case popupmenuHide
+    /// `win_pos`: a (possibly previously hidden) window grid at a global
+    /// position. Nvim sizes the grid itself before this via `grid_resize`.
+    case winPos(grid: Int, row: Int, col: Int, width: Int, height: Int)
+    /// `win_float_pos`: a floating window. Positioning prefers the trailing
+    /// absolute `screenRow`/`screenCol`; the anchor fields are the fallback.
+    case winFloatPos(
+        grid: Int, anchorGrid: Int, anchorRow: Double, anchorCol: Double,
+        corner: String, mouseEnabled: Bool, zindex: Int, compindex: Int,
+        screenRow: Double?, screenCol: Double?
+    )
+    /// `win_external_pos`: a window displayed outside this surface. The app
+    /// has no desktop-window representation, so the grid is hidden.
+    case winExternalPos(grid: Int)
+    case winHide(grid: Int)
+    case winClose(grid: Int)
+    /// `msg_set_pos`: show the message grid at a global row (grid 0 hides it).
+    case msgSetPos(grid: Int, row: Int, scrolled: Bool, zindex: Int, compindex: Int)
+    /// `win_viewport`: the buffer-text range the window displays and how far
+    /// it scrolled since the previous event (smooth-scroll confirmations).
+    case winViewport(
+        grid: Int, topline: Int, botline: Int, curline: Int, curcol: Int,
+        lineCount: Int, scrollDelta: Int
+    )
+    /// `win_viewport_margins`: rows/columns of the grid that are not part of
+    /// the viewport (winbar, float borders). Parsed and currently unused.
+    case winViewportMargins(grid: Int, top: Int, bottom: Int, left: Int, right: Int)
+    /// `grid_mouse_enabled`: `setmouse()` flipping a grid's mouse support.
+    case gridMouseEnabled(grid: Int, enabled: Bool)
     case flush
     case unknown(name: String)
 }
@@ -190,6 +264,82 @@ nonisolated extension RedrawEvent {
             return [.popupmenuSelect(selected)]
         case "popupmenu_hide":
             return [.popupmenuHide]
+        case "win_pos":
+            guard let args = firstTuple(tuples), args.count >= 6,
+                  let grid = args[0].intValue,
+                  let row = args[2].intValue,
+                  let col = args[3].intValue,
+                  let width = args[4].intValue,
+                  let height = args[5].intValue else { return [] }
+            return [.winPos(grid: grid, row: row, col: col, width: width, height: height)]
+        case "win_float_pos":
+            guard let args = firstTuple(tuples), args.count >= 9,
+                  let grid = args[0].intValue,
+                  case let .string(corner) = args[2],
+                  let anchorGrid = args[3].intValue,
+                  let zindex = args[7].intValue else { return [] }
+            // The trailing absolute position is optional (older nvim).
+            let screenRow = args.count > 9 ? args[9].doubleValue : nil
+            let screenCol = args.count > 10 ? args[10].doubleValue : nil
+            return [.winFloatPos(
+                grid: grid,
+                anchorGrid: anchorGrid,
+                anchorRow: args[4].doubleValue ?? 0,
+                anchorCol: args[5].doubleValue ?? 0,
+                corner: corner,
+                mouseEnabled: args[6].boolValue ?? true,
+                zindex: zindex,
+                compindex: args.count > 8 ? args[8].intValue ?? 0 : 0,
+                screenRow: screenRow,
+                screenCol: screenCol
+            )]
+        case "win_external_pos":
+            guard let args = firstTuple(tuples), let grid = args.first?.intValue else { return [] }
+            return [.winExternalPos(grid: grid)]
+        case "win_hide":
+            guard let args = firstTuple(tuples), let grid = args.first?.intValue else { return [] }
+            return [.winHide(grid: grid)]
+        case "win_close":
+            guard let args = firstTuple(tuples), let grid = args.first?.intValue else { return [] }
+            return [.winClose(grid: grid)]
+        case "msg_set_pos":
+            guard let args = firstTuple(tuples), args.count >= 4,
+                  let grid = args[0].intValue,
+                  let row = args[1].intValue,
+                  let scrolled = args[2].boolValue else { return [] }
+            return [.msgSetPos(
+                grid: grid,
+                row: row,
+                scrolled: scrolled,
+                zindex: args.count > 4 ? args[4].intValue ?? 0 : 0,
+                compindex: args.count > 5 ? args[5].intValue ?? 0 : 0
+            )]
+        case "win_viewport":
+            guard let args = firstTuple(tuples), args.count >= 8,
+                  let grid = args[0].intValue,
+                  let topline = args[2].intValue,
+                  let botline = args[3].intValue,
+                  let curline = args[4].intValue,
+                  let curcol = args[5].intValue,
+                  let lineCount = args[6].intValue,
+                  let scrollDelta = args[7].intValue else { return [] }
+            return [.winViewport(
+                grid: grid, topline: topline, botline: botline, curline: curline,
+                curcol: curcol, lineCount: lineCount, scrollDelta: scrollDelta
+            )]
+        case "win_viewport_margins":
+            guard let args = firstTuple(tuples), args.count >= 6,
+                  let grid = args[0].intValue,
+                  let top = args[2].intValue,
+                  let bottom = args[3].intValue,
+                  let left = args[4].intValue,
+                  let right = args[5].intValue else { return [] }
+            return [.winViewportMargins(grid: grid, top: top, bottom: bottom, left: left, right: right)]
+        case "grid_mouse_enabled":
+            guard let args = firstTuple(tuples), args.count >= 2,
+                  let grid = args[0].intValue,
+                  let enabled = args[1].boolValue else { return [] }
+            return [.gridMouseEnabled(grid: grid, enabled: enabled)]
         case "flush":
             return [.flush]
         default:

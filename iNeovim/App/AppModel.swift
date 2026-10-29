@@ -480,8 +480,13 @@ final class AppModel: ObservableObject {
             try await client.uiAttach(width: attach.cols, height: attach.rows, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
                 .string("ext_popupmenu"): .bool(true),
+                // Per-window grids: splits, floats, and the message/cmdline
+                // area each arrive as their own grid positioned on the
+                // screen, so the renderer layers windows instead of
+                // compositing one global grid.
+                .string("ext_multigrid"): .bool(true),
             ])))
-            Log.render.info("UI attached \(attach.cols)x\(attach.rows) (ext_linegrid, ext_popupmenu)")
+            Log.render.info("UI attached \(attach.cols)x\(attach.rows) (ext_linegrid, ext_popupmenu, ext_multigrid)")
             // One wheel event scrolls exactly one line so the visual lead
             // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
             try await client.command("set mousescroll=ver:1,hor:1")

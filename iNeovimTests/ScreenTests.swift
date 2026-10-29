@@ -268,14 +268,102 @@ final class ScreenTests: XCTestCase {
         XCTAssertNil(snapshot.popup)
     }
 
-    func testPopupmenuIgnoresForeignGridsAndSelectWithoutShow() async {
+    func testPopupmenuAcceptsAnyGrid() async {
         let screen = Screen()
         await screen.apply(.popupmenuShow(items: [PopupItem(word: "x")], selected: 0, row: 0, col: 0, grid: 2))
-        var snapshot = await screen.snapshot()
-        XCTAssertNil(snapshot.popup)
+        let snapshot = await screen.snapshot()
+        // The completion panel anchors inside the popup's own grid, so a
+        // float window's grid is a valid anchor target.
+        XCTAssertEqual(snapshot.popup?.grid, 2)
+    }
 
+    func testPopupmenuSelectWithoutShowIsIgnored() async {
+        let screen = Screen()
         await screen.apply(.popupmenuSelect(2))
-        snapshot = await screen.snapshot()
+        let snapshot = await screen.snapshot()
         XCTAssertNil(snapshot.popup)
+    }
+
+    // MARK: - ext_multigrid layout
+
+    func testWinPosLaysOutWindowGrid() async {
+        let screen = Screen()
+        await screen.apply(.winPos(grid: 2, row: 0, col: 46, width: 44, height: 26))
+        await screen.apply(.winHide(grid: 2))
+
+        let snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.frames[2]?.hidden, true)
+        XCTAssertEqual(snapshot.grids[2]?.width, 44)
+    }
+
+    func testWinFloatPosComputesNorthWestPlacement() async {
+        let screen = Screen()
+        await screen.apply(.winFloatPos(
+            grid: 5, anchorGrid: 1, anchorRow: 5.0, anchorCol: 10.0,
+            corner: "NW", mouseEnabled: true, zindex: 50, compindex: 1,
+            screenRow: 5, screenCol: 10
+        ))
+
+        let snapshot = await screen.snapshot()
+        let frame = snapshot.frames[5]
+        XCTAssertEqual(frame?.row, 5)
+        XCTAssertEqual(frame?.col, 10)
+        XCTAssertEqual(frame?.isFloat, true)
+        XCTAssertEqual(frame?.zindex, 50)
+    }
+
+    func testWinFloatPosFallsBackToAnchorMathWithoutScreenCoords() async {
+        let screen = Screen()
+        await screen.apply(.winFloatPos(
+            grid: 5, anchorGrid: 1, anchorRow: 3.0, anchorCol: 4.0,
+            corner: "SE", mouseEnabled: false, zindex: 50, compindex: 1,
+            screenRow: nil, screenCol: nil
+        ))
+
+        let snapshot = await screen.snapshot()
+        let frame = snapshot.frames[5]
+        // A SE-anchored float's top-left corner sits anchorRow/anchorCol
+        // cells up and left of the anchor point.
+        XCTAssertEqual(frame?.row, -3)
+        XCTAssertEqual(frame?.col, -4)
+        XCTAssertEqual(frame?.mouseEnabled, false)
+    }
+
+    func testMsgSetPosTracksTheMessageGridAndHidesItOnZero() async {
+        let screen = Screen()
+        await screen.apply(.msgSetPos(grid: 3, row: 27, scrolled: false, zindex: 200, compindex: 0))
+
+        var snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.frames[3]?.isMessage, true)
+        XCTAssertEqual(snapshot.frames[3]?.row, 27)
+
+        await screen.apply(.msgSetPos(grid: 0, row: 0, scrolled: false, zindex: 200, compindex: 0))
+        snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.frames[3]?.hidden, true)
+    }
+
+    func testWinViewportRecordsBufferMetrics() async {
+        let screen = Screen()
+        await screen.apply(.winPos(grid: 2, row: 0, col: 0, width: 40, height: 26))
+        await screen.apply(.winViewport(
+            grid: 2, topline: 9, botline: 34, curline: 11, curcol: 3,
+            lineCount: 42, scrollDelta: 0
+        ))
+
+        let snapshot = await screen.snapshot()
+        let viewport = snapshot.frames[2]?.viewport
+        XCTAssertEqual(viewport?.topline, 9)
+        XCTAssertEqual(viewport?.botline, 34)
+        XCTAssertEqual(viewport?.lineCount, 42)
+    }
+
+    func testGridDestroyDropsTheFrame() async {
+        let screen = Screen()
+        await screen.apply(.winPos(grid: 6, row: 0, col: 0, width: 10, height: 10))
+        await screen.apply(.gridDestroy(grid: 6))
+
+        let snapshot = await screen.snapshot()
+        XCTAssertNil(snapshot.frames[6])
+        XCTAssertNil(snapshot.grids[6])
     }
 }

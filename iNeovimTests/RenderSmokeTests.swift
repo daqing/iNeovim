@@ -12,6 +12,8 @@ final class RenderSmokeTests: XCTestCase {
         let (grid, highlights) = Self.sampleScreen()
         let snapshot = ScreenSnapshot(
             grid: grid,
+            grids: [1: grid],
+            frames: [1: GridFrame(row: 0, col: 0)],
             highlights: highlights,
             defaultForeground: 0xC8D3E0,
             defaultBackground: 0x0F1419,
@@ -22,7 +24,7 @@ final class RenderSmokeTests: XCTestCase {
         )
 
         let metrics = FontMetrics(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
-        let layer = GridContentLayer(metrics: metrics)
+        let layer = GridContentLayer(metrics: metrics, gridId: 1)
         let scale: CGFloat = 2
         layer.contentsScale = scale
         layer.update(snapshot: snapshot)

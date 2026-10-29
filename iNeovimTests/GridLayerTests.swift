@@ -1,0 +1,125 @@
+import AppKit
+import XCTest
+@testable import iNeovim
+
+/// Under ext_multigrid every displayed grid draws in its own
+/// `GridContentLayer`, placed at its frame's global position. The cmdline
+/// gap belongs to the global grid's last row, so a grid reaching that row
+/// (the global grid itself, the message grid) carries the gap in its own
+/// row math while window grids never do.
+@MainActor
+final class GridLayerTests: XCTestCase {
+    private let metrics = FontMetrics(font: .monospacedSystemFont(ofSize: 13, weight: .regular))
+
+    func testGlobalGridLastRowCarriesTheCmdlineGap() {
+        let snapshot = snapshot(globalHeight: 6)
+        let layer = GridContentLayer(metrics: metrics, gridId: 1)
+        layer.update(snapshot: snapshot)
+        let cellHeight = metrics.cellSize.height
+        // Five uniform rows plus the gap-shifted last row.
+        XCTAssertEqual(
+            layer.bounds.height,
+            6 * cellHeight + TerminalView.cmdlineGap,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(layer.originY, 0, accuracy: 0.001)
+    }
+
+    func testWindowGridRowsStayUniform() {
+        // A window grid at the top of the screen: its last row is the global
+        // statusline row minus one, so no row inside the window is shifted.
+        var snapshot = snapshot(globalHeight: 12)
+        snapshot.frames[2] = GridFrame(row: 0, col: 0)
+        let layer = GridContentLayer(metrics: metrics, gridId: 2)
+        layer.update(snapshot: snapshot)
+        let cellHeight = metrics.cellSize.height
+        XCTAssertEqual(layer.bounds.height, 10 * cellHeight, accuracy: 0.001)
+        XCTAssertEqual(layer.originY, 0, accuracy: 0.001)
+    }
+
+    func testMessageGridCarriesTheGapOnTheGlobalLastRow() {
+        // The message grid holds the cmdline row: its frame starts three
+        // rows above the global grid's bottom, so its own last row is the
+        // global last row and takes the gap.
+        var snapshot = snapshot(globalHeight: 12)
+        snapshot.frames[3] = GridFrame(row: 9, col: 0, isMessage: true)
+        let layer = GridContentLayer(metrics: metrics, gridId: 3)
+        layer.update(snapshot: snapshot)
+        let cellHeight = metrics.cellSize.height
+        // Rows 0..2 map to global rows 9..11 uniformly; row 2 is the global
+        // last row (11) and is gap-shifted, capping the layer at the window
+        // bottom.
+        XCTAssertEqual(
+            layer.bounds.height,
+            3 * cellHeight + TerminalView.cmdlineGap,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(layer.originY, 9 * cellHeight, accuracy: 0.001)
+    }
+
+    func testCursorIsDrawnOnlyByItsOwnGridLayer() throws {
+        var snapshot = snapshot(globalHeight: 12, cursorGrid: 2, cursorRow: 3)
+        snapshot.frames[2] = GridFrame(row: 0, col: 0)
+
+        let base = GridContentLayer(metrics: metrics, gridId: 1)
+        base.update(snapshot: snapshot)
+        XCTAssertNil(base.cursorAnchorRect())
+
+        let window = GridContentLayer(metrics: metrics, gridId: 2)
+        window.update(snapshot: snapshot)
+        let anchor = try XCTUnwrap(window.cursorAnchorRect())
+        XCTAssertEqual(anchor.minY, 3 * metrics.cellSize.height, accuracy: 0.001)
+
+        // The glide's from/to geometry reads cursor rects straight out of
+        // older snapshots of the same grid.
+        let previous = snapshot
+        XCTAssertEqual(
+            try XCTUnwrap(window.cursorRestRect(in: previous)).minY,
+            anchor.minY,
+            accuracy: 0.001
+        )
+    }
+
+    /// A global grid of blank cells; every other grid is a blank window
+    /// grid 10 rows tall at 8 columns.
+    private func snapshot(
+        globalHeight: Int,
+        cursorGrid: Int = 1,
+        cursorRow: Int = 0
+    ) -> ScreenSnapshot {
+        let width = 8
+        var grids: [Int: Grid] = [:]
+        var grid = Grid(id: 1, width: width, height: globalHeight)
+        for row in 0..<globalHeight {
+            grid.applyLine(
+                row: row,
+                colStart: 0,
+                runs: [GridCellRun(text: " ", attrId: 0, count: width)]
+            )
+        }
+        grids[1] = grid
+        for id in [2, 3] {
+            var window = Grid(id: id, width: width, height: 10)
+            for row in 0..<10 {
+                window.applyLine(
+                    row: row,
+                    colStart: 0,
+                    runs: [GridCellRun(text: " ", attrId: 0, count: width)]
+                )
+            }
+            grids[id] = window
+        }
+        return ScreenSnapshot(
+            grid: grid,
+            grids: grids,
+            frames: [:],
+            highlights: HighlightStore(),
+            defaultForeground: 0xC8D3E0,
+            defaultBackground: 0x0F1419,
+            defaultSpecial: nil,
+            cursor: CursorState(grid: cursorGrid, row: cursorRow, col: 2),
+            modes: [ModeInfo(name: "normal", cursorShape: .block)],
+            modeIndex: 0
+        )
+    }
+}

@@ -1,8 +1,9 @@
 import AppKit
 
-/// Translates mouse events into `nvim_input_mouse` calls on grid 1.
-/// Dragging extends selections because nvim treats "drag" actions as
-/// selection extension.
+/// Translates mouse events into `nvim_input_mouse` calls carrying the grid
+/// the pointer is actually over (multigrid hit-testing) and cell coordinates
+/// local to that grid. Dragging extends selections because nvim treats
+/// "drag" actions as selection extension.
 final class MouseHandler {
     /// The gutter cells (sign column) where a plain left click opens the
     /// diagnostics popover instead of moving nvim's cursor.
@@ -11,7 +12,7 @@ final class MouseHandler {
     weak var view: TerminalView?
     private let dispatcher: InputDispatcher
     private var pressedButton: String?
-    private var pressedCell: (row: Int, col: Int)?
+    private var pressedHit: TerminalView.GridHit?
     private var pressedClick = false
     private var didDrag = false
     /// The current gesture was routed to the diagnostics popover; its drag
@@ -26,7 +27,7 @@ final class MouseHandler {
         guard let button = Self.buttonName(for: event) else { return }
         view?.window?.makeFirstResponder(view)
         pressedButton = button
-        pressedCell = cellLocation(for: event)
+        pressedHit = hitLocation(for: event)
         pressedClick = button == "left" && event.clickCount == 1
             && Self.modifierString(for: event.modifierFlags).isEmpty
         didDrag = false
@@ -35,18 +36,18 @@ final class MouseHandler {
         // sees an orphan drag/release.
         if button == "left",
            event.modifierFlags.contains(.command),
-           let cell = pressedCell,
-           let url = view?.linkTarget(atRow: cell.row, col: cell.col) {
+           let hit = pressedHit,
+           let url = view?.linkTarget(at: hit) {
             isSwallowingGesture = true
             _ = NSWorkspace.shared.open(url)
             return
         }
         if button == "left",
            Self.modifierString(for: event.modifierFlags).isEmpty,
-           let cell = pressedCell,
-           cell.col <= Self.signColumnMaxCol {
+           let hit = pressedHit,
+           hit.col <= Self.signColumnMaxCol {
             isSwallowingGesture = true
-            view?.presentDiagnostics(atRow: cell.row, col: cell.col)
+            view?.presentDiagnostics(at: hit)
             return
         }
         handle(event, button: button, action: "press")
@@ -62,9 +63,9 @@ final class MouseHandler {
     func mouseUp(_ event: NSEvent) {
         guard let pressedButton else { return }
         self.pressedButton = nil
-        let cell = pressedCell
+        let hit = pressedHit
         let shouldReload = pressedClick && !didDrag
-        pressedCell = nil
+        pressedHit = nil
         pressedClick = false
         didDrag = false
         if isSwallowingGesture {
@@ -72,37 +73,30 @@ final class MouseHandler {
         } else {
             handle(event, button: pressedButton, action: "release")
         }
-        if shouldReload, let cell {
-            dispatcher.send(.reloadChangedFile(row: cell.row, col: cell.col))
+        if shouldReload, let hit {
+            dispatcher.send(.reloadChangedFile(row: hit.globalRow, col: hit.globalCol))
         }
     }
 
     private func handle(_ event: NSEvent, button: String, action: String) {
-        guard let cell = cellLocation(for: event) else { return }
+        guard let hit = hitLocation(for: event) else { return }
         let modifier = Self.modifierString(for: event.modifierFlags)
         dispatcher.send(.mouse(
             button: button,
             action: action,
             modifier: modifier,
-            grid: 1,
-            row: cell.row,
-            col: cell.col
+            grid: hit.grid,
+            row: hit.row,
+            col: hit.col
         ))
     }
 
-    private func cellLocation(for event: NSEvent) -> (row: Int, col: Int)? {
+    /// The grid and cell under the event's location, or nil before the
+    /// session has laid out a grid.
+    private func hitLocation(for event: NSEvent) -> TerminalView.GridHit? {
         guard let view else { return nil }
         let point = view.convert(event.locationInWindow, from: nil)
-        // The grid starts inside the content insets, and the content may be
-        // leading Neovim's grid mid-scroll; convert to grid space before
-        // dividing into cells.
-        let dimensions = view.gridDimensions
-        return Self.cellLocation(
-            for: view.gridPoint(forViewPoint: point),
-            cellSize: view.metrics.cellSize,
-            gridWidth: dimensions?.width,
-            gridHeight: dimensions?.height
-        )
+        return view.gridHit(forViewPoint: point)
     }
 
     static func buttonName(for event: NSEvent) -> String? {
@@ -125,28 +119,5 @@ final class MouseHandler {
         if flags.contains(.option) { result += "A" }
         if flags.contains(.command) { result += "M" }
         return result
-    }
-
-    /// View point (y-down, flipped view) to grid cell, clamped to the grid.
-    /// Row mapping goes through `TerminalView.gridRow` so the gap above the
-    /// cmdline row is accounted for.
-    static func cellLocation(
-        for point: CGPoint,
-        cellSize: CGSize,
-        gridWidth: Int?,
-        gridHeight: Int?
-    ) -> (row: Int, col: Int) {
-        let col = min(max(Int(point.x / cellSize.width), 0), gridWidth.map { $0 - 1 } ?? .max)
-        let row: Int
-        if let gridHeight {
-            row = TerminalView.gridRow(
-                atY: point.y,
-                gridHeight: gridHeight,
-                cellHeight: cellSize.height
-            )
-        } else {
-            row = max(Int(point.y / cellSize.height), 0)
-        }
-        return (row, col)
     }
 }

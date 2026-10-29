@@ -180,13 +180,14 @@ Manual check in the GUI:
   (`(https://…)`, a trailing `.`) and clicks on the continuation cell of an
   adjacent double-width glyph.
 
-## Smooth scrolling and the frozen footer
+## Smooth scrolling across grids
 
-Neovim never scrolls the statusline and cmdline rows, so the app draws them in
-a layer the scroll lead does not translate: the grid is split into a scrolling
-region and a frozen footer (`GridContentLayer.rowSlice`), and the scrolling
-region is clipped to its own rows. Drawing the whole grid in one translated
-layer let the statusline text slide off its bar mid-gesture.
+With ext_multigrid every window, float, and the message area is its own grid
+drawn in its own clip layer; the scroll lead translates ONLY the grid the
+gesture grabbed, so the statusline row (global grid), other splits, and floats
+cannot move mid-gesture by construction. The grabbed grid's clip layer keeps
+its content inside its rows, which replaces the old frozen-footer split
+(`GridContentLayer.rowSlice` is retired).
 
 Manual check in the GUI:
 
@@ -201,9 +202,11 @@ statusline, and it closes as soon as Neovim confirms the line. The content must
 not slide back after the gesture ends — the lead is whole lines only, so there
 is no sub-line remainder to give up (a snap-back here means the lead is being
 drawn from `credit` instead of `sent`). Scrolling the other way shows the
-mirror behavior (blank at the top edge, footer still planted).
-Automated check: `FrozenFooterTests` pins the row slices, the layers' tiling,
-and which layer draws a cursor in the cmdline row; `ScrollAccumulatorTests`
+mirror behavior (blank at the top edge, statusline still planted). With two
+side-by-side splits, wheeling one must not move the other, and the cursor
+stays put.
+Automated check: `GridLayerTests` pins the per-grid box layering, z order, and
+cursor ownership; `ScrollAccumulatorTests`
 pins the whole-line lead and its confirmation.
 
 Wheel check (traditional mouse wheel, no trackpad):

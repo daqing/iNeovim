@@ -20,7 +20,11 @@ final class ScrollController {
     /// Whether incoming `grid_scroll` events are scroll catch-up; background
     /// redraws (Ctrl-D, insert-mode scrolls) must not move the offset.
     private var acceptConfirmations = false
-    private var lastPointerLocation: CGPoint = .zero
+    /// The pointer's position in view space and the grid hit resolved from
+    /// it: the gesture leads that hit's grid, wheel requests target it, and
+    /// the scroll indicator reports on it.
+    private var lastViewPoint: CGPoint = .zero
+    private var pointerHit: TerminalView.GridHit?
     private var lastModifierFlags: NSEvent.ModifierFlags = []
 
     /// Visual scroll offset sink, in points (y down); the second argument
@@ -42,11 +46,8 @@ final class ScrollController {
         guard rawDelta.isFinite else { return }
         updateLeadCap()
         let viewPoint = view.convert(event.locationInWindow, from: nil)
-        // Grid space starts contentInset into the view (see MouseHandler).
-        lastPointerLocation = CGPoint(
-            x: viewPoint.x - view.leadingContentInset,
-            y: viewPoint.y - TerminalView.contentInset
-        )
+        lastViewPoint = viewPoint
+        pointerHit = view.gridHit(forViewPoint: viewPoint)
         lastModifierFlags = event.modifierFlags
 
         if event.hasPreciseScrollingDeltas {
@@ -83,8 +84,10 @@ final class ScrollController {
         }
     }
 
-    /// A `grid_scroll` Neovim applied to grid 1 while our scroll was in
-    /// flight; shrinks the visual lead so the content does not jump.
+    /// A `grid_scroll` Neovim applied to the gesture's lead grid while our
+    /// scroll was in flight; shrinks the visual lead so the content does not
+    /// jump. The view routes confirmations here only when the grid matches
+    /// the lead it bound at gesture start.
     ///
     /// Only the accumulator moves here. The offset that goes with the
     /// confirmation is applied by `applyConfirmedOffset`, after the flush
@@ -121,6 +124,12 @@ final class ScrollController {
         settleTask?.cancel()
         gestureActive = true
         acceptConfirmations = true
+        // The gesture leads whichever grid the pointer grabbed: only that
+        // box visually translates, and only its `grid_scroll` confirmations
+        // count.
+        if let grid = pointerHit?.grid {
+            view?.setScrollLead(grid)
+        }
         accumulator.beginGesture()
     }
 
@@ -130,27 +139,13 @@ final class ScrollController {
         onOffsetChange?(accumulator.offset, false)
     }
 
-    /// The grid cell under the pointer: it targets the window Neovim scrolls,
-    /// and the window the scroll indicator reports on.
-    private var pointerCell: (row: Int, col: Int)? {
-        guard let view else { return nil }
-        let dimensions = view.gridDimensions
-        return MouseHandler.cellLocation(
-            for: lastPointerLocation,
-            cellSize: view.metrics.cellSize,
-            gridWidth: dimensions?.width,
-            gridHeight: dimensions?.height
-        )
-    }
-
     private func notifyScrollActivity() {
-        guard let cell = pointerCell else { return }
+        guard let cell = pointerHit else { return }
         onScrollActivity?(cell.row, cell.col)
     }
 
     private func send(_ requests: [ScrollLineRequest]) {
-        guard !requests.isEmpty, let cell = pointerCell else { return }
-        let (row, col) = cell
+        guard !requests.isEmpty, let cell = pointerHit else { return }
         let modifier = MouseHandler.modifierString(for: lastModifierFlags)
         for request in requests {
             let wheel = request.wheelButton
@@ -158,9 +153,9 @@ final class ScrollController {
                 button: wheel.button,
                 action: wheel.action,
                 modifier: modifier,
-                grid: 1,
-                row: row,
-                col: col
+                grid: cell.grid,
+                row: cell.row,
+                col: cell.col
             ))
         }
     }

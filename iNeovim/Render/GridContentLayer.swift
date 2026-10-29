@@ -2,36 +2,11 @@ import AppKit
 import CoreText
 import os
 
-/// A slice of the grid for one content layer. The terminal splits its grid
-/// in two so the trailing rows Neovim never scrolls — the statusline and the
-/// cmdline/message row — can live in a layer the scroll lead does not
-/// translate; both slices are drawn by `GridContentLayer`.
-enum GridRowSlice: Equatable {
-    /// Every row, for a layer that owns the whole grid.
-    case all
-    /// The rows above the trailing `count` (the scrolling region).
-    case head(excludingTrailing: Int)
-    /// The last `count` rows (the frozen footer).
-    case tail(count: Int)
-
-    /// The grid rows this slice covers in a grid `gridHeight` rows tall.
-    func range(gridHeight: Int) -> Range<Int> {
-        switch self {
-        case .all:
-            return 0..<max(0, gridHeight)
-        case .head(let trailing):
-            return 0..<max(0, gridHeight - trailing)
-        case .tail(let count):
-            return max(0, gridHeight - count)..<max(0, gridHeight)
-        }
-    }
-}
-
-/// The grid surface: owns drawing of the cells, the cursor, and the IME
-/// preedit, so the animator can translate the scrollable rows while the view
-/// behind it keeps painting the background. Which rows it draws is
-/// `rowSlice`, so the same class serves the scrolling region and the frozen
-/// footer as two layers.
+/// The grid surface: owns drawing of one nvim grid's cells, the cursor, and
+/// the IME preedit, so the animator can translate a scrolling window grid
+/// while the view behind it keeps painting the background. One instance per
+/// displayed grid: the global grid (separators, statusline, message-area
+/// fill), every split window's grid, and each float or the message grid.
 final class GridContentLayer: CALayer {
     struct Preedit: Equatable {
         var text: String
@@ -39,9 +14,13 @@ final class GridContentLayer: CALayer {
     }
 
     private(set) var snapshot: ScreenSnapshot?
+    /// The nvim grid this layer draws (1 = the global grid).
+    let gridId: Int
+    /// The grid's layout from the latest snapshot: global row/col the layer
+    /// is placed at, and what kind of grid it is. Row math needs it to keep
+    /// the global grid's cmdline gap consistent across grids.
+    private(set) var gridFrame = GridFrame(row: 0, col: 0)
     private(set) var metrics: FontMetrics
-    /// The rows this layer draws; `all` for a layer that owns the whole grid.
-    var rowSlice: GridRowSlice = .all
     private var fonts: FontVariants
     var preedit: Preedit?
     var cursorVisible = true {
@@ -53,7 +32,7 @@ final class GridContentLayer: CALayer {
         didSet {
             guard linkUnderline != oldValue else { return }
             var dirty = CGRect.null
-            for rect in [oldValue, linkUnderline].compactMap({ $0 }).compactMap({ clipped(toSlice: $0) }) {
+            for rect in [oldValue, linkUnderline].compactMap({ $0 }).compactMap({ clamped(toGrid: $0) }) {
                 dirty = dirty.union(snappedToPixels(pixelRect(for: rect)))
             }
             guard !dirty.isNull else { return }
@@ -109,8 +88,9 @@ final class GridContentLayer: CALayer {
         }
     }
 
-    init(metrics: FontMetrics) {
+    init(metrics: FontMetrics, gridId: Int = 1) {
         self.metrics = metrics
+        self.gridId = gridId
         self.fonts = FontVariants(metrics.font)
         super.init()
         // The host view is flipped, so the layer inherits a top-left origin;
@@ -138,11 +118,12 @@ final class GridContentLayer: CALayer {
         let metrics = source?.metrics
             ?? FontMetrics(font: .monospacedSystemFont(ofSize: FontMetrics.defaultSize, weight: .regular))
         self.metrics = metrics
+        self.gridId = source?.gridId ?? 1
+        self.gridFrame = source?.gridFrame ?? GridFrame(row: 0, col: 0)
         self.fonts = FontVariants(metrics.font)
         super.init(layer: layer)
         if let source {
             snapshot = source.snapshot
-            rowSlice = source.rowSlice
             preedit = source.preedit
             cursorVisible = source.cursorVisible
             cursorGlideOffset = source.cursorGlideOffset
@@ -152,7 +133,8 @@ final class GridContentLayer: CALayer {
     }
 
     /// Apply a fresh snapshot and resize to the grid's content size (the
-    /// bounds change invalidates the whole layer).
+    /// bounds change invalidates the whole layer). `gridFrame` carries the
+    /// grid's global placement from the same snapshot.
     func update(snapshot: ScreenSnapshot) {
         if let previous = self.snapshot,
            previous.highlights != snapshot.highlights
@@ -162,15 +144,17 @@ final class GridContentLayer: CALayer {
             lineCache.removeAll(keepingCapacity: true)
         }
         self.snapshot = snapshot
+        if let newFrame = snapshot.frames[gridId] {
+            gridFrame = newFrame
+        }
+        let grid = snapshot.grids[gridId]
         let size: CGSize
-        if let grid = snapshot.grid, !grid.isEmpty, !sliceRange.isEmpty {
-            let cellHeight = metrics.cellSize.height
-            let top = TerminalView.gridRowY(
-                sliceRange.lowerBound, gridHeight: grid.height, cellHeight: cellHeight
-            )
-            let bottom = TerminalView.gridRowY(
-                sliceRange.upperBound - 1, gridHeight: grid.height, cellHeight: cellHeight
-            ) + cellHeight
+        if let grid, !grid.isEmpty {
+            // A grid whose rows extend past the global grid (the message
+            // grid's capacity is a full screen) only draws the visible band.
+            let visibleRows = min(grid.height, max(1, globalGridHeight - gridFrame.row))
+            let top = rowY(0)
+            let bottom = rowY(visibleRows - 1) + metrics.cellSize.height
             size = CGSize(
                 // The extra band beyond the last cell keeps a shifted last
                 // column (glyph, cursor) inside the layer and its clip.
@@ -207,10 +191,10 @@ final class GridContentLayer: CALayer {
     }
 
     /// Mark one or more cell-coordinate regions dirty. A flush covers the
-    /// whole grid, so each rect is clipped to this layer's slice and a rect
-    /// that lies entirely outside it is dropped.
+    /// whole grid, so each rect is clamped to this grid and one outside it is
+    /// dropped.
     func invalidate(cellRects: [CellRect]) {
-        let mine = cellRects.compactMap(clipped(toSlice:))
+        let mine = cellRects.compactMap(clamped(toGrid:))
         guard !mine.isEmpty else { return }
         for rect in mine {
             setNeedsDisplay(snappedToPixels(pixelRect(for: rect)))
@@ -230,26 +214,25 @@ final class GridContentLayer: CALayer {
     }
 
     /// Layer-space rect of the cursor cell (including any glide offset);
-    /// the preedit anchors to it. Nil when the cursor's row is not in this
-    /// layer's slice, which is how the layer that keeps the other rows skips
-    /// drawing it.
+    /// the preedit anchors to it. Nil when this grid does not hold the
+    /// snapshot's cursor, which is how the other layers skip drawing it.
     func cursorAnchorRect() -> CGRect? {
         cursorCellRect().map {
             $0.offsetBy(dx: cursorGlideOffset.width, dy: cursorGlideOffset.height)
         }
     }
 
-    /// The same rect in grid coordinates: the slice origin is added back so
-    /// the cursor glide can cross the footer boundary (pressing `:` moves the
-    /// cursor from the text area into the cmdline row).
-    func cursorGridRect() -> CGRect? {
-        cursorAnchorRect()?.offsetBy(dx: 0, dy: sliceOriginY)
+    /// Layer-space rect of a snapshot's cursor cell without the glide
+    /// offset — the from/to geometry the cursor glide animates between;
+    /// nil when that snapshot's cursor is not on this grid.
+    func cursorRestRect(in snap: ScreenSnapshot?) -> CGRect? {
+        cursorCellRect(snap)
     }
 
     override func draw(in context: CGContext) {
         let signpost = Signpost.render.beginInterval("gridDraw")
         defer { Signpost.render.endInterval("gridDraw", signpost) }
-        guard let snapshot, let grid = snapshot.grid, !grid.isEmpty else { return }
+        guard let snapshot, let grid, !grid.isEmpty else { return }
         let cellHeight = metrics.cellSize.height
         let clip = context.boundingBoxOfClipPath.intersection(bounds)
         guard !clip.isEmpty else { return }
@@ -268,19 +251,21 @@ final class GridContentLayer: CALayer {
         // repeats.
         let minY = clip.minY
         let maxY = clip.maxY
-        // Rows of this layer's slice that overlap the dirty band. Testing the
-        // rows instead of dividing y by the cell height keeps rows clear of
-        // the cmdline gap — the last row sits that gap lower than its slot.
-        let rows = sliceRange.filter { rowY($0) < maxY && rowY($0) + cellHeight > minY }
+        // Rows of this grid that overlap the dirty band. Testing the rows
+        // instead of dividing y by the cell height keeps rows clear of the
+        // cmdline gap — the global grid's last row sits that gap lower than
+        // its slot.
+        let rows = (0..<grid.height).filter { rowY($0) < maxY && rowY($0) + cellHeight > minY }
         guard !rows.isEmpty else { return }
 
         // Resolve each highlight id once per frame instead of once per run.
         var colorCache: [Int: ResolvedColors] = [:]
-        // The statusline row sits on the view's opposite-mode bar: its cells
-        // stay transparent so the bar shows through, and its text draws in
-        // the opposite mode's default foreground — the theme's per-run colors
-        // match the editor background, not the bar.
-        let statuslineRow = grid.height >= 2 ? grid.height - 2 : -1
+        // The global grid's statusline row sits on the view's opposite-mode
+        // bar: its cells stay transparent so the bar shows through, and its
+        // text draws in the opposite mode's default foreground — the theme's
+        // per-run colors match the editor background, not the bar. Window
+        // grids have no statusline row; it lives on the global grid.
+        let statuslineRow = gridId == 1 && grid.height >= 2 ? grid.height - 2 : -1
         let statuslineTheme = TerminalView.hasDarkBackground(snapshot.defaultBackground)
         let statuslineText = TerminalView.statuslineColors(themeIsDark: statuslineTheme).foreground
         let statuslineKey = Self.statuslineForegroundKey(themeIsDark: statuslineTheme)
@@ -328,42 +313,43 @@ final class GridContentLayer: CALayer {
         drawLinkUnderline(context: context)
     }
 
-    /// Y of a row's top edge in layer space; the last row (cmdline/message
-    /// area) is shifted down by the cmdline gap. Every row-positioning math
-    /// in the layer must go through this so the gap stays consistent. A
-    /// slice other than the whole grid starts at its own origin.
+    /// Y of one of this grid's rows in layer space: the row's global y (which
+    /// carries the cmdline gap on the global grid's last row) minus the
+    /// layer's own origin, so a grid whose rows reach the global last row
+    /// (the message grid, the global grid itself) keeps the gap continuous
+    /// through its rows.
     private func rowY(_ row: Int) -> CGFloat {
-        TerminalView.gridRowY(
-            row,
-            gridHeight: gridHeight,
-            cellHeight: metrics.cellSize.height
-        ) - sliceOriginY
+        globalRowY(gridFrame.row + row) - originY
     }
 
-    private var gridHeight: Int { snapshot?.grid?.height ?? 0 }
-
-    private var sliceRange: Range<Int> { rowSlice.range(gridHeight: gridHeight) }
-
-    /// Grid-space y of the slice's first row's top edge: zero for the
-    /// scrolling region, the statusline row's y for the frozen footer. The
-    /// terminal places the layer with it, so the rows land where the grid
-    /// puts them.
-    var sliceOriginY: CGFloat {
-        guard !sliceRange.isEmpty else { return 0 }
-        return TerminalView.gridRowY(
-            sliceRange.lowerBound,
-            gridHeight: gridHeight,
+    /// Global-grid y of a global row's top edge (cmdline gap on the last row).
+    private func globalRowY(_ globalRow: Int) -> CGFloat {
+        TerminalView.gridRowY(
+            globalRow,
+            gridHeight: globalGridHeight,
             cellHeight: metrics.cellSize.height
         )
     }
 
-    /// The part of a cell rect inside this layer's slice; nil when the rect
-    /// lies entirely outside it.
-    private func clipped(toSlice rect: CellRect) -> CellRect? {
-        let minRow = max(rect.minRow, sliceRange.lowerBound)
-        let maxRow = min(rect.maxRow, sliceRange.upperBound)
-        guard minRow < maxRow else { return nil }
-        return CellRect(minRow: minRow, minCol: rect.minCol, maxRow: maxRow, maxCol: rect.maxCol)
+    /// Layer-space y of the grid's first row — the offset the terminal
+    /// positions the layer at, so its rows land where the global grid puts
+    /// them.
+    var originY: CGFloat { globalRowY(gridFrame.row) }
+
+    private var globalGridHeight: Int { snapshot?.grid?.height ?? 0 }
+
+    private var grid: Grid? { snapshot?.grids[gridId] }
+
+    /// Clamp a cell rect to this grid's rows and columns; nil when the rect
+    /// lies entirely outside the grid.
+    private func clamped(toGrid rect: CellRect) -> CellRect? {
+        guard let grid = snapshot?.grids[gridId] else { return nil }
+        let minRow = max(rect.minRow, 0)
+        let maxRow = min(rect.maxRow, grid.height)
+        let minCol = max(rect.minCol, 0)
+        let maxCol = min(rect.maxCol, grid.width)
+        guard minRow < maxRow, minCol < maxCol else { return nil }
+        return CellRect(minRow: minRow, minCol: minCol, maxRow: maxRow, maxCol: maxCol)
     }
 
     /// A cell rect in layer space, a little wider than the cells: the glyphs
@@ -390,9 +376,13 @@ final class GridContentLayer: CALayer {
     /// pinned glyph groups are shaped and cached without an offset; a run
     /// spanning the gutter boundary can only happen when the gutter and the
     /// text share one highlight, and then it keeps the gutter's alignment.
+    /// Text regions arrive in global grid coordinates, so a local cell is
+    /// mapped through its grid's frame before the lookup.
     private func textShift(row: Int, column: Int) -> CGFloat {
+        let globalRow = gridFrame.row + row
+        let globalCol = gridFrame.col + column
         for region in textRegions
-        where region.rows.contains(row) && region.columns.contains(column) {
+        where region.rows.contains(globalRow) && region.columns.contains(globalCol) {
             return NvimTextLayout.textShift
         }
         return 0
@@ -605,10 +595,13 @@ final class GridContentLayer: CALayer {
 
     // MARK: - Cursor
 
-    private func cursorCellRect() -> CGRect? {
-        guard let snapshot, let grid = snapshot.grid,
-              snapshot.cursor.grid == 1,
-              sliceRange.contains(snapshot.cursor.row),
+    /// Layer-space rect of a snapshot's cursor cell without the glide
+    /// offset (the applied snapshot by default); nil when that snapshot's
+    /// cursor is not on this grid.
+    private func cursorCellRect(_ snap: ScreenSnapshot? = nil) -> CGRect? {
+        guard let snapshot = snap ?? self.snapshot, let grid, !grid.isEmpty,
+              snapshot.cursor.grid == gridId,
+              snapshot.cursor.row >= 0, snapshot.cursor.row < grid.height,
               snapshot.cursor.col >= 0, snapshot.cursor.col < grid.width else {
             return nil
         }
@@ -616,14 +609,15 @@ final class GridContentLayer: CALayer {
             x: CGFloat(snapshot.cursor.col) * metrics.cellSize.width
                 + textShift(row: snapshot.cursor.row, column: snapshot.cursor.col),
             y: rowY(snapshot.cursor.row),
-            width: metrics.cellSize.width * CGFloat(cursorCellCols(grid)),
+            width: metrics.cellSize.width * CGFloat(cursorCellCols(grid, snapshot)),
             height: metrics.cellSize.height
         )
     }
 
     /// Columns the cursor covers: two when it sits on a double-width char,
     /// which nvim marks with an empty-text continuation cell.
-    private func cursorCellCols(_ grid: Grid) -> Int {
+    private func cursorCellCols(_ grid: Grid, _ snap: ScreenSnapshot? = nil) -> Int {
+        let snapshot = snap ?? self.snapshot
         let row = snapshot?.cursor.row ?? 0
         let col = snapshot?.cursor.col ?? 0
         guard col + 1 < grid.width else { return 1 }
@@ -644,7 +638,7 @@ final class GridContentLayer: CALayer {
             context.setFillColor(colors.foreground.cgColor)
             context.fill(snappedToPixels(cellRect.intersection(dirtyRect)))
             // Redraw the glyph under the block, swapped to the background color.
-            guard let grid = snapshot.grid else { return }
+            guard let grid else { return }
             let cell = grid[snapshot.cursor.row, snapshot.cursor.col]
             guard !cell.text.isEmpty else { return }
             let cols = cursorCellCols(grid)
@@ -700,8 +694,7 @@ final class GridContentLayer: CALayer {
     }
 
     private func cursorCellAttrId(_ snapshot: ScreenSnapshot) -> Int {
-        guard let grid = snapshot.grid,
-              snapshot.cursor.row < grid.height, snapshot.cursor.col < grid.width else {
+        guard let grid, snapshot.cursor.row < grid.height, snapshot.cursor.col < grid.width else {
             return 0
         }
         return grid[snapshot.cursor.row, snapshot.cursor.col].attrId
@@ -712,14 +705,14 @@ final class GridContentLayer: CALayer {
     /// Underline the hovered ⌘-link in the cells' own foreground color, in
     /// layer coordinates (y down) at the font's underline position.
     private func drawLinkUnderline(context: CGContext) {
-        guard let rect = linkUnderline, let grid = snapshot?.grid, !grid.isEmpty,
-              let sliced = clipped(toSlice: rect),
-              sliced.minCol >= 0, sliced.maxCol <= grid.width else { return }
+        guard let rect = linkUnderline, let grid, !grid.isEmpty,
+              let sliced = clamped(toGrid: rect) else { return }
         let font = metrics.font
         let ctFont = font as CTFont
-        // Match the text pass: the statusline row draws on the inverted bar
-        // and uses the opposite mode's foreground, not the cell's own.
-        let statuslineRow = grid.height >= 2 ? grid.height - 2 : -1
+        // Match the text pass: the global grid's statusline row draws on the
+        // inverted bar and uses the opposite mode's foreground, not the
+        // cell's own.
+        let statuslineRow = gridId == 1 && grid.height >= 2 ? grid.height - 2 : -1
         let color: NSColor
         if sliced.minRow == statuslineRow {
             color = TerminalView.statuslineColors(
