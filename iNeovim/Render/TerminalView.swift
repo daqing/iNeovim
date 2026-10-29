@@ -240,6 +240,11 @@ final class TerminalView: NSView {
         }
         for gridId in snapshot.frames.keys where boxes[gridId] == nil && gridId != 1 {
             let box = GridBox(gridId: gridId, metrics: metrics)
+            // Boxes come and go with snapshots, long after the view entered
+            // a window: a layer added to the hierarchy directly never gets
+            // AppKit's scale, so every new box needs the display's scale or
+            // its text draws at 1x and blurs on a Retina screen.
+            box.contentLayer.contentsScale = backingScale
             boxes[gridId] = box
             layer?.addSublayer(box.clipLayer)
         }
