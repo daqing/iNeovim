@@ -250,7 +250,7 @@ actor Screen {
                 topline: topline, botline: botline, curline: curline,
                 curcol: curcol, lineCount: lineCount, scrollDelta: scrollDelta
             )
-        case let .winViewportMargins(_, _, _, _, _):
+        case .winViewportMargins:
             break
         case let .gridMouseEnabled(grid, enabled):
             frames[grid]?.mouseEnabled = enabled

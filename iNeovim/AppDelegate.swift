@@ -95,15 +95,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
             switch (modifiers, key) {
             case (.command, "d"):
-                return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimTerminalPaneChord() } ? nil : event
             case (.control, "`"):
-                return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimTerminalPaneChord() } ? nil : event
             case (.command, "p"):
-                return MainActor.assumeIsolated(Self.claimProblemsPanelChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimProblemsPanelChord() } ? nil : event
             case (.command, "l"):
-                return MainActor.assumeIsolated(Self.claimEditorFocusChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimEditorFocusChord() } ? nil : event
             case (.command, "r"):
-                return MainActor.assumeIsolated(Self.claimTerminalPaneFocusChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimTerminalPaneFocusChord() } ? nil : event
             default:
                 return event
             }
