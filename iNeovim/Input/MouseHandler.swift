@@ -15,9 +15,22 @@ final class MouseHandler {
     private var pressedHit: TerminalView.GridHit?
     private var pressedClick = false
     private var didDrag = false
+    private var pressedLocation: CGPoint?
     /// The current gesture was routed to the diagnostics popover; its drag
     /// and release must not reach nvim as orphans.
     private var isSwallowingGesture = false
+    /// A plain left click awaiting preview-row resolution: the press is
+    /// held back until the query answers, because a forwarded click can
+    /// scroll nvim and invalidate the very row the query inspects. Sub-
+    /// millisecond locally; drags arriving meanwhile are replayed after a
+    /// nil answer.
+    private var gatedPress: (hit: TerminalView.GridHit, button: String, modifier: String)?
+    private var gatedTask: Task<Void, Never>?
+    private var latestGatedDrag: (grid: Int, row: Int, col: Int)?
+    /// Pointer travel below this is click jitter, not a drag: AppKit
+    /// delivers `leftMouseDragged` for sub-pixel wobble on some mice, which
+    /// used to cancel plain clicks (and their popovers) at random.
+    static let dragThreshold: CGFloat = 3
 
     init(dispatcher: InputDispatcher) {
         self.dispatcher = dispatcher
@@ -28,9 +41,11 @@ final class MouseHandler {
         view?.window?.makeFirstResponder(view)
         pressedButton = button
         pressedHit = hitLocation(for: event)
+        pressedLocation = view?.convert(event.locationInWindow, from: nil)
         pressedClick = button == "left" && event.clickCount == 1
             && Self.modifierString(for: event.modifierFlags).isEmpty
         didDrag = false
+        latestGatedDrag = nil
         // ⌘-click on an http(s) URL opens it in the default browser instead of
         // reaching nvim; the rest of the gesture is swallowed so nvim never
         // sees an orphan drag/release.
@@ -50,13 +65,80 @@ final class MouseHandler {
             view?.presentDiagnostics(at: hit)
             return
         }
+        // Plain left click on the text body: resolve the truncated-line
+        // preview BEFORE the press reaches nvim (a forwarded click can
+        // scroll and invalidate the clicked row). The press forwards the
+        // moment the answer is nil; a preview row swallows the gesture and
+        // opens the popover instead.
+        if button == "left",
+           pressedClick,
+           let hit = pressedHit,
+           hit.col > Self.signColumnMaxCol {
+            gatedPress = (
+                hit: hit,
+                button: button,
+                modifier: Self.modifierString(for: event.modifierFlags)
+            )
+            let view = view
+            gatedTask = Task { @MainActor in
+                let content = await view?.truncatedLineContent(at: hit)
+                self.pressResolved(content: content)
+            }
+            return
+        }
         handle(event, button: button, action: "press")
+    }
+
+    /// Called when the preview-row query for a gated press answers. nil
+    /// forwards the held press (and any drag already recorded); text
+    /// swallows the gesture and shows the popover.
+    private func pressResolved(content: String?) {
+        guard let gate = gatedPress else { return }
+        gatedPress = nil
+        gatedTask = nil
+        if let content {
+            isSwallowingGesture = true
+            view?.presentLineContent(content, at: gate.hit)
+            return
+        }
+        dispatcher.send(.mouse(
+            button: gate.button,
+            action: "press",
+            modifier: gate.modifier,
+            grid: gate.hit.grid,
+            row: gate.hit.row,
+            col: gate.hit.col
+        ))
+        if didDrag, let drag = latestGatedDrag {
+            latestGatedDrag = nil
+            dispatcher.send(.mouse(
+                button: gate.button,
+                action: "drag",
+                modifier: "",
+                grid: drag.grid,
+                row: drag.row,
+                col: drag.col
+            ))
+        }
     }
 
     func mouseDragged(_ event: NSEvent) {
         guard let pressedButton else { return }
-        didDrag = true
-        guard !isSwallowingGesture else { return }
+        if let pressedLocation {
+            let location = view?.convert(event.locationInWindow, from: nil) ?? pressedLocation
+            if hypot(location.x - pressedLocation.x, location.y - pressedLocation.y) >= Self.dragThreshold {
+                didDrag = true
+            }
+        } else {
+            didDrag = true
+        }
+        if gatedPress != nil {
+            if didDrag, let hit = hitLocation(for: event) {
+                latestGatedDrag = (hit.grid, hit.row, hit.col)
+            }
+            return
+        }
+        guard didDrag, !isSwallowingGesture else { return }
         handle(event, button: pressedButton, action: "drag")
     }
 
@@ -69,6 +151,24 @@ final class MouseHandler {
         pressedHit = nil
         pressedClick = false
         didDrag = false
+        pressedLocation = nil
+        // A release outrunning the (sub-millisecond) preview query falls
+        // back to a normal click: forward the held press so nvim sees a
+        // complete gesture, and let the popover go.
+        if let gate = gatedPress {
+            gatedTask?.cancel()
+            gatedTask = nil
+            gatedPress = nil
+            latestGatedDrag = nil
+            dispatcher.send(.mouse(
+                button: gate.button,
+                action: "press",
+                modifier: gate.modifier,
+                grid: gate.hit.grid,
+                row: gate.hit.row,
+                col: gate.hit.col
+            ))
+        }
         if wasSwallowing {
             isSwallowingGesture = false
         } else {
@@ -76,15 +176,6 @@ final class MouseHandler {
         }
         if plainClick, let hit {
             dispatcher.send(.reloadChangedFile(row: hit.globalRow, col: hit.globalCol))
-            // A plain click on a truncated line's preview row (not the
-            // gutter, which belongs to the diagnostics popover) opens the
-            // full line in a popover. The click itself has already reached
-            // nvim; the popover never blocks it.
-            if hit.col > Self.signColumnMaxCol {
-                Task { @MainActor in
-                    await self.view?.presentLineContentIfTruncated(at: hit)
-                }
-            }
         }
     }
 

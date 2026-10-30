@@ -1105,14 +1105,21 @@ final class TerminalView: NSView {
 
     // MARK: - Truncated line content
 
-    /// A plain click on a truncated line's preview row (see
-    /// `NvimClient.installTruncatedLines`) opens the full line in a popover.
-    /// The click itself has already reached nvim — the popover never blocks
-    /// input; nil from the query (not a preview row) shows nothing.
-    func presentLineContentIfTruncated(at hit: GridHit) async {
+    /// Resolves a plain click to a truncated line's full content before the
+    /// click reaches nvim (see `NvimClient.installTruncatedLines`): a
+    /// forwarded click can scroll nvim, which would invalidate the very row
+    /// this query inspects. nil means the row is not a preview row.
+    func truncatedLineContent(at hit: GridHit) async -> String? {
         guard let content = try? await model.client.lineFullContent(
             row: hit.globalRow, col: hit.globalCol
-        ), !content.isEmpty else { return }
+        ), !content.isEmpty else { return nil }
+        return content
+    }
+
+    /// Shows the resolved full line in a popover anchored at the clicked
+    /// preview row. Called instead of forwarding the click, so a preview
+    /// click never disturbs nvim's layout.
+    func presentLineContent(_ content: String, at hit: GridHit) {
         let cell = metrics.cellSize
         let rect = CGRect(
             x: leadingContentInset + CGFloat(hit.globalCol) * cell.width,
