@@ -238,6 +238,173 @@ struct NvimClient {
         return { lnum = lnum, items = items }
         """
 
+    /// Installs the truncated-line hook: buffer lines whose display width
+    /// exceeds `TRUNC_LIMIT` cells are hidden with `conceal_lines` extmarks
+    /// and replaced by a one-row `virt_lines` preview ending in an ellipsis
+    /// (nvim re-layouts around them; the renderer needs no awareness). The
+    /// preview rows are what `lineFullContent(row:col:)` resolves. Idempotent
+    /// per nvim instance.
+    func installTruncatedLines() async throws -> Bool {
+        let value = try await execLua(Self.truncatedLinesLua, args: [])
+        return value.boolValue ?? false
+    }
+
+    private static let truncatedLinesLua = """
+        local function install()
+          if _G.ineovim_trunc then return true end
+          local ns = vim.api.nvim_create_namespace('ineovim_truncation')
+          local limit = 280
+          local state = { buf = nil, lines = {} }
+          _G.ineovim_trunc = state
+
+          -- Display cells the window's text area offers (gutter excluded);
+          -- the preview ends with the ellipsis inside this width so it is
+          -- never clipped off the row.
+          local function text_width(win)
+            local info = vim.fn.getwininfo(win)[1]
+            if not info then return 0 end
+            return info.width - info.textoff
+          end
+
+          -- The first characters of `line` that fit `width` display cells,
+          -- then an ellipsis. Char-wise because Lua string slices are
+          -- byte-based and a cut inside a UTF-8 sequence would paint
+          -- invalid bytes.
+          local function preview(line, width)
+            local max_cells = width - 1
+            local cells = 0
+            local out = {}
+            for index = 0, vim.fn.strchars(line) - 1 do
+              local char = vim.fn.strcharpart(line, index, 1)
+              local w = vim.fn.strwidth(char)
+              if cells + w > max_cells then
+                return table.concat(out) .. '…'
+              end
+              cells = cells + w
+              out[#out + 1] = char
+            end
+            return line
+          end
+
+          local function rescan()
+            local win = vim.api.nvim_get_current_win()
+            local buf = vim.api.nvim_win_get_buf(win)
+            local width = text_width(win)
+            if width < 4 then return end
+            if state.buf ~= buf then
+              state.buf = buf
+              state.lines = {}
+            end
+            vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+            state.lines = {}
+            local count = vim.api.nvim_buf_line_count(buf)
+            -- Runs of over-long lines. The buffer's last line stays
+            -- unconcealed: its preview would have to hang off a line after
+            -- it, and there is none.
+            local run_start = nil
+            local runs = {}
+            for lnum = 1, count do
+              local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
+              local is_long = lnum < count and vim.fn.strwidth(line) > limit
+              if is_long then
+                if not run_start then run_start = lnum end
+              elseif run_start then
+                runs[#runs + 1] = { run_start, lnum - 1 }
+                run_start = nil
+              end
+            end
+            for _, run in ipairs(runs) do
+              -- Previews hang off the first unconcealed line after the run:
+              -- a virt mark attached to a conceal_lines-hidden line is
+              -- swallowed along with it, so the anchor must be outside the
+              -- run. Marks created in lnum order draw in lnum order.
+              local anchor = run[2] + 1
+              for lnum = run[1], run[2] do
+                local full = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
+                vim.api.nvim_buf_set_extmark(buf, ns, lnum - 1, 0, {
+                  end_row = lnum - 1, end_col = #full, conceal_lines = '',
+                })
+                vim.api.nvim_buf_set_extmark(buf, ns, anchor - 1, 0, {
+                  virt_lines = {{ { preview(full, width), 'Comment' } }},
+                  virt_lines_above = true,
+                })
+                state.lines[lnum] = true
+              end
+            end
+          end
+
+          -- conceal_lines only collapses when 'conceallevel' is exactly 2
+          -- (measured on 0.12: levels 0 and 1 leave the line drawn), so the
+          -- window option is owned like `wrap` is.
+          local function apply_conceal_level()
+            vim.o.conceallevel = 2
+            for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+              for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+                vim.wo[win].conceallevel = 2
+              end
+            end
+          end
+
+          apply_conceal_level()
+          rescan()
+          vim.api.nvim_create_autocmd({
+            'BufAdd', 'BufNewFile', 'BufReadPost', 'BufWinEnter', 'TextChanged',
+            'TextChangedI', 'InsertLeave', 'VimResized', 'WinResized', 'VimEnter',
+          }, { callback = function()
+            apply_conceal_level()
+            rescan()
+          end })
+          return true
+        end
+        return install()
+        """
+
+    /// The full text of the buffer line a clicked truncated-line preview row
+    /// stands for, or nil when the cell is not such a preview. `row`/`col`
+    /// are GLOBAL grid coordinates (the same `getwininfo` space the
+    /// diagnostics lookup uses). The preview row of line `lnum` sits
+    /// `anchor - lnum` rows above the line that follows its truncation run
+    /// (each preview is exactly one grid row — virt lines do not wrap).
+    func lineFullContent(row: Int, col: Int) async throws -> String? {
+        let value = try await execLua(Self.lineFullContentLua, args: [
+            .int(Int64(row)), .int(Int64(col)),
+        ])
+        return value.stringValue
+    }
+
+    private static let lineFullContentLua = """
+        local row, col = ...
+        local state = _G.ineovim_trunc
+        if not state or not state.buf or not next(state.lines) then return vim.NIL end
+        local target = nil
+        for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          local info = vim.fn.getwininfo(w)[1]
+          if info
+            and row + 1 >= info.winrow and row + 1 < info.winrow + info.height
+            and col + 1 >= info.wincol and col + 1 < info.wincol + info.width then
+            target = { win = w, info = info }
+            break
+          end
+        end
+        if not target then return vim.NIL end
+        local buf = vim.api.nvim_win_get_buf(target.win)
+        if buf ~= state.buf then return vim.NIL end
+        local screen_row = row + 1
+        for lnum in pairs(state.lines) do
+          local anchor = lnum
+          while state.lines[anchor + 1] do anchor = anchor + 1 end
+          anchor = anchor + 1
+          local start = vim.fn.screenpos(target.win, anchor, 1)
+          if start.row ~= 0 then
+            local preview_row = start.row - (anchor - lnum)
+            if preview_row == screen_row then
+              return vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
+            end
+          end
+        end
+        return vim.NIL
+        """
+
     /// The viewport metrics of the window covering a grid cell, for the
     /// scroll indicator: which buffer line is at the top, how long the buffer
     /// is, and how many buffer lines the window shows. A single linegrid

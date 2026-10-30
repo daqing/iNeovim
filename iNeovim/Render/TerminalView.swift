@@ -187,6 +187,8 @@ final class TerminalView: NSView {
     private let completionPanel = CompletionPanelView()
     /// Native popover listing the diagnostics on a gutter sign's line.
     private let diagnosticPopover = DiagnosticPopover()
+    /// Native popover showing a truncated line's full text (preview-row clicks).
+    private let lineContentPopover = LineContentPopover()
     private let scrollAnimator = ScrollAnimator()
     private let cursorAnimator = CursorAnimator()
     /// The transient overlay scrollbar shown while the wheel or trackpad
@@ -508,6 +510,7 @@ final class TerminalView: NSView {
 
     override func keyDown(with event: NSEvent) {
         diagnosticPopover.close()
+        lineContentPopover.close()
         if imeHandler.hasMarkedText {
             // Composition in progress: let the input context route the event
             // to setMarkedText/insertText/doCommand.
@@ -899,6 +902,7 @@ final class TerminalView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         diagnosticPopover.close()
+        lineContentPopover.close()
         scrollController.scrollWheel(with: event)
     }
 
@@ -1096,6 +1100,31 @@ final class TerminalView: NSView {
             row,
             gridHeight: snapshot?.grid?.height ?? 0,
             cellHeight: metrics.cellSize.height
+        )
+    }
+
+    // MARK: - Truncated line content
+
+    /// A plain click on a truncated line's preview row (see
+    /// `NvimClient.installTruncatedLines`) opens the full line in a popover.
+    /// The click itself has already reached nvim — the popover never blocks
+    /// input; nil from the query (not a preview row) shows nothing.
+    func presentLineContentIfTruncated(at hit: GridHit) async {
+        guard let content = try? await model.client.lineFullContent(
+            row: hit.globalRow, col: hit.globalCol
+        ), !content.isEmpty else { return }
+        let cell = metrics.cellSize
+        let rect = CGRect(
+            x: leadingContentInset + CGFloat(hit.globalCol) * cell.width,
+            y: Self.contentInset + globalRowY(hit.globalRow),
+            width: cell.width * 2,
+            height: cell.height
+        )
+        lineContentPopover.present(
+            content: content,
+            relativeTo: rect,
+            of: self,
+            themeIsDark: Self.hasDarkBackground(snapshot?.defaultBackground)
         )
     }
 

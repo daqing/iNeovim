@@ -64,17 +64,27 @@ final class MouseHandler {
         guard let pressedButton else { return }
         self.pressedButton = nil
         let hit = pressedHit
-        let shouldReload = pressedClick && !didDrag
+        let wasSwallowing = isSwallowingGesture
+        let plainClick = pressedClick && !didDrag && !wasSwallowing
         pressedHit = nil
         pressedClick = false
         didDrag = false
-        if isSwallowingGesture {
+        if wasSwallowing {
             isSwallowingGesture = false
         } else {
             handle(event, button: pressedButton, action: "release")
         }
-        if shouldReload, let hit {
+        if plainClick, let hit {
             dispatcher.send(.reloadChangedFile(row: hit.globalRow, col: hit.globalCol))
+            // A plain click on a truncated line's preview row (not the
+            // gutter, which belongs to the diagnostics popover) opens the
+            // full line in a popover. The click itself has already reached
+            // nvim; the popover never blocks it.
+            if hit.col > Self.signColumnMaxCol {
+                Task { @MainActor in
+                    await self.view?.presentLineContentIfTruncated(at: hit)
+                }
+            }
         }
     }
 

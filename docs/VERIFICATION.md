@@ -99,6 +99,29 @@ Manual check in the GUI:
    wrapped line can move several rows at once), and the transient scroll
    thumb still appears because it measures buffer lines.
 
+## Truncated long lines
+
+A buffer line whose display width exceeds 280 cells collapses to a one-row
+preview ending in `…` (`installTruncatedLines` — `conceal_lines` extmark plus
+a one-row `virt_lines` preview, `conceallevel` owned at 2); clicking the
+preview row opens the full line in `LineContentPopover`. The buffer's last
+line is exempt (a preview has no line below to attach to). Manual checks:
+
+1. Open a file with a 400+ character line between normal lines: the long
+   line shows as a single row ending in `…` — not its 7 wrapped rows — while
+   the normal lines around it still soft-wrap as before.
+2. Plain-click the preview row: a popover shows the full line text, wraps it
+   at the popover width, is selectable (copyable), and scrolls for very long
+   lines; clicking anywhere else (or typing, scrolling) dismisses it.
+3. Two adjacent over-long lines: two preview rows in buffer order, then the
+   following normal line — no preview or line lost in the run.
+4. Delete characters until the line drops under 280 cells: it expands back
+   to full wrapped display without a restart (`TextChanged` rescan).
+5. Resize the window wider: the preview grows to the new width and keeps its
+   `…` visible at the right edge (`WinResized` rescan).
+6. The scroll thumb's proportions drift by the hidden rows on such files
+   (the Lua metric counts buffer lines) — known, informational only.
+
 ## Last working directory
 
 The launch window resumes in the directory the last session was in, saved as

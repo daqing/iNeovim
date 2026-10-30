@@ -77,6 +77,7 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 │   ├── TerminalView.swift    layer-backed NSView hosting the per-grid layers
 │   ├── CompletionPanelView.swift  native ext_popupmenu completion list
 │   ├── DiagnosticPopover.swift  native vim.diagnostic popover for gutter clicks
+│   ├── LineContentPopover.swift  native full-line popover for truncated rows
 │   ├── CursorBlinker.swift   cursor blink timing (wait/on/off)
 │   └── NSColor+PackedRGB.swift  0xRRGGBB ↔ NSColor helpers
 ├── Input/                keyboard/mouse translation layer (Phase 6)
@@ -284,6 +285,33 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   exactly one number. Any screen-row→buffer-line math must therefore use
   `screenpos` (see the gutter diagnostics popover below), because one
   line can cover several rows.
+- **Truncated long lines:** lines whose display width exceeds 280 cells
+  (`vim.fn.strwidth`; the buffer's last line is exempt — its preview would
+  have nothing below to hang from) collapse to a ONE-ROW preview ending in
+  `…`, and clicking the preview row opens the full line in
+  `LineContentPopover`. Implemented nvim-side (`NvimClient.installTruncatedLines`,
+  idempotent via `_G.ineovim_trunc`), not in the renderer: a `conceal_lines`
+  extmark hides the whole line INCLUDING its wrap rows, and a `virt_lines`
+  preview (attached to the FIRST unconcealed line after the run with
+  `virt_lines_above`, created in lnum order — marks attached to a concealed
+  line are swallowed with it) takes exactly one grid row, because virt lines
+  never wrap. Measured on nvim 0.12: `conceal_lines` collapses ONLY at
+  `conceallevel` 2 (0 and 1 leave the line drawn), so the window option is
+  owned like `wrap` (global + every window + `VimEnter` re-apply). The
+  preview text is the longest char-prefix fitting `winwidth - textoff - 1`
+  cells plus the ellipsis (char-wise walk; Lua string slices are byte-based).
+  Rescans run on buffer/enter/text-change/resize autocmds with a full-buffer
+  width scan — fine for code files, a future optimization if huge buffers
+  feel sluggish in insert. Plain left clicks (outside the gutter) ask
+  `NvimClient.lineFullContent(row:col:)` for the clicked row's line: the Lua
+  walks the registered lines, derives each preview's row from
+  `screenpos(run_end + 1, 1).row - (run_end - lnum)`, and returns the full
+  text (nil elsewhere). The click itself still reaches nvim first, so the
+  cursor may land on a neighboring real line — the popover is the reading
+  path, `j`/`k` still traverse the hidden lines. Concealing is
+  buffer-global: every split showing the buffer truncates, previews sized
+  for the rescanning window clip in narrower ones, and the scroll
+  indicator's visible-lines metric drifts by the run's hidden rows.
 - **Full-width statusline bar:** the statusline row (the one above the cmdline
   row) gets a backdrop layer (`TerminalView.statuslineLayer`, below the grid
   layers) filled with the OPPOSITE theme mode's default background — a

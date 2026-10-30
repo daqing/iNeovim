@@ -505,6 +505,13 @@ final class AppModel: ObservableObject {
                 Log.render.error("Failed to install text layout hook: \(error.localizedDescription, privacy: .public)")
             }
             do {
+                if try await client.installTruncatedLines() != true {
+                    Log.app.warning("Truncated-line hook did not install; over-long lines stay fully wrapped")
+                }
+            } catch {
+                Log.app.error("Failed to install truncated-line hook: \(error.localizedDescription, privacy: .public)")
+            }
+            do {
                 if try await client.installWorkingDirectoryHook() != true {
                     Log.app.warning("Working directory hook did not install; the next launch starts in $HOME")
                 }
