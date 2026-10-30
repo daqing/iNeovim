@@ -290,6 +290,8 @@ struct NvimClient {
             local win = vim.api.nvim_get_current_win()
             local buf = vim.api.nvim_win_get_buf(win)
             local width = text_width(win)
+            -- Validate BEFORE clearing: a transient zero-width window (UI
+            -- attach, window drags) must not leave the buffer unmarked.
             if width < 4 then return end
             if state.buf ~= buf then
               state.buf = buf
@@ -317,43 +319,72 @@ struct NvimClient {
               -- Previews hang off the first unconcealed line after the run:
               -- a virt mark attached to a conceal_lines-hidden line is
               -- swallowed along with it, so the anchor must be outside the
-              -- run. Marks created in lnum order draw in lnum order.
+              -- run. Marks created in lnum order draw in lnum order. Each
+              -- mark pair is guarded: one rejection must not abandon the
+              -- rest of the buffer (that used to read as "some lines fold,
+              -- others don't").
               local anchor = run[2] + 1
               for lnum = run[1], run[2] do
                 local full = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
-                vim.api.nvim_buf_set_extmark(buf, ns, lnum - 1, 0, {
+                if pcall(vim.api.nvim_buf_set_extmark, buf, ns, lnum - 1, 0, {
                   end_row = lnum - 1, end_col = #full, conceal_lines = '',
-                })
-                vim.api.nvim_buf_set_extmark(buf, ns, anchor - 1, 0, {
+                }) then
+                  state.lines[lnum] = true
+                end
+                pcall(vim.api.nvim_buf_set_extmark, buf, ns, anchor - 1, 0, {
                   virt_lines = {{ { preview(full, width), 'Comment' } }},
                   virt_lines_above = true,
                 })
-                state.lines[lnum] = true
               end
             end
           end
 
           -- conceal_lines only collapses when 'conceallevel' is exactly 2
           -- (measured on 0.12: levels 0 and 1 leave the line drawn), so the
-          -- window option is owned like `wrap` is.
+          -- window option is owned like `wrap` is. 'concealcursor' "nv"
+          -- keeps a truncated line folded even with the cursor on it
+          -- (measured: otherwise the cursor's line always unfolds, which
+          -- read as random lines refusing to collapse); insert mode is left
+          -- out so a line reveals itself for editing the moment the user
+          -- starts typing on it.
           local function apply_conceal_level()
             vim.o.conceallevel = 2
+            vim.o.concealcursor = 'nv'
             for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
               for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
                 vim.wo[win].conceallevel = 2
+                vim.wo[win].concealcursor = 'nv'
               end
             end
           end
 
+          -- Rescans are deferred and coalesced: autocmd storms (resize
+          -- drags, rapid typing) then collapse into one scan against the
+          -- settled state instead of racing their own clears. Defined
+          -- AFTER `apply_conceal_level`/`rescan` — a Lua `local function`
+          -- is only visible below its declaration, and a forward reference
+          -- would silently compile to a nil global call.
+          local pending = false
+          local function request_rescan()
+            if pending then return end
+            pending = true
+            vim.schedule(function()
+              pending = false
+              apply_conceal_level()
+              rescan()
+            end)
+          end
+
           apply_conceal_level()
           rescan()
+          -- TextChangedP covers insert-completion selections (CTRL-N/p),
+          -- which never fire TextChanged; BufWritePost/SessionLoadPost/
+          -- BufFilePost cover the remaining buffer-identity changes.
           vim.api.nvim_create_autocmd({
             'BufAdd', 'BufNewFile', 'BufReadPost', 'BufWinEnter', 'TextChanged',
-            'TextChangedI', 'InsertLeave', 'VimResized', 'WinResized', 'VimEnter',
-          }, { callback = function()
-            apply_conceal_level()
-            rescan()
-          end })
+            'TextChangedI', 'TextChangedP', 'InsertLeave', 'BufWritePost',
+            'SessionLoadPost', 'BufFilePost', 'VimResized', 'WinResized', 'VimEnter',
+          }, { callback = request_rescan })
           return true
         end
         return install()
