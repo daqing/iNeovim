@@ -291,13 +291,19 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `…`, and clicking the preview row opens the full line in
   `LineContentPopover`. Implemented nvim-side (`NvimClient.installTruncatedLines`,
   idempotent via `_G.ineovim_trunc`), not in the renderer: a `conceal_lines`
-  extmark hides the whole line INCLUDING its wrap rows, and a `virt_lines`
-  preview (attached to the FIRST unconcealed line after the run with
-  `virt_lines_above`, created in lnum order — marks attached to a concealed
-  line are swallowed with it) takes exactly one grid row, because virt lines
+  extmark hides the whole line INCLUDING its wrap rows, and ONE `virt_lines`
+  extmark per run carries the run's previews as a multi-row list (attached to
+  the FIRST unconcealed line after the run with `virt_lines_above` — marks
+  attached to a concealed line are swallowed with it, and separate
+  same-anchor marks do NOT draw in creation order: the first lands topmost
+  and the rest in reverse, scrambling runs of three or more). Each preview
+  takes exactly one grid row, because virt lines
   never wrap. Measured on nvim 0.12: `conceal_lines` collapses ONLY at
-  `conceallevel` 2 (0 and 1 leave the line drawn), so the window option is
-  owned like `wrap` (global + every window + `VimEnter` re-apply). The
+  `conceallevel` 2 (0 and 1 leave the line drawn), and the cursor's own line
+  unfolds unless `concealcursor` includes the mode — both options are owned
+  like `wrap` (`conceallevel` 2, `concealcursor` "nv" so reading keeps a
+  line folded with the cursor on it while insert mode reveals it for
+  editing; global + every window + rescan re-apply). The
   preview text is the longest char-prefix fitting `winwidth - textoff - 1`
   cells plus the ellipsis (char-wise walk; Lua string slices are byte-based).
   Rescans run on buffer/enter/text-change/resize autocmds with a full-buffer

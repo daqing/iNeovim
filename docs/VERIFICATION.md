@@ -113,13 +113,18 @@ line is exempt (a preview has no line below to attach to). Manual checks:
 2. Plain-click the preview row: a popover shows the full line text, wraps it
    at the popover width, is selectable (copyable), and scrolls for very long
    lines; clicking anywhere else (or typing, scrolling) dismisses it.
-3. Two adjacent over-long lines: two preview rows in buffer order, then the
-   following normal line — no preview or line lost in the run.
-4. Delete characters until the line drops under 280 cells: it expands back
+3. A long RUN (several adjacent over-long lines, e.g. three or more):
+   one preview row per line, in buffer order — an eight-line run draws
+   its previews top-to-bottom in the same order as the lines (same-anchor
+   virt marks would scramble them; the run shares one extmark instead).
+4. With the cursor resting on a truncated line (normal mode), the line
+   stays folded; entering insert mode on it reveals the full line for
+   editing, and leaving insert folds it again.
+5. Delete characters until the line drops under 280 cells: it expands back
    to full wrapped display without a restart (`TextChanged` rescan).
-5. Resize the window wider: the preview grows to the new width and keeps its
+6. Resize the window wider: the preview grows to the new width and keeps its
    `…` visible at the right edge (`WinResized` rescan).
-6. The scroll thumb's proportions drift by the hidden rows on such files
+7. The scroll thumb's proportions drift by the hidden rows on such files
    (the Lua metric counts buffer lines) — known, informational only.
 
 ## Last working directory
