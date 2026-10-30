@@ -319,20 +319,26 @@ struct NvimClient {
               -- Previews hang off the first unconcealed line after the run:
               -- a virt mark attached to a conceal_lines-hidden line is
               -- swallowed along with it, so the anchor must be outside the
-              -- run. Marks created in lnum order draw in lnum order. Each
-              -- mark pair is guarded: one rejection must not abandon the
-              -- rest of the buffer (that used to read as "some lines fold,
-              -- others don't").
+              -- run. ONE mark carries the whole run's previews as a multi-
+              -- row virt_lines list — separate same-anchor marks do NOT
+              -- draw in creation order (measured on 0.12: the first draws
+              -- topmost, the rest in reverse, scrambling runs of three or
+              -- more). Conceal marks are still per line and guarded, so a
+              -- single rejection cannot abandon the rest of the buffer.
               local anchor = run[2] + 1
+              local rows = {}
               for lnum = run[1], run[2] do
                 local full = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
                 if pcall(vim.api.nvim_buf_set_extmark, buf, ns, lnum - 1, 0, {
                   end_row = lnum - 1, end_col = #full, conceal_lines = '',
                 }) then
                   state.lines[lnum] = true
+                  rows[#rows + 1] = { { preview(full, width), 'Comment' } }
                 end
+              end
+              if rows[1] then
                 pcall(vim.api.nvim_buf_set_extmark, buf, ns, anchor - 1, 0, {
-                  virt_lines = {{ { preview(full, width), 'Comment' } }},
+                  virt_lines = rows,
                   virt_lines_above = true,
                 })
               end
