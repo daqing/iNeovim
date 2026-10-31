@@ -286,8 +286,7 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `screenpos` (see the gutter diagnostics popover below), because one
   line can cover several rows.
 - **Truncated long lines:** lines whose display width exceeds 280 cells
-  (`vim.fn.strwidth`; the buffer's last line is exempt — its preview would
-  have nothing below to hang from) collapse to a ONE-ROW preview ending in
+  (`vim.fn.strwidth`) collapse to a ONE-ROW preview ending in
   `…`, and clicking the preview row opens the full line in
   `LineContentPopover`. Implemented nvim-side (`NvimClient.installTruncatedLines`,
   idempotent via `_G.ineovim_trunc`), not in the renderer: a `conceal_lines`
@@ -296,7 +295,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   the FIRST unconcealed line after the run with `virt_lines_above` — marks
   attached to a concealed line are swallowed with it, and separate
   same-anchor marks do NOT draw in creation order: the first lands topmost
-  and the rest in reverse, scrambling runs of three or more). Each preview
+  and the rest in reverse, scrambling runs of three or more). A run that
+  reaches the buffer's LAST line has no following line to hang above, so its
+  previews instead hang BELOW the last unconcealed line before the run —
+  they land right after that line's (possibly wrapped) rows, exactly where
+  the concealed run sat; a below-mark on the concealed last line itself is
+  swallowed (measured on 0.12), and a run covering the WHOLE buffer (first
+  AND last line over-long) stays unconcealed rather than blanking the
+  buffer. Each preview
   takes exactly one grid row, because virt lines
   never wrap. Measured on nvim 0.12: `conceal_lines` collapses ONLY at
   `conceallevel` 2 (0 and 1 leave the line drawn), and the cursor's own line
@@ -310,8 +316,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   width scan — fine for code files, a future optimization if huge buffers
   feel sluggish in insert. Plain left clicks (outside the gutter) ask
   `NvimClient.lineFullContent(row:col:)` for the clicked row's line: the Lua
-  walks the registered lines, derives each preview's row from
-  `screenpos(run_end + 1, 1).row - (run_end - lnum)`, and returns the full
+  walks the registered lines and locates each preview by run shape —
+  mid-buffer runs use `screenpos(run_end + 1, 1).row - (run_end - lnum)`;
+  last-line runs use the predecessor's LAST byte (`screenpos(run_start - 1,
+  #pred).row + 1 + (lnum - run_start)`, so a wrapped predecessor counts
+  from its bottom row) — and returns the full
   text (nil elsewhere). The click itself still reaches nvim first, so the
   cursor may land on a neighboring real line — the popover is the reading
   path, `j`/`k` still traverse the hidden lines. Concealing is

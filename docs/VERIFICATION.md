@@ -104,8 +104,11 @@ Manual check in the GUI:
 A buffer line whose display width exceeds 280 cells collapses to a one-row
 preview ending in `…` (`installTruncatedLines` — `conceal_lines` extmark plus
 a one-row `virt_lines` preview, `conceallevel` owned at 2); clicking the
-preview row opens the full line in `LineContentPopover`. The buffer's last
-line is exempt (a preview has no line below to attach to). Manual checks:
+preview row opens the full line in `LineContentPopover`. A run that reaches
+the buffer's last line hangs its previews BELOW the last unconcealed line
+before the run (there is no following line to hang above; a below-mark on
+the concealed last line itself is swallowed), and a run covering the whole
+buffer stays unconcealed. Manual checks:
 
 1. Open a file with a 400+ character line between normal lines: the long
    line shows as a single row ending in `…` — not its 7 wrapped rows — while
@@ -122,9 +125,13 @@ line is exempt (a preview has no line below to attach to). Manual checks:
    editing, and leaving insert folds it again.
 5. Delete characters until the line drops under 280 cells: it expands back
    to full wrapped display without a restart (`TextChanged` rescan).
-6. Resize the window wider: the preview grows to the new width and keeps its
+6. Open a file whose LAST line is over-long (e.g. a huge close-out bullet
+   at the end of a TASKS doc): it folds to a one-row preview like any other
+   line, sitting directly under the previews of the run it joins; clicking
+   it opens the full last line.
+7. Resize the window wider: the preview grows to the new width and keeps its
    `…` visible at the right edge (`WinResized` rescan).
-7. The scroll thumb's proportions drift by the hidden rows on such files
+8. The scroll thumb's proportions drift by the hidden rows on such files
    (the Lua metric counts buffer lines) — known, informational only.
 
 ## Last working directory

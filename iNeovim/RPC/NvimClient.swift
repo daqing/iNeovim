@@ -300,47 +300,68 @@ struct NvimClient {
             vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
             state.lines = {}
             local count = vim.api.nvim_buf_line_count(buf)
-            -- Runs of over-long lines. The buffer's last line stays
-            -- unconcealed: its preview would have to hang off a line after
-            -- it, and there is none.
+            -- Runs of over-long lines, including one that reaches the
+            -- buffer's last line.
             local run_start = nil
             local runs = {}
             for lnum = 1, count do
               local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
-              local is_long = lnum < count and vim.fn.strwidth(line) > limit
-              if is_long then
+              if vim.fn.strwidth(line) > limit then
                 if not run_start then run_start = lnum end
               elseif run_start then
                 runs[#runs + 1] = { run_start, lnum - 1 }
                 run_start = nil
               end
             end
+            if run_start then
+              runs[#runs + 1] = { run_start, count }
+            end
             for _, run in ipairs(runs) do
-              -- Previews hang off the first unconcealed line after the run:
-              -- a virt mark attached to a conceal_lines-hidden line is
-              -- swallowed along with it, so the anchor must be outside the
-              -- run. ONE mark carries the whole run's previews as a multi-
-              -- row virt_lines list — separate same-anchor marks do NOT
-              -- draw in creation order (measured on 0.12: the first draws
-              -- topmost, the rest in reverse, scrambling runs of three or
-              -- more). Conceal marks are still per line and guarded, so a
-              -- single rejection cannot abandon the rest of the buffer.
-              local anchor = run[2] + 1
-              local rows = {}
-              for lnum = run[1], run[2] do
-                local full = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
-                if pcall(vim.api.nvim_buf_set_extmark, buf, ns, lnum - 1, 0, {
-                  end_row = lnum - 1, end_col = #full, conceal_lines = '',
-                }) then
-                  state.lines[lnum] = true
-                  rows[#rows + 1] = { { preview(full, width), 'Comment' } }
+              -- A run covering the whole buffer (first AND last line
+              -- over-long) has no visible line before or after to hang
+              -- previews from — conceal nothing rather than blank it.
+              if not (run[1] == 1 and run[2] == count) then
+                local rows = {}
+                for lnum = run[1], run[2] do
+                  local full = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
+                  if pcall(vim.api.nvim_buf_set_extmark, buf, ns, lnum - 1, 0, {
+                    end_row = lnum - 1, end_col = #full, conceal_lines = '',
+                  }) then
+                    state.lines[lnum] = true
+                    rows[#rows + 1] = { { preview(full, width), 'Comment' } }
+                  end
                 end
-              end
-              if rows[1] then
-                pcall(vim.api.nvim_buf_set_extmark, buf, ns, anchor - 1, 0, {
-                  virt_lines = rows,
-                  virt_lines_above = true,
-                })
+                if rows[1] then
+                  if run[2] < count then
+                    -- Previews hang off the first unconcealed line after
+                    -- the run: a virt mark attached to a conceal_lines-
+                    -- hidden line is swallowed along with it, so the
+                    -- anchor must be outside the run. ONE mark carries
+                    -- the whole run's previews as a multi-row virt_lines
+                    -- list — separate same-anchor marks do NOT draw in
+                    -- creation order (measured on 0.12: the first draws
+                    -- topmost, the rest in reverse, scrambling runs of
+                    -- three or more). Conceal marks are still per line
+                    -- and guarded, so a single rejection cannot abandon
+                    -- the rest of the buffer.
+                    pcall(vim.api.nvim_buf_set_extmark, buf, ns, run[2] + 1 - 1, 0, {
+                      virt_lines = rows,
+                      virt_lines_above = true,
+                    })
+                  else
+                    -- The run reaches the buffer's last line, so there
+                    -- is no following line to hang above. Previews
+                    -- instead hang BELOW the last unconcealed line
+                    -- before the run: they draw right after that line's
+                    -- (possibly wrapped) rows, exactly where the
+                    -- concealed run sat (measured on 0.12: a below-mark
+                    -- on the concealed last line itself is swallowed
+                    -- with it).
+                    pcall(vim.api.nvim_buf_set_extmark, buf, ns, run[1] - 2, 0, {
+                      virt_lines = rows,
+                    })
+                  end
+                end
               end
             end
           end
@@ -399,9 +420,11 @@ struct NvimClient {
     /// The full text of the buffer line a clicked truncated-line preview row
     /// stands for, or nil when the cell is not such a preview. `row`/`col`
     /// are GLOBAL grid coordinates (the same `getwininfo` space the
-    /// diagnostics lookup uses). The preview row of line `lnum` sits
-    /// `anchor - lnum` rows above the line that follows its truncation run
-    /// (each preview is exactly one grid row — virt lines do not wrap).
+    /// diagnostics lookup uses). Each preview is exactly one grid row — virt
+    /// lines do not wrap — but where a run's previews sit depends on its
+    /// anchor: mid-buffer runs hang above the line after the run, while a
+    /// run reaching the buffer's last line hangs below the line before it
+    /// (see `truncatedLinesLua`).
     func lineFullContent(row: Int, col: Int) async throws -> String? {
         let value = try await execLua(Self.lineFullContentLua, args: [
             .int(Int64(row)), .int(Int64(col)),
@@ -427,16 +450,37 @@ struct NvimClient {
         local buf = vim.api.nvim_win_get_buf(target.win)
         if buf ~= state.buf then return vim.NIL end
         local screen_row = row + 1
+        local count = vim.api.nvim_buf_line_count(buf)
         for lnum in pairs(state.lines) do
           local anchor = lnum
           while state.lines[anchor + 1] do anchor = anchor + 1 end
-          anchor = anchor + 1
-          local start = vim.fn.screenpos(target.win, anchor, 1)
-          if start.row ~= 0 then
-            local preview_row = start.row - (anchor - lnum)
-            if preview_row == screen_row then
-              return vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
+          local preview_row = nil
+          if anchor < count then
+            -- The run ends mid-buffer: its previews sit above the first
+            -- unconcealed line after it (the mark anchor), so that line's
+            -- screen row minus the member's distance to the anchor is the
+            -- preview row.
+            anchor = anchor + 1
+            local start = vim.fn.screenpos(target.win, anchor, 1)
+            if start.row ~= 0 then
+              preview_row = start.row - (anchor - lnum)
             end
+          elseif lnum > 1 then
+            -- The run reaches the buffer's last line: previews hang below
+            -- the line before the run (see rescan). screenpos of that
+            -- line's LAST byte (col 1 when empty) gives its last — possibly
+            -- wrapped — row, so the first preview is the row after it; each
+            -- later member follows one row down.
+            local run_start = lnum
+            while state.lines[run_start - 1] do run_start = run_start - 1 end
+            local pred = vim.api.nvim_buf_get_lines(buf, run_start - 2, run_start - 1, false)[1] or ''
+            local start = vim.fn.screenpos(target.win, run_start - 1, math.max(1, #pred))
+            if start.row ~= 0 then
+              preview_row = start.row + 1 + (lnum - run_start)
+            end
+          end
+          if preview_row and preview_row == screen_row then
+            return vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
           end
         end
         return vim.NIL
