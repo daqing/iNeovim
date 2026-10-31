@@ -336,7 +336,25 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `updateStatuslineBar()` keeps its frame/color in sync from the flush,
   initial-snapshot, metrics-, resize-, and appearance-change paths; like the
   cmdline gap it assumes the last row is the cmdline area and the row above it
-  the statusline (`laststatus` >= 2, `cmdheight` 1).
+  the statusline (`laststatus` >= 2, `cmdheight` 1) — EXCEPT while a
+  message block rails the screen: a visible message grid whose `msg_set_pos`
+  rows reach the statusline row (cmdline errors + the hit-enter prompt)
+  suppresses the bar and the row's inverted text
+  (`ScreenSnapshot.messageGridCovers`, consulted by `updateStatuslineBar` and
+  `GridContentLayer.effectiveStatuslineRow`, which also invalidates the row
+  when the coverage flips without grid 1 receiving dirty rects); otherwise
+  the inverted bar painted a stray full-width band behind
+  `E…: Command failed`.
+- **Message-grid re-parking:** after a hit-enter prompt is dismissed,
+  nvim 0.12 sends ONE flush that moves the message grid onto the cmdline row
+  (`msg_set_pos [grid, H-1, false, …]`) and clears only its row 0 with
+  blanks; rows 1+ keep their stale cells and never get cleared (identical
+  with `-u NONE` and real configs). The app therefore renders that parked
+  grid like any other grid — blank row 0 draws nothing — and must not
+  trust the move's dirty rects alone: `GridContentLayer.update` fully
+  invalidates itself whenever its `GridFrame` changes (and `contentsGravity`
+  is pinned to `.topLeft`), so a stale backing store can neither linger at
+  the new position nor squash into shrunken bounds as a ghost message band.
 - **ext_multigrid layering:** nvim attaches with `ext_linegrid`,
   `ext_popupmenu`, AND `ext_multigrid` (AppModel.bootstrap). Grid 1 stays the
   GLOBAL grid — the screen background, vsplit separators, the statusline row,

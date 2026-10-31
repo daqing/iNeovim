@@ -1418,12 +1418,16 @@ final class TerminalView: NSView {
     /// >= 2). The bar sits below every grid box, and the global grid's
     /// statusline-row cells stay transparent so this fill shows through; the
     /// edges are snapped to the same pixels the grid layers snap their fills
-    /// to.
+    /// to. A visible message grid covering the row (error messages, the
+    /// hit-enter prompt) takes the row over: the bar hides until the
+    /// messages go away, or it paints a stray band behind them.
     private func updateStatuslineBar() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        guard let snapshot, let grid = snapshot.grid, !grid.isEmpty, grid.height >= 2 else {
+        guard let snapshot, let grid = snapshot.grid, !grid.isEmpty, grid.height >= 2,
+              !snapshot.messageGridCovers(row: grid.height - 2)
+        else {
             statuslineLayer.frame = .zero
             statuslineLayer.backgroundColor = nil
             return

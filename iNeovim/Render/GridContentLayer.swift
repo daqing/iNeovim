@@ -97,6 +97,12 @@ final class GridContentLayer: CALayer {
         // leaving this false keeps the grid's y-down drawing math correct.
         isGeometryFlipped = false
         needsDisplayOnBoundsChange = true
+        // A stale backing store (a frame that moved before the repaint, e.g.
+        // the message grid re-parked on the cmdline row) must never stretch
+        // into the new bounds: draw it at its own size, top-left anchored,
+        // so at worst one unchanged row band shows instead of a squashed
+        // blend of the whole old grid.
+        contentsGravity = .topLeft
     }
 
     required init?(coder: NSCoder) {
@@ -136,6 +142,7 @@ final class GridContentLayer: CALayer {
     /// bounds change invalidates the whole layer). `gridFrame` carries the
     /// grid's global placement from the same snapshot.
     func update(snapshot: ScreenSnapshot) {
+        let previousStatuslineRow = effectiveStatuslineRow()
         if let previous = self.snapshot,
            previous.highlights != snapshot.highlights
             || previous.defaultForeground != snapshot.defaultForeground
@@ -144,8 +151,39 @@ final class GridContentLayer: CALayer {
             lineCache.removeAll(keepingCapacity: true)
         }
         self.snapshot = snapshot
+        let previousFrame = gridFrame
         if let newFrame = snapshot.frames[gridId] {
             gridFrame = newFrame
+        }
+        // A moved frame (the message grid re-parked by `msg_set_pos`, a split
+        // repositioned by `win_pos`) invalidates every cached position: row
+        // y math, the cmdline gap, the visible band. Repaint the whole layer
+        // from the new frame instead of trusting dirty rects that describe
+        // the move's destination row only — otherwise the old bitmap's
+        // content lingers at the new position (a ghost message row on the
+        // cmdline row). Full invalidation is cheap: the visible band of a
+        // moved grid is a handful of rows.
+        if gridFrame != previousFrame {
+            setNeedsDisplay()
+        }
+        // The statusline special-casing can flip without grid 1 receiving
+        // dirty rects for the row (a flush may only carry `msg_set_pos`), so
+        // repaint both rows whenever it changes.
+        let statuslineRow = effectiveStatuslineRow()
+        if statuslineRow != previousStatuslineRow, let target = snapshot.grids[gridId] {
+            var dirty = CGRect.null
+            for row in [previousStatuslineRow, statuslineRow].compactMap({ $0 })
+            where row < target.height {
+                dirty = dirty.union(pixelRect(for: CellRect(
+                    minRow: row, minCol: 0, maxRow: row + 1, maxCol: target.width
+                )))
+            }
+            if !dirty.isNull {
+                let clipped = dirty.intersection(bounds)
+                if !clipped.isNull {
+                    setNeedsDisplay(snappedToPixels(clipped))
+                }
+            }
         }
         let grid = snapshot.grids[gridId]
         let size: CGSize
@@ -264,8 +302,10 @@ final class GridContentLayer: CALayer {
         // bar: its cells stay transparent so the bar shows through, and its
         // text draws in the opposite mode's default foreground — the theme's
         // per-run colors match the editor background, not the bar. Window
-        // grids have no statusline row; it lives on the global grid.
-        let statuslineRow = gridId == 1 && grid.height >= 2 ? grid.height - 2 : -1
+        // grids have no statusline row; it lives on the global grid. A
+        // visible message grid covering the row (error messages, the
+        // hit-enter prompt) turns it back into an ordinary message row.
+        let statuslineRow = effectiveStatuslineRow() ?? -1
         let statuslineTheme = TerminalView.hasDarkBackground(snapshot.defaultBackground)
         let statuslineText = TerminalView.statuslineColors(themeIsDark: statuslineTheme).foreground
         let statuslineKey = Self.statuslineForegroundKey(themeIsDark: statuslineTheme)
@@ -339,6 +379,16 @@ final class GridContentLayer: CALayer {
     private var globalGridHeight: Int { snapshot?.grid?.height ?? 0 }
 
     private var grid: Grid? { snapshot?.grids[gridId] }
+
+    /// The global grid's statusline row — the one drawn on the view's
+    /// inverted bar — or nil when this grid has none (window/float/message
+    /// grids) or a visible message grid covers it: while messages occupy the
+    /// bottom rows, that row carries a message, not the statusline.
+    private func effectiveStatuslineRow() -> Int? {
+        guard gridId == 1, let grid, grid.height >= 2 else { return nil }
+        let row = grid.height - 2
+        return snapshot?.messageGridCovers(row: row) == true ? nil : row
+    }
 
     /// Clamp a cell rect to this grid's rows and columns; nil when the rect
     /// lies entirely outside the grid.
@@ -712,7 +762,7 @@ final class GridContentLayer: CALayer {
         // Match the text pass: the global grid's statusline row draws on the
         // inverted bar and uses the opposite mode's foreground, not the
         // cell's own.
-        let statuslineRow = gridId == 1 && grid.height >= 2 ? grid.height - 2 : -1
+        let statuslineRow = effectiveStatuslineRow() ?? -1
         let color: NSColor
         if sliced.minRow == statuslineRow {
             color = TerminalView.statuslineColors(

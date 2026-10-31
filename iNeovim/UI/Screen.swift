@@ -44,6 +44,23 @@ nonisolated struct ScreenSnapshot: Equatable, Sendable {
         guard modes.indices.contains(modeIndex) else { return nil }
         return modes[modeIndex]
     }
+
+    /// True when a visible message grid (placed by `msg_set_pos`) covers the
+    /// global row. While messages occupy the bottom rows — error text, the
+    /// hit-enter prompt — nvim rails the screen and the row above the last
+    /// row carries a message, not the statusline, so the inverted statusline
+    /// bar must stay off it.
+    func messageGridCovers(row: Int) -> Bool {
+        guard let screenHeight = grid?.height else { return false }
+        for (id, frame) in frames where frame.isMessage && !frame.hidden {
+            guard let messageGrid = grids[id], messageGrid.height > 0 else { continue }
+            // The message grid's capacity is a full screen, so its rows can
+            // extend past the global grid; coverage stops at the bottom row.
+            let bottom = min(frame.row + messageGrid.height, screenHeight)
+            if frame.row <= row, row < bottom { return true }
+        }
+        return false
+    }
 }
 
 /// A half-open rectangle in grid cell coordinates.

@@ -57,6 +57,31 @@ final class GridLayerTests: XCTestCase {
         XCTAssertEqual(layer.originY, 9 * cellHeight, accuracy: 0.001)
     }
 
+    func testMessageGridCoveringTheStatuslineRowReportsCoverage() {
+        // A multi-row message block (error text plus the hit-enter prompt)
+        // rails the screen: the row above the last row carries a message,
+        // not the statusline.
+        var snapshot = snapshot(globalHeight: 12)
+        snapshot.frames[3] = GridFrame(row: 9, col: 0, isMessage: true)
+        XCTAssertTrue(snapshot.messageGridCovers(row: 10))
+        XCTAssertFalse(snapshot.messageGridCovers(row: 8))
+    }
+
+    func testSingleRowMessageLeavesTheStatuslineRowAlone() {
+        // A one-line message lives on the cmdline row only; the statusline
+        // stays visible underneath.
+        var snapshot = snapshot(globalHeight: 12)
+        snapshot.frames[3] = GridFrame(row: 11, col: 0, isMessage: true)
+        XCTAssertFalse(snapshot.messageGridCovers(row: 10))
+        XCTAssertTrue(snapshot.messageGridCovers(row: 11))
+    }
+
+    func testHiddenMessageGridCoversNothing() {
+        var snapshot = snapshot(globalHeight: 12)
+        snapshot.frames[3] = GridFrame(row: 9, col: 0, hidden: true, isMessage: true)
+        XCTAssertFalse(snapshot.messageGridCovers(row: 10))
+    }
+
     func testCursorIsDrawnOnlyByItsOwnGridLayer() throws {
         var snapshot = snapshot(globalHeight: 12, cursorGrid: 2, cursorRow: 3)
         snapshot.frames[2] = GridFrame(row: 0, col: 0)
