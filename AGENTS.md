@@ -368,6 +368,16 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   without that cap, stale row 1 loses the cmdline gap in the beyond-screen y
   math and lands back inside the one-row bounds, repainting the old error as
   a red strip even though its backing store was invalidated.
+- **Vertical separator cleanup:** nvim paints vsplit separators into the
+  global grid but does not erase separators that disappear when a window
+  closes or moves (closing NERDTree otherwise leaves a vertical line).
+  `Screen` records the separator cells required by the last flush's window
+  layout; after position, size, visibility, or close events it reconciles
+  once at the flush against the final layout, clears only stale cells to
+  default blanks, and marks grid 1 dirty. A separator is required at
+  `frame.col - 1` for every visible, non-float, non-message window grid with
+  `frame.col > 0`, over that window grid's rows, so separators used by other
+  splits survive the cleanup.
 - **ext_multigrid layering:** nvim attaches with `ext_linegrid`,
   `ext_popupmenu`, AND `ext_multigrid` (AppModel.bootstrap). Grid 1 stays the
   GLOBAL grid — the screen background, vsplit separators, the statusline row,

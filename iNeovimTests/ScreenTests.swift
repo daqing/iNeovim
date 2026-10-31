@@ -329,6 +329,57 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(frame?.mouseEnabled, false)
     }
 
+    func testWindowLayoutChangeClearsStaleVerticalSeparators() async {
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 0, width: 80, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 48, height: 22))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        for row in [0, 21] {
+            await screen.apply(.gridLine(grid: 1, row: row, colStart: 31, runs: [
+                GridCellRun(text: "│", attrId: 927, count: 1),
+            ]))
+        }
+        await screen.apply(.flush)
+
+        let flushed = Box<[Int: [CellRect]]>([:])
+        await screen.setFlushHandler { grid, rects in flushed.value[grid] = rects }
+        await screen.apply(.winClose(grid: 4))
+        await screen.apply(.gridDestroy(grid: 4))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 0, width: 80, height: 22))
+        await screen.apply(.flush)
+
+        let snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.grid?[0, 31], GridCell())
+        XCTAssertEqual(snapshot.grid?[21, 31], GridCell())
+        XCTAssertEqual(flushed.value[1], [
+            CellRect(minRow: 0, minCol: 31, maxRow: 22, maxCol: 32),
+        ])
+    }
+
+    func testWindowLayoutChangePreservesSeparatorsStillInUse() async {
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 32, height: 22))
+        await screen.apply(.winPos(grid: 5, row: 0, col: 64, width: 16, height: 22))
+        for col in [31, 63] {
+            await screen.apply(.gridLine(grid: 1, row: 0, colStart: col, runs: [
+                GridCellRun(text: "│", attrId: 927, count: 1),
+            ]))
+        }
+        await screen.apply(.flush)
+
+        await screen.apply(.winClose(grid: 4))
+        await screen.apply(.gridDestroy(grid: 4))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 0, width: 64, height: 22))
+        await screen.apply(.flush)
+
+        let snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.grid?[0, 31], GridCell())
+        XCTAssertEqual(snapshot.grid?[0, 63], GridCell(text: "│", attrId: 927))
+    }
+
     func testMsgSetPosTracksTheMessageGridAndHidesItOnZero() async {
         let screen = Screen()
         await screen.apply(.msgSetPos(grid: 3, row: 27, scrolled: false, zindex: 200, compindex: 0))

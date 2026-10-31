@@ -106,6 +106,12 @@ actor Screen {
     private(set) var popup: PopupState?
     private var consumeTask: Task<Void, Never>?
     private var dirtyRects: [Int: [CellRect]] = [:]
+    private struct SeparatorCell: Hashable {
+        var row: Int
+        var col: Int
+    }
+    private var separatorCells: Set<SeparatorCell> = []
+    private var separatorLayoutChanged = false
 
     /// Called on the screen's executor once per `flush` for every grid that
     /// received events since the previous flush, with the dirty regions in
@@ -168,11 +174,13 @@ actor Screen {
             markGridDirty(grid)
         case let .gridResize(grid, width, height):
             grids[grid, default: Grid(id: grid)].resize(width: width, height: height)
+            separatorLayoutChanged = true
             markGridDirty(grid)
         case let .gridDestroy(grid):
             if grid != 1 {
                 grids[grid] = nil
                 frames[grid] = nil
+                separatorLayoutChanged = true
             }
         case let .cursorGoto(grid, row, col):
             markCursorDirty(cursor.grid, cursor.row, cursor.col)
@@ -207,6 +215,7 @@ actor Screen {
             gridState.resize(width: width, height: height)
             grids[grid] = gridState
             frames[grid] = GridFrame(row: row, col: col)
+            separatorLayoutChanged = true
             markGridDirty(grid)
         case let .winFloatPos(grid, anchorGrid, anchorRow, anchorCol, corner, mouseEnabled, zindex, compindex, screenRow, screenCol):
             if grids[grid] == nil { grids[grid] = Grid(id: grid) }
@@ -240,15 +249,19 @@ actor Screen {
                 }
             }
             frames[grid] = frame
+            separatorLayoutChanged = true
             markGridDirty(grid)
         case let .winExternalPos(grid):
             // No desktop-window representation: keep the grid's cells but
             // stop displaying it.
             frames[grid]?.hidden = true
+            separatorLayoutChanged = true
         case let .winHide(grid):
             frames[grid]?.hidden = true
+            separatorLayoutChanged = true
         case let .winClose(grid):
             frames[grid] = nil
+            separatorLayoutChanged = true
         case let .msgSetPos(grid, row, _, zindex, compindex):
             guard grid != 0 else {
                 if let messageGrid { frames[messageGrid]?.hidden = true }
@@ -272,6 +285,10 @@ actor Screen {
         case let .gridMouseEnabled(grid, enabled):
             frames[grid]?.mouseEnabled = enabled
         case .flush:
+            if separatorLayoutChanged {
+                reconcileVerticalSeparators()
+                separatorLayoutChanged = false
+            }
             for (grid, rects) in dirtyRects {
                 flushHandler?(grid, rects)
             }
@@ -292,6 +309,50 @@ actor Screen {
     private func floatAnchorBase(grid id: Int) -> (row: Int, col: Int) {
         guard id != 1, let frame = frames[id] else { return (0, 0) }
         return (frame.row, frame.col)
+    }
+
+    /// Nvim paints vsplit separators into the global grid but does not erase
+    /// the ones that disappear when a window closes or moves. Reconcile once
+    /// per flush, against the final layout, so intermediate window events do
+    /// not clear a separator that the final layout still needs.
+    private func reconcileVerticalSeparators() {
+        let current = verticalSeparatorCells()
+        let stale = separatorCells.subtracting(current)
+        separatorCells = current
+        guard !stale.isEmpty, var global = grids[1] else { return }
+        let cells = stale.filter {
+            $0.row >= 0 && $0.row < global.height && $0.col >= 0 && $0.col < global.width
+        }.sorted { ($0.col, $0.row) < ($1.col, $1.row) }
+        guard !cells.isEmpty else { return }
+        for cell in cells {
+            global.applyLine(
+                row: cell.row,
+                colStart: cell.col,
+                runs: [GridCellRun(text: " ", attrId: 0, count: 1)]
+            )
+        }
+        grids[1] = global
+        for cell in cells {
+            markDirty(1, .cell(cell.row, cell.col))
+        }
+    }
+
+    private func verticalSeparatorCells() -> Set<SeparatorCell> {
+        guard let global = grids[1], !global.isEmpty else { return [] }
+        var cells: Set<SeparatorCell> = []
+        for (id, frame) in frames
+        where id != 1 && !frame.hidden && !frame.isFloat && !frame.isMessage && frame.col > 0 {
+            guard let window = grids[id], !window.isEmpty else { continue }
+            let col = frame.col - 1
+            guard col < global.width else { continue }
+            let top = max(0, frame.row)
+            let bottom = min(global.height, frame.row + window.height)
+            guard top < bottom else { continue }
+            for row in top..<bottom {
+                cells.insert(SeparatorCell(row: row, col: col))
+            }
+        }
+        return cells
     }
 
     /// The cursor cell plus the continuation cell when it sits on a
@@ -403,5 +464,7 @@ actor Screen {
         popup = nil
         dirtyRects = [:]
         scrollDeltas = [:]
+        separatorCells = []
+        separatorLayoutChanged = false
     }
 }
