@@ -82,6 +82,53 @@ final class GridLayerTests: XCTestCase {
         XCTAssertFalse(snapshot.messageGridCovers(row: 10))
     }
 
+    func testDismissedMessageGridDoesNotDrawStaleRows() {
+        var snapshot = snapshot(globalHeight: 12)
+        snapshot.frames[3] = GridFrame(row: 11, col: 0, isMessage: true)
+        snapshot.highlights.define(
+            HlAttr(foreground: 0x14161B, background: 0xC53B4A),
+            for: 905
+        )
+        var messageGrid = snapshot.grids[3]!
+        messageGrid.applyLine(
+            row: 0,
+            colStart: 0,
+            runs: [GridCellRun(text: " ", attrId: 0, count: 8)]
+        )
+        messageGrid.applyLine(
+            row: 1,
+            colStart: 0,
+            runs: [GridCellRun(text: "E", attrId: 905, count: 8)]
+        )
+        snapshot.grids[3] = messageGrid
+
+        let layer = GridContentLayer(metrics: metrics, gridId: 3)
+        layer.update(snapshot: snapshot)
+        XCTAssertEqual(layer.bounds.height, metrics.cellSize.height, accuracy: 0.001)
+
+        let width = Int(layer.bounds.width.rounded())
+        let height = Int(layer.bounds.height.rounded())
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drew = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            layer.draw(in: context)
+            return true
+        }
+        XCTAssertTrue(drew)
+        XCTAssertTrue(
+            pixels.allSatisfy { $0 == 0 },
+            "The re-parked message grid must not draw its stale second row into the cmdline row"
+        )
+    }
+
     func testCursorIsDrawnOnlyByItsOwnGridLayer() throws {
         var snapshot = snapshot(globalHeight: 12, cursorGrid: 2, cursorRow: 3)
         snapshot.frames[2] = GridFrame(row: 0, col: 0)

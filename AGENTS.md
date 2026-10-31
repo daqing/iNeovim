@@ -364,6 +364,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   invalidates itself whenever its `GridFrame` changes (and `contentsGravity`
   is pinned to `.topLeft`), so a stale backing store can neither linger at
   the new position nor squash into shrunken bounds as a ghost message band.
+  `draw(in:)` also caps its row loop to the same visible band as the bounds:
+  without that cap, stale row 1 loses the cmdline gap in the beyond-screen y
+  math and lands back inside the one-row bounds, repainting the old error as
+  a red strip even though its backing store was invalidated.
 - **ext_multigrid layering:** nvim attaches with `ext_linegrid`,
   `ext_popupmenu`, AND `ext_multigrid` (AppModel.bootstrap). Grid 1 stays the
   GLOBAL grid — the screen background, vsplit separators, the statusline row,

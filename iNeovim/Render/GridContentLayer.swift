@@ -289,11 +289,16 @@ final class GridContentLayer: CALayer {
         // repeats.
         let minY = clip.minY
         let maxY = clip.maxY
-        // Rows of this grid that overlap the dirty band. Testing the rows
-        // instead of dividing y by the cell height keeps rows clear of the
-        // cmdline gap — the global grid's last row sits that gap lower than
-        // its slot.
-        let rows = (0..<grid.height).filter { rowY($0) < maxY && rowY($0) + cellHeight > minY }
+        // Rows of this grid that overlap the dirty band, capped to the same
+        // visible band as the bounds. Testing the rows instead of dividing y
+        // by the cell height keeps rows clear of the cmdline gap — the global
+        // grid's last row sits that gap lower than its slot. The message grid
+        // keeps stale cells beyond that band after it returns to the cmdline
+        // row; drawing them is both unnecessary and able to put the next row
+        // back inside the bounds when the beyond-screen row math loses the
+        // last row's gap.
+        let visibleRows = min(grid.height, max(1, globalGridHeight - gridFrame.row))
+        let rows = (0..<visibleRows).filter { rowY($0) < maxY && rowY($0) + cellHeight > minY }
         guard !rows.isEmpty else { return }
 
         // Resolve each highlight id once per frame instead of once per run.
