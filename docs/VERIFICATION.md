@@ -283,6 +283,32 @@ Scroll indicator:
 Automated check: `ScrollMetricsTests` pins the thumb proportion and the
 clamped position.
 
+## Overlay grid backgrounds (floats and the message grid)
+
+A grid layered above another grid's cells must paint its OWN default
+background: the view's background layer sits under the base grid and the
+tiled window grids, but under a float or the message grid sits another
+grid's text, so a skipped default-background fill is a hole it shows
+through. Manual checks:
+
+1. Open fzf (`<leader>t` or `:Files/LGrep`…): the panel is a solid block in
+   the theme's background color with its own text on top — no buffer text
+   bleeding through its rows.
+2. Trigger an LSP hover/signature float (or `:lua vim.lsp.util.
+   open_floating_preview({'hover'}, 'markdown')`): same, an opaque panel.
+3. Provoke a multi-row message block (`:messages` after a few entries, or a
+   cmdline error: `:call NoSuch()`) that reaches past the cmdline row: the
+   block covers the buffer rows underneath it instead of blending with them,
+   and the inverted statusline bar stays off the rows it covers.
+4. The base grid and the window grids still leave default-background cells to
+   the view's own fill, which is what keeps a scroll frame from repainting the
+   whole viewport (scrolling with a truncated/highlighted file must stay as
+   smooth as before).
+
+Automated check: `GridLayerTests` renders a float layer, a window layer, and
+a re-parked message layer into bitmaps and asserts the float/message pixels
+are opaque and uniform while the window's stay transparent.
+
 ## Native terminal pane (Ghostty)
 
 A typed `:terminal` opens a native Ghostty terminal pane docked to the right

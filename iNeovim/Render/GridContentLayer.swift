@@ -395,6 +395,18 @@ final class GridContentLayer: CALayer {
         return snapshot?.messageGridCovers(row: row) == true ? nil : row
     }
 
+    /// Whether this grid is drawn above another grid's cells, so a cell whose
+    /// background resolves to nvim's default must still paint that background
+    /// itself. The view's own layer fills the whole surface with the default
+    /// background, so the base grid and the tiled window grids — which sit
+    /// directly on that fill — can leave default-background cells
+    /// transparent. A float or the message grid cannot: it covers another
+    /// grid's text (an fzf panel or LSP hover over the buffer, a message
+    /// block across window rows), and a transparent cell there is a hole the
+    /// covered text shows through — the panel loses its background and its
+    /// text renders on top of the buffer's.
+    private var overlaysOtherGridContent: Bool { gridFrame.isFloat || gridFrame.isMessage }
+
     /// Clamp a cell rect to this grid's rows and columns; nil when the rect
     /// lies entirely outside the grid.
     private func clamped(toGrid rect: CellRect) -> CellRect? {
@@ -475,7 +487,9 @@ final class GridContentLayer: CALayer {
         /// the color itself matters (the cursor's swapped glyph, preedit).
         var background: NSColor?
         /// The background this run must paint itself; nil when it resolves to
-        /// the default, which the view's layer already paints underneath.
+        /// the default on a grid the view's own default fill shows through
+        /// (the base grid and the tiled window grids, but not an overlay —
+        /// see `overlaysOtherGridContent`).
         var fillBackground: NSColor?
         var special: NSColor
         /// Shaping-cache discriminator for the foreground: the packed nvim
@@ -501,8 +515,14 @@ final class GridContentLayer: CALayer {
         let background = resolved.background.flatMap(NSColor.init(packedRGB:))
         // The view's own layer already paints the default background, so
         // filling it per run only repaints the whole viewport on every
-        // scroll frame for no visible change.
-        let fillBackground = resolved.background == snapshot?.defaultBackground ? nil : background
+        // scroll frame for no visible change — but that is only true where
+        // the default fill is actually underneath the cells. On an overlay
+        // grid (a float, the message grid) the covered grid's text sits
+        // there instead, so the skipped fill has to be painted.
+        let fillBackground = (!overlaysOtherGridContent
+            && resolved.background == snapshot?.defaultBackground)
+            ? nil
+            : background
         return ResolvedColors(
             foreground: foreground,
             background: background,

@@ -106,10 +106,96 @@ final class GridLayerTests: XCTestCase {
         layer.update(snapshot: snapshot)
         XCTAssertEqual(layer.bounds.height, metrics.cellSize.height, accuracy: 0.001)
 
-        let width = Int(layer.bounds.width.rounded())
-        let height = Int(layer.bounds.height.rounded())
+        // The visible (re-parked) row paints its own default background —
+        // the layer is an overlay, so its default-background cells are
+        // filled — and it must stay uniform: the stale red row and its "E"
+        // never reach the cmdline row.
+        let rendered = render(layer)
+        let cellWidth = metrics.cellSize.width
+        let left = rendered.pixel(x: 0, y: 0)
+        XCTAssertEqual(left[3], 255, "The parked message row must be opaque")
+        XCTAssertEqual(rendered.pixel(x: Int(cellWidth * 3), y: 0), left)
+        XCTAssertEqual(rendered.pixel(x: Int(cellWidth * 7), y: 0), left)
+    }
+
+    func testFloatGridPaintsItsDefaultBackground() {
+        // An fzf-style float over the buffer: its cells resolve to nvim's
+        // default background, and because the float covers another grid's
+        // CELLS (not the view's own default fill) the layer must paint that
+        // background itself. Skipping it leaves the panel transparent and
+        // the covered buffer text shows through — the reported overlap.
+        var snapshot = snapshot(globalHeight: 12)
+        snapshot.frames[2] = GridFrame(row: 0, col: 0)
+        var window = snapshot.grids[2]!
+        window.applyLine(
+            row: 0,
+            colStart: 0,
+            runs: [GridCellRun(text: "U", attrId: 0, count: 8)]
+        )
+        snapshot.grids[2] = window
+        snapshot.frames[3] = GridFrame(row: 2, col: 0, isFloat: true, zindex: 50)
+
+        let layer = GridContentLayer(metrics: metrics, gridId: 3)
+        layer.update(snapshot: snapshot)
+
+        // Every cell of the panel is painted, top row to bottom: the sample
+        // points sit inside the cell area (the layer carries a couple of
+        // extra points past the last cell for a shifted final column).
+        let rendered = render(layer)
+        let cellWidth = metrics.cellSize.width
+        let cellHeight = metrics.cellSize.height
+        let samples = [
+            (0, 0),
+            (Int(cellWidth / 2), 0),
+            (Int(cellWidth * 3.5), Int(cellHeight * 2.5)),
+            (Int(cellWidth * 7.5), Int(cellHeight * 9.5)),
+        ]
+        let colors = Set(samples.map { rendered.pixel(x: $0.0, y: $0.1) })
+        for (x, y) in samples {
+            XCTAssertEqual(
+                rendered.pixel(x: x, y: y)[3],
+                255,
+                "The float panel must be opaque at (\(x),\(y))"
+            )
+        }
+        XCTAssertEqual(colors.count, 1, "The float must paint a solid background, not holes")
+    }
+
+    func testTiledWindowGridLeavesDefaultCellsTransparent() {
+        // The base grid and the tiled window grids sit directly on the view's
+        // own default-background fill, so their default-background cells skip
+        // the fill — that is what keeps a scroll frame from repainting the
+        // whole viewport.
+        var snapshot = snapshot(globalHeight: 12)
+        snapshot.frames[2] = GridFrame(row: 0, col: 0)
+        let layer = GridContentLayer(metrics: metrics, gridId: 2)
+        layer.update(snapshot: snapshot)
+        let rendered = render(layer)
+        XCTAssertEqual(rendered.pixel(x: 0, y: 0)[3], 0)
+        XCTAssertEqual(
+            rendered.pixel(x: Int(metrics.cellSize.width * 3), y: Int(metrics.cellSize.height * 5))[3],
+            0
+        )
+    }
+
+    /// A layer's `draw(in:)` output: RGBA bytes (8-bit, premultiplied) and
+    /// the bitmap's pixel size.
+    private struct RenderedLayer {
+        var pixels: [UInt8]
+        var width: Int
+        var height: Int
+
+        func pixel(x: Int, y: Int) -> [UInt8] {
+            let index = (y * width + x) * 4
+            return Array(pixels[index..<(index + 4)])
+        }
+    }
+
+    private func render(_ layer: GridContentLayer) -> RenderedLayer {
+        let width = max(1, Int(layer.bounds.width.rounded()))
+        let height = max(1, Int(layer.bounds.height.rounded()))
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        let drew = pixels.withUnsafeMutableBytes { buffer -> Bool in
+        pixels.withUnsafeMutableBytes { buffer in
             guard let context = CGContext(
                 data: buffer.baseAddress,
                 width: width,
@@ -118,15 +204,10 @@ final class GridLayerTests: XCTestCase {
                 bytesPerRow: width * 4,
                 space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ) else { return false }
+            ) else { return }
             layer.draw(in: context)
-            return true
         }
-        XCTAssertTrue(drew)
-        XCTAssertTrue(
-            pixels.allSatisfy { $0 == 0 },
-            "The re-parked message grid must not draw its stale second row into the cmdline row"
-        )
+        return RenderedLayer(pixels: pixels, width: width, height: height)
     }
 
     func testCursorIsDrawnOnlyByItsOwnGridLayer() throws {

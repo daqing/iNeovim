@@ -861,8 +861,15 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `CTLine` rather than taking the context fill color — and drops the cache
   when highlights, the default colors, the font, or the window appearance
   change (the adaptive `.textColor` fallback resolves at shaping time). Runs whose background
-  resolves to nvim's default skip their fill; the view's layer already paints
-  it. `CellRenderer.runs` accumulates a run in locals and appends it when it
+  resolves to nvim's default skip their fill, because the view's layer already paints
+  it — true only where that fill is actually underneath the cells: the base
+  grid and the tiled window grids sit directly on the view's background
+  layer, but a grid layered above another grid's CELLS must paint its own
+  default background (`GridContentLayer.overlaysOtherGridContent` — floats
+  and the message grid). A skipped fill there is a HOLE the covered text
+  shows through: an fzf panel (a float over the buffer) lost its background
+  and the buffer text rendered on top of the panel's rows.
+  `CellRenderer.runs` accumulates a run in locals and appends it when it
   ends, instead of mutating `runs[last]` per cell (which copied the run's text
   and slot array per cell). `TerminalView` coalesces flush applies: flushes
   that arrive while one apply is queued only add their dirty cells, and the
