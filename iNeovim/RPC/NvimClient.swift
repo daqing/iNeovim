@@ -242,8 +242,10 @@ struct NvimClient {
     /// exceeds `TRUNC_LIMIT` cells are hidden with `conceal_lines` extmarks
     /// and replaced by a one-row `virt_lines` preview ending in an ellipsis
     /// (nvim re-layouts around them; the renderer needs no awareness). The
-    /// preview rows are what `lineFullContent(row:col:)` resolves. Idempotent
-    /// per nvim instance.
+    /// preview rows are what `lineFullContent(row:col:)` resolves. Requires
+    /// nvim 0.13+ (see the version gate in the Lua — on 0.12 the feature's
+    /// own extmark layout freezes upward scrolling). Idempotent per nvim
+    /// instance.
     func installTruncatedLines() async throws -> Bool {
         let value = try await execLua(Self.truncatedLinesLua, args: [])
         return value.boolValue ?? false
@@ -252,6 +254,23 @@ struct NvimClient {
     private static let truncatedLinesLua = """
         local function install()
           if _G.ineovim_trunc then return true end
+          -- nvim 0.12 miscounts screen rows around conceal_lines + virt_lines
+          -- and its upward-scroll path LOOPS next to preview rows: measured
+          -- on 0.12.5 with this exact layout (conceal_lines runs + one
+          -- virt_lines_above mark per run), the topline bounces 37->35->37
+          -- forever and every line above the run becomes unreachable —
+          -- wheel-up, C-y, everything (upstream neovim#42317, fixed only on
+          -- master by #42480 for 0.13; #42077 documents the wider stuck/
+          -- scrolls-down behavior and is still open; 0.12.6 predates both).
+          -- Re-anchoring the previews below the run's predecessor or dropping
+          -- "n" from 'concealcursor' removes only the hard loop, not the
+          -- row miscounts (also measured on 0.12.5). Until the user's nvim
+          -- carries the fix, the feature stays OFF: over-long lines keep
+          -- their normal wrapped rows and scrolling works everywhere.
+          -- vim.version() exists on 0.10+; anything older (or without it)
+          -- is gated too.
+          local version = type(vim.version) == 'function' and vim.version() or nil
+          if not version or (version.major == 0 and version.minor < 13) then return false end
           local ns = vim.api.nvim_create_namespace('ineovim_truncation')
           local limit = 280
           local state = { buf = nil, lines = {} }

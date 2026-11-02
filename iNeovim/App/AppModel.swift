@@ -506,7 +506,11 @@ final class AppModel: ObservableObject {
             }
             do {
                 if try await client.installTruncatedLines() != true {
-                    Log.app.warning("Truncated-line hook did not install; over-long lines stay fully wrapped")
+                    // false is the expected outcome on nvim 0.12, whose
+                    // conceal_lines + virt_lines scroll bugs freeze upward
+                    // scrolling next to preview rows (see the version gate
+                    // in `NvimClient.truncatedLinesLua`).
+                    Log.app.info("Truncated lines off: needs nvim 0.13+; over-long lines stay fully wrapped")
                 }
             } catch {
                 Log.app.error("Failed to install truncated-line hook: \(error.localizedDescription, privacy: .public)")

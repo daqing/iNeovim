@@ -288,7 +288,19 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 - **Truncated long lines:** lines whose display width exceeds 280 cells
   (`vim.fn.strwidth`) collapse to a ONE-ROW preview ending in
   `…`, and clicking the preview row opens the full line in
-  `LineContentPopover`. Implemented nvim-side (`NvimClient.installTruncatedLines`,
+  `LineContentPopover`. The feature REQUIRES nvim 0.13+
+  (`NvimClient.truncatedLinesLua` gates on `vim.version()` and returns
+  false below): on 0.12 the feature's own extmark layout freezes upward
+  scrolling — with `conceal_lines` runs plus the `virt_lines_above`
+  preview mark, the topline LOOPS (measured on 0.12.5: 37→35→37 forever,
+  wheel-up included, so every line above the run is unreachable;
+  upstream neovim#42317, fixed only on master by #42480 for 0.13,
+  and #42077's wider stuck/scrolls-down behavior is still open; 0.12.6
+  predates both). Re-anchoring previews below the run's predecessor or
+  dropping "n" from 'concealcursor' removes only the hard loop, not the
+  row miscounts (measured). On gated nvim the hook stays off entirely:
+  over-long lines keep their normal wrapped rows and scrolling works.
+  Implemented nvim-side (`NvimClient.installTruncatedLines`,
   idempotent via `_G.ineovim_trunc`), not in the renderer: a `conceal_lines`
   extmark hides the whole line INCLUDING its wrap rows, and ONE `virt_lines`
   extmark per run carries the run's previews as a multi-row list (attached to

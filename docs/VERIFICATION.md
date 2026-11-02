@@ -101,6 +101,14 @@ Manual check in the GUI:
 
 ## Truncated long lines
 
+Requires nvim 0.13+. On 0.12 the hook stays off (the unified log shows
+"Truncated lines off: needs nvim 0.13+") because nvim 0.12's conceal_lines +
+virt_lines scroll implementation LOOPS upward scrolling next to preview rows
+(measured on 0.12.5 with the layout below: topline bounces 37→35→37 forever;
+upstream neovim#42317/#42077, fixed only on master for 0.13). On a gated
+nvim, verify over-long lines simply keep their normal wrapped rows and that
+wheel-up scrolls through them normally.
+
 A buffer line whose display width exceeds 280 cells collapses to a one-row
 preview ending in `…` (`installTruncatedLines` — `conceal_lines` extmark plus
 a one-row `virt_lines` preview, `conceallevel` owned at 2); clicking the
@@ -108,7 +116,7 @@ preview row opens the full line in `LineContentPopover`. A run that reaches
 the buffer's last line hangs its previews BELOW the last unconcealed line
 before the run (there is no following line to hang above; a below-mark on
 the concealed last line itself is swallowed), and a run covering the whole
-buffer stays unconcealed. Manual checks:
+buffer stays unconcealed. Manual checks (on nvim 0.13+):
 
 1. Open a file with a 400+ character line between normal lines: the long
    line shows as a single row ending in `…` — not its 7 wrapped rows — while
