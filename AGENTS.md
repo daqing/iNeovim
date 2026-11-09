@@ -382,14 +382,23 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   a red strip even though its backing store was invalidated.
 - **Vertical separator cleanup:** nvim paints vsplit separators into the
   global grid but does not erase separators that disappear when a window
-  closes or moves (closing NERDTree otherwise leaves a vertical line).
-  `Screen` records the separator cells required by the last flush's window
-  layout; after position, size, visibility, or close events it reconciles
-  once at the flush against the final layout, clears only stale cells to
-  default blanks, and marks grid 1 dirty. A separator is required at
+  closes, moves, or is resized (closing NERDTree otherwise leaves a vertical
+  line). `Screen` records the separator cells required by the last flush's
+  window layout; after position, size, visibility, or close events it
+  reconciles once at the flush against the final layout, clears only stale
+  cells to default blanks, and marks grid 1 dirty. A separator is required at
   `frame.col - 1` for every visible, non-float, non-message window grid with
   `frame.col > 0`, over that window grid's rows, so separators used by other
-  splits survive the cleanup.
+  splits survive the cleanup. A separator drag resizes the window one column
+  per mouse event and nvim leaves a separator at every intermediate column;
+  when redraw batches coalesce, the frames only show the edge before and after
+  a burst, and a fast back-and-forth drag can sweep outside both endpoints.
+  The cleanup therefore does not try to reconstruct the crossed columns from
+  the frames: grid 1's tiled-window rows hold nothing but separators, so it
+  clears every `│` there that the current layout does not require (the glyph
+  is learned from a required separator cell because `'fillchars'` can change
+  it). Without that sweep, dragging the sidebar divider left the whole pane
+  striped with vertical bars.
 - **ext_multigrid layering:** nvim attaches with `ext_linegrid`,
   `ext_popupmenu`, AND `ext_multigrid` (AppModel.bootstrap). Grid 1 stays the
   GLOBAL grid — the screen background, vsplit separators, the statusline row,

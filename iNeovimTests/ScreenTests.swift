@@ -357,6 +357,56 @@ final class ScreenTests: XCTestCase {
         ])
     }
 
+    func testFastSeparatorDragClearsEveryIntermediateColumn() async {
+        // Dragging the NERDTree/editor divider resizes the window one column
+        // per mouse event. Nvim paints a separator at every intermediate
+        // boundary and never erases the ones it leaves behind. A fast drag
+        // coalesces many of those layout changes into one flush, so the app
+        // sees only the final edge position; it must still clear every stale
+        // separator, including columns the edge crossed when it reversed
+        // direction, or the sidebar ends up striped with vertical bars.
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.gridResize(grid: 4, width: 31, height: 22))
+        await screen.apply(.gridResize(grid: 2, width: 48, height: 22))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 48, height: 22))
+        for row in [0, 21] {
+            await screen.apply(.gridLine(grid: 1, row: row, colStart: 31, runs: [
+                GridCellRun(text: "│", attrId: 927, count: 1),
+            ]))
+        }
+        await screen.apply(.flush)
+
+        // The edge sweeps left to column 2 and then right to 55 between two
+        // flushes; nvim left a separator at every column it crossed.
+        for col in 2...55 {
+            for row in [0, 21] {
+                await screen.apply(.gridLine(grid: 1, row: row, colStart: col, runs: [
+                    GridCellRun(text: "│", attrId: 927, count: 1),
+                ]))
+            }
+        }
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 55, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 56, width: 24, height: 22))
+        await screen.apply(.flush)
+
+        let snapshot = await screen.snapshot()
+        for col in 2...54 {
+            XCTAssertEqual(
+                snapshot.grid?[0, col], GridCell(),
+                "column \(col) kept a stale separator"
+            )
+            XCTAssertEqual(
+                snapshot.grid?[21, col], GridCell(),
+                "column \(col) kept a stale separator"
+            )
+        }
+        // The separator at the final boundary is still required and stays.
+        XCTAssertEqual(snapshot.grid?[0, 55], GridCell(text: "│", attrId: 927))
+        XCTAssertEqual(snapshot.grid?[21, 55], GridCell(text: "│", attrId: 927))
+    }
+
     func testWindowLayoutChangePreservesSeparatorsStillInUse() async {
         let screen = Screen()
         await screen.apply(.gridResize(grid: 1, width: 80, height: 24))

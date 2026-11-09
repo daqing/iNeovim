@@ -111,6 +111,9 @@ actor Screen {
         var col: Int
     }
     private var separatorCells: Set<SeparatorCell> = []
+    /// The character nvim paints in a vsplit separator column (`│` unless
+    /// 'fillchars' overrides it), learned from the cells the layout requires.
+    private var separatorGlyph = "\u{2502}"
     private var separatorLayoutChanged = false
 
     /// Called on the screen's executor once per `flush` for every grid that
@@ -312,47 +315,75 @@ actor Screen {
     }
 
     /// Nvim paints vsplit separators into the global grid but does not erase
-    /// the ones that disappear when a window closes or moves. Reconcile once
-    /// per flush, against the final layout, so intermediate window events do
-    /// not clear a separator that the final layout still needs.
+    /// the ones that disappear when a window closes, moves, or is resized. A
+    /// separator drag resizes the window one column per mouse event, painting
+    /// a separator at every intermediate column; because redraw batches are
+    /// coalesced, the frames only show the edge before and after a burst, and
+    /// a fast back-and-forth drag can sweep far outside those two endpoints.
+    /// Grid 1's tiled-window rows carry nothing but separators, so reconcile
+    /// once per flush against the final layout and clear EVERY cell holding
+    /// the separator glyph that the final layout does not require.
     private func reconcileVerticalSeparators() {
-        let current = verticalSeparatorCells()
-        let stale = separatorCells.subtracting(current)
+        guard let global = grids[1], !global.isEmpty else {
+            separatorCells = []
+            return
+        }
+        var current: Set<SeparatorCell> = []
+        var windowRows: Set<Int> = []
+        for (id, frame) in frames
+        where id != 1 && !frame.hidden && !frame.isFloat && !frame.isMessage {
+            guard let window = grids[id], !window.isEmpty else { continue }
+            let top = max(0, frame.row)
+            let bottom = min(global.height, frame.row + window.height)
+            guard top < bottom else { continue }
+            windowRows.formUnion(top..<bottom)
+            let col = frame.col - 1
+            guard frame.col > 0, col < global.width else { continue }
+            for row in top..<bottom {
+                current.insert(SeparatorCell(row: row, col: col))
+            }
+        }
+        // The separator glyph is part of the theme ('fillchars' vert); learn it
+        // from a required separator cell rather than assuming the default.
+        for sample in current where sample.row < global.height && sample.col < global.width {
+            let text = global[sample.row, sample.col].text
+            if !text.isEmpty, text != " " {
+                separatorGlyph = text
+                break
+            }
+        }
+
+        var stale = separatorCells.subtracting(current)
+        // Clear every leftover separator glyph in the tiled window rows. The
+        // recorded set only knows the last reconciled layout; a coalesced drag
+        // can have left bars at columns the frames never reported, including
+        // columns outside the old/new edge span when the drag reversed.
+        for row in windowRows where row < global.height {
+            for col in 0..<global.width {
+                let cell = SeparatorCell(row: row, col: col)
+                if !current.contains(cell), global[row, col].text == separatorGlyph {
+                    stale.insert(cell)
+                }
+            }
+        }
         separatorCells = current
-        guard !stale.isEmpty, var global = grids[1] else { return }
+        guard !stale.isEmpty else { return }
         let cells = stale.filter {
             $0.row >= 0 && $0.row < global.height && $0.col >= 0 && $0.col < global.width
         }.sorted { ($0.col, $0.row) < ($1.col, $1.row) }
         guard !cells.isEmpty else { return }
+        var updated = global
         for cell in cells {
-            global.applyLine(
+            updated.applyLine(
                 row: cell.row,
                 colStart: cell.col,
                 runs: [GridCellRun(text: " ", attrId: 0, count: 1)]
             )
         }
-        grids[1] = global
+        grids[1] = updated
         for cell in cells {
             markDirty(1, .cell(cell.row, cell.col))
         }
-    }
-
-    private func verticalSeparatorCells() -> Set<SeparatorCell> {
-        guard let global = grids[1], !global.isEmpty else { return [] }
-        var cells: Set<SeparatorCell> = []
-        for (id, frame) in frames
-        where id != 1 && !frame.hidden && !frame.isFloat && !frame.isMessage && frame.col > 0 {
-            guard let window = grids[id], !window.isEmpty else { continue }
-            let col = frame.col - 1
-            guard col < global.width else { continue }
-            let top = max(0, frame.row)
-            let bottom = min(global.height, frame.row + window.height)
-            guard top < bottom else { continue }
-            for row in top..<bottom {
-                cells.insert(SeparatorCell(row: row, col: col))
-            }
-        }
-        return cells
     }
 
     /// The cursor cell plus the continuation cell when it sits on a
