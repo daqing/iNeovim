@@ -103,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case (.command, "l"):
                 return MainActor.assumeIsolated { Self.claimEditorFocusChord() } ? nil : event
             case (.command, "r"):
-                return MainActor.assumeIsolated { Self.claimTerminalPaneFocusChord() } ? nil : event
+                return MainActor.assumeIsolated { Self.claimMarkdownOrTerminalChord() } ? nil : event
             default:
                 return event
             }
@@ -145,13 +145,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// ⌘R focuses the terminal pane, opening it when it is hidden. A local
-    /// monitor sees the keydown before the responder chain and before
-    /// Ghostty's `SurfaceView.performKeyEquivalent`, so the chord works while
-    /// the pane already owns the keyboard.
-    private static func claimTerminalPaneFocusChord() -> Bool {
+    /// ⌘R previews the current Markdown buffer in a separate reading window.
+    /// Every other buffer keeps the chord's old meaning: focus the terminal
+    /// pane, opening it when it is hidden. A local monitor sees the keydown
+    /// before the responder chain and before Ghostty's
+    /// `SurfaceView.performKeyEquivalent`, so the chord works while the pane
+    /// already owns the keyboard.
+    private static func claimMarkdownOrTerminalChord() -> Bool {
         guard NSApp.modalWindow == nil else { return false }
-        AppModel.active?.focusTerminalPane()
+        AppModel.active?.handleCmdR()
         return true
     }
 

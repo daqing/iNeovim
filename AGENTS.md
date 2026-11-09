@@ -688,10 +688,12 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `SurfaceView.performKeyEquivalent` would otherwise consume ⌘D for its
   default `new_split:right` binding while the pane is focused, so the menu
   shortcut alone only ever opened the pane. The same monitor claims ⌘L, ⌘R,
-  and ⌘P (the problems panel). ⌘L focuses the editor and ⌘R focuses the
-  terminal pane, opening it first when it is hidden (the pane's `.focus`
-  intent and the editor's `.focusEditor` intent). A focus change is often
-  invisible — two panes both filled with text, or a second ⌘R — so
+  and ⌘P (the problems panel). ⌘L focuses the editor; ⌘R previews the current
+  Markdown buffer in a reading window, and every other buffer keeps the
+  chord's old meaning — focus the terminal pane, opening it first when it is
+  hidden (the pane's `.focus` intent and the editor's `.focusEditor` intent).
+  A focus change is often invisible — two panes both filled with text, or a
+  second ⌘R — so
   `EditorSplitView` answers every successful `makeFirstResponder` for these
   intents (and for a pane that opens and takes focus) with a short
   `FocusToastView` card at the center of the window ("Focus: Editor" /
@@ -715,6 +717,24 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   at `$(BUILT_PRODUCTS_DIR)/PackageFrameworks`), and the symptom of losing it
   is a dyld abort at launch — before `main` — on the exported app: "Library
   not loaded: @rpath/GhosttySupport.framework/Versions/A/GhosttySupport".
+- **Markdown preview (⌘R):** the keyDown monitor's ⌘R asks
+  `AppModel.handleCmdR`, which snapshots the current buffer through
+  `NvimClient.currentBufferSnapshot` (name, filetype, and lines, so unsaved
+  edits preview). A Markdown buffer (filetype `markdown*` or a Markdown
+  extension) opens in a standalone `MarkdownPreviewWindowController` — a
+  read-only `WKWebView` rendering HTML from `MarkdownRenderer`, one window
+  per buffer name, re-rendered and brought forward when previewed again.
+  The renderer parses with Foundation's `AttributedString(markdown:)` and
+  maps its presentation intents to headings, lists, block quotes, code
+  blocks, and thematic breaks, and its inline intents to
+  bold/italic/code/strikethrough/links; the CSS follows the editor's nvim
+  default colors, keeps the reading column at 720 pt, and renders code
+  blocks `white-space: pre` with `overflow-x: auto` so ASCII and
+  box-drawing diagrams keep their layout instead of wrapping at the reading
+  column. File links open in this session's editor,
+  web links in the browser. A non-Markdown buffer keeps ⌘R's old meaning
+  (focus/open the terminal pane); the Neovim menu's "Preview Markdown" item
+  carries the ⌘R hint and beeps on a non-Markdown buffer.
 - **`ext_multigrid` policy:** the app attaches with `ext_linegrid`,
   `ext_popupmenu`, AND `ext_multigrid` — there is no single-grid path and no
   feature flag. Every grid is first-class: `Screen.grids`/`Screen.frames` key

@@ -762,6 +762,90 @@ final class AppModel: ObservableObject {
         requestTerminalPane(command: "")
     }
 
+    // MARK: - Markdown preview
+
+    /// Open preview windows owned by this editor window, keyed by the
+    /// previewed buffer's name (one window per file). Re-previewing a file
+    /// re-renders its existing window.
+    private var markdownPreviews: [String: MarkdownPreviewWindowController] = [:]
+
+    /// ⌘R: preview the current Markdown buffer in a separate reading window.
+    /// For every other buffer the chord keeps its old meaning — focus the
+    /// terminal pane (opening it when hidden).
+    func handleCmdR() {
+        Task { @MainActor in
+            if let snapshot = try? await client.currentBufferSnapshot(), snapshot.isMarkdown {
+                presentMarkdownPreview(snapshot)
+            } else {
+                focusTerminalPane()
+            }
+        }
+    }
+
+    /// Menu action for "Preview Markdown": open the reading window for the
+    /// current buffer, or beep when the buffer is not Markdown.
+    func previewMarkdown() {
+        Task { @MainActor in
+            guard let snapshot = try? await client.currentBufferSnapshot(),
+                  snapshot.isMarkdown else {
+                NSSound.beep()
+                return
+            }
+            presentMarkdownPreview(snapshot)
+        }
+    }
+
+    private func presentMarkdownPreview(_ snapshot: NvimBufferSnapshot) {
+        let theme = markdownTheme()
+        let key = snapshot.name.isEmpty ? "<untitled>" : snapshot.name
+        if let preview = markdownPreviews[key] {
+            preview.update(markdown: snapshot.text, baseURL: snapshot.baseURL, theme: theme)
+            preview.present()
+            return
+        }
+        let preview = MarkdownPreviewWindowController(
+            title: snapshot.previewTitle,
+            fileURL: snapshot.fileURL,
+            markdown: snapshot.text,
+            baseURL: snapshot.baseURL,
+            theme: theme,
+            onOpenLink: { [weak self] url in self?.openPreviewLink(url) },
+            onClose: { [weak self] in self?.markdownPreviews[key] = nil }
+        )
+        markdownPreviews[key] = preview
+        preview.present()
+    }
+
+    private func markdownTheme() -> MarkdownRenderer.Theme {
+        let background = terminalColors.background.flatMap(NSColor.init(packedRGB:))
+            ?? .textBackgroundColor
+        let isDark = TerminalView.hasDarkBackground(terminalColors.background)
+            ?? (NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        let foreground = terminalColors.foreground.flatMap(NSColor.init(packedRGB:))
+            ?? (isDark ? .white : .black)
+        let linkColor: NSColor = isDark
+            ? NSColor(srgbRed: 0.45, green: 0.72, blue: 1.0, alpha: 1)
+            : NSColor(srgbRed: 0.0, green: 0.38, blue: 0.75, alpha: 1)
+        return MarkdownRenderer.Theme(
+            foreground: foreground,
+            background: background,
+            isDark: isDark,
+            bodyFont: .systemFont(ofSize: 15),
+            codeFont: AppSettings.shared.resolvedFont(),
+            linkColor: linkColor
+        )
+    }
+
+    /// Preview links: local files open in this session's editor (the next
+    /// reading step stays in the app); web links use the default browser.
+    private func openPreviewLink(_ url: URL) {
+        if url.isFileURL {
+            open([url])
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Menu / ⌘L action: return keyboard focus to the editor.
     func focusEditor() {
         terminalPaneIntent = .focusEditor

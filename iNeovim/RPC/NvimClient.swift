@@ -602,6 +602,35 @@ struct NvimClient {
         )
     }
 
+    /// The current buffer's name, filetype, and lines, captured for the
+    /// Markdown preview window.
+    func currentBufferSnapshot() async throws -> NvimBufferSnapshot {
+        let value = try await execLua(Self.currentBufferSnapshotLua, args: [])
+        guard case let .map(map) = value else {
+            return NvimBufferSnapshot(name: "", filetype: "", lines: [])
+        }
+        let lines: [String]
+        if case let .array(rawLines)? = map[.string("lines")] {
+            lines = rawLines.compactMap(\.stringValue)
+        } else {
+            lines = []
+        }
+        return NvimBufferSnapshot(
+            name: map[.string("name")]?.stringValue ?? "",
+            filetype: map[.string("filetype")]?.stringValue ?? "",
+            lines: lines
+        )
+    }
+
+    private static let currentBufferSnapshotLua = """
+        local buf = vim.api.nvim_get_current_buf()
+        return {
+          name = vim.api.nvim_buf_get_name(buf),
+          filetype = vim.bo[buf].filetype,
+          lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false),
+        }
+        """
+
     /// Watch the text areas of the current tabpage's windows and report them
     /// as `NvimTextLayout.rpcMethod` notifications, so the renderer can draw
     /// buffer text clear of the gutter. A window's `textoff` changes with

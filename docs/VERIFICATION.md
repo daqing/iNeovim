@@ -237,6 +237,33 @@ Manual check in the GUI:
   (`(https://…)`, a trailing `.`) and clicks on the continuation cell of an
   adjacent double-width glyph.
 
+## Markdown preview (⌘R)
+
+A Markdown buffer opens a separate read-only reading window; other buffers
+keep ⌘R for the terminal pane.
+
+Manual checks in the GUI:
+
+1. Open a `.md` file and press ⌘R: a separate window renders headings,
+   bold/italic, lists, code blocks, quotes, and links using the editor's
+   colors; the editor stays put and the preview takes focus.
+2. Open a page with a fenced ASCII or box-drawing architecture diagram (the
+   README architecture block is one): the code block keeps its monospaced
+   alignment and does **not** wrap; a line wider than the 720 pt reading
+   column scrolls horizontally inside the code block.
+3. Edit the buffer without saving and press ⌘R again: the same preview window
+   comes forward with the new contents.
+4. Press ⌘R in a non-Markdown buffer: the terminal pane is focused (or opens);
+   the menu's "Preview Markdown" beeps instead.
+5. Click an http link: the browser opens. A relative link to another file
+   opens in the editor.
+6. Resize the preview: the reading column stays capped around 720 pt and the
+   text reflows; ⌘W closes it.
+
+Automated checks: `MarkdownRendererTests` covers headings, list markers,
+inline bold, links, relative-link resolution, HTML escaping, code-block
+whitespace preservation / no-wrap CSS, and Markdown buffer detection.
+
 ## Smooth scrolling across grids
 
 With ext_multigrid every window, float, and the message area is its own grid

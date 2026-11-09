@@ -43,8 +43,9 @@ struct EditorCommands: Commands {
                 .keyboardShortcut("d", modifiers: .command)
             Button("Focus Editor") { AppModel.active?.focusEditor() }
                 .keyboardShortcut("l", modifiers: .command)
-            Button("Focus Terminal Pane") { AppModel.active?.focusTerminalPane() }
+            Button("Preview Markdown") { AppModel.active?.previewMarkdown() }
                 .keyboardShortcut("r", modifiers: .command)
+            Button("Focus Terminal Pane") { AppModel.active?.focusTerminalPane() }
             Divider()
             Button("Toggle Problems") { AppModel.active?.toggleProblemsPanel() }
                 .keyboardShortcut("p", modifiers: .command)
