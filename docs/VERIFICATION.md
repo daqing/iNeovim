@@ -76,6 +76,20 @@ Manual check in the GUI:
 3. Turn `number` off with no sign column: the text starts at the normal left
    inset, with no extra indent.
 
+## Sidebar divider and split separators
+
+The NERDTree sidebar keeps a fixed width. A left press on the divider at its
+right edge is swallowed before it reaches nvim, so the divider cannot be
+dragged and nvim cannot start a window resize.
+
+Manual check in the GUI:
+
+1. Open NERDTree and drag the divider at the sidebar's right edge: it does
+   not move, the sidebar keeps its width, and no stale vertical bars appear.
+2. Drag the divider between two ordinary editor splits: it still resizes.
+3. Click NERDTree entries: the highlight stays inside the sidebar (no
+   full-width horizontal band).
+
 ## Soft wrap
 
 The app enables nvim's own `wrap` before `ui_attach`, because a single

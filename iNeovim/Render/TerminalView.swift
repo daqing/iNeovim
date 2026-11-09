@@ -1050,6 +1050,15 @@ final class TerminalView: NSView {
         return GridHit(grid: 1, row: row, col: col, globalRow: row, globalCol: col)
     }
 
+    /// Whether a resolved hit is the vsplit separator immediately to the
+    /// right of the left-edge sidebar window (NERDTree's divider). The mouse
+    /// handler swallows presses there, so nvim cannot start a window resize;
+    /// the sidebar keeps its width and leaves no stale separator columns.
+    func isSidebarSeparator(at hit: GridHit) -> Bool {
+        guard hit.grid == 1, let snapshot else { return false }
+        return snapshot.isSidebarSeparator(row: hit.globalRow, col: hit.globalCol)
+    }
+
     // MARK: - Diagnostics popover
 
     /// A plain left click in the sign column (the gutter carrying the

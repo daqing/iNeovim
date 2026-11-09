@@ -40,6 +40,37 @@ nonisolated struct ScreenSnapshot: Equatable, Sendable {
     var modeName: String?
     var popup: PopupState?
 
+    /// True when `(row, col)` is the vsplit separator immediately to the
+    /// right of a tiled window pinned to the screen's left edge — the
+    /// NERDTree-style sidebar. Nvim resizes that window when the separator is
+    /// dragged and leaves a separator behind at every column it crosses, so
+    /// the app swallows presses there instead of forwarding them.
+    nonisolated func isSidebarSeparator(row: Int, col: Int) -> Bool {
+        guard let global = grid, !global.isEmpty,
+              row >= 0, row < global.height, col >= 0, col < global.width else {
+            return false
+        }
+        func tiledWindow(row: Int, col: Int) -> (frame: GridFrame, width: Int)? {
+            for (id, frame) in frames
+            where id != 1 && !frame.hidden && !frame.isFloat && !frame.isMessage {
+                guard let window = grids[id], !window.isEmpty else { continue }
+                if row >= frame.row, row < frame.row + window.height,
+                   col >= frame.col, col < frame.col + window.width {
+                    return (frame, window.width)
+                }
+            }
+            return nil
+        }
+        guard let left = tiledWindow(row: row, col: col - 1),
+              let right = tiledWindow(row: row, col: col + 1),
+              left.frame.col == 0,
+              left.frame.col + left.width == col,
+              right.frame.col == col + 1 else {
+            return false
+        }
+        return true
+    }
+
     var cursorModeInfo: ModeInfo? {
         guard modes.indices.contains(modeIndex) else { return nil }
         return modes[modeIndex]

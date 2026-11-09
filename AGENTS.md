@@ -398,7 +398,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   clears every `│` there that the current layout does not require (the glyph
   is learned from a required separator cell because `'fillchars'` can change
   it). Without that sweep, dragging the sidebar divider left the whole pane
-  striped with vertical bars.
+  striped with vertical bars. The divider is also no longer draggable:
+  `MouseHandler` swallows a left press on the separator column immediately to
+  the right of a window pinned to the screen's left edge
+  (`ScreenSnapshot.isSidebarSeparator`), so nvim never starts the sidebar
+  resize in the first place. Interior split dividers stay draggable.
 - **ext_multigrid layering:** nvim attaches with `ext_linegrid`,
   `ext_popupmenu`, AND `ext_multigrid` (AppModel.bootstrap). Grid 1 stays the
   GLOBAL grid — the screen background, vsplit separators, the statusline row,

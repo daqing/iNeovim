@@ -407,6 +407,34 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(snapshot.grid?[21, 55], GridCell(text: "│", attrId: 927))
     }
 
+    func testSidebarSeparatorHitDetectsTheLeftEdgeDivider() async {
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 48, height: 22))
+
+        let snapshot = await screen.snapshot()
+        // The column between the left-edge sidebar and the editor.
+        XCTAssertTrue(snapshot.isSidebarSeparator(row: 5, col: 31))
+        // Cells inside either window, and the statusline row, are not
+        // dividers.
+        XCTAssertFalse(snapshot.isSidebarSeparator(row: 5, col: 30))
+        XCTAssertFalse(snapshot.isSidebarSeparator(row: 5, col: 32))
+        XCTAssertFalse(snapshot.isSidebarSeparator(row: 22, col: 31))
+    }
+
+    func testSidebarSeparatorHitIgnoresInteriorSplitDividers() async {
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 24, height: 22))
+        await screen.apply(.winPos(grid: 5, row: 0, col: 57, width: 23, height: 22))
+
+        let snapshot = await screen.snapshot()
+        // A divider between two editor splits is still draggable.
+        XCTAssertFalse(snapshot.isSidebarSeparator(row: 5, col: 56))
+    }
+
     func testWindowLayoutChangePreservesSeparatorsStillInUse() async {
         let screen = Screen()
         await screen.apply(.gridResize(grid: 1, width: 80, height: 24))

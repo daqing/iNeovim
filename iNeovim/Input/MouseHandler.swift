@@ -46,6 +46,16 @@ final class MouseHandler {
             && Self.modifierString(for: event.modifierFlags).isEmpty
         didDrag = false
         latestGatedDrag = nil
+        // The divider to the right of the left-edge sidebar (NERDTree) must
+        // not be draggable: nvim would resize the sidebar and leave a
+        // separator behind at every column the pointer crossed. Swallow the
+        // whole gesture so no press reaches nvim.
+        if button == "left",
+           let hit = pressedHit,
+           view?.isSidebarSeparator(at: hit) == true {
+            isSwallowingGesture = true
+            return
+        }
         // ⌘-click on an http(s) URL opens it in the default browser instead of
         // reaching nvim; the rest of the gesture is swallowed so nvim never
         // sees an orphan drag/release.
