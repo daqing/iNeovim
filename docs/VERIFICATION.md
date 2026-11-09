@@ -353,9 +353,15 @@ of the editor instead of an in-buffer terminal. Manual checks:
    background/foreground from nvim's colorscheme at open time).
 8. Multiple windows (⌘N) each own a pane; closing a window cleans up its
    surface; IME composition works inside the pane.
+9. ⌘-click a local file path printed in the pane (absolute or project-relative):
+   the file opens in the editor and the editor takes focus; the terminal pane
+   stays open. A `path:line:column` suffix still resolves the file. ⌘-click an
+   http(s) link: the default browser opens instead.
 
 Automated checks: `TerminalPaneCommandTests` pins the cmdline matcher
-(abbreviations, `vert[ical]`, bang, arguments, non-matches).
+(abbreviations, `vert[ical]`, bang, arguments, non-matches) and
+`TerminalFileLinkTests` covers path resolution, line suffixes, file URLs, and
+web/nonexistent/directory rejection.
 
 ## Command-line tool
 

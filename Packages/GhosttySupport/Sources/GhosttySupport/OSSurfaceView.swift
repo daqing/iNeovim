@@ -34,6 +34,14 @@ extension Ghostty {
         // The hovered URL string
         @Published var hoverUrl: String?
 
+        /// Embedder hook for Ghostty's `open_url` action. Return true when the
+        /// embedder handled the target (for example, opening a local file in
+        /// its editor); nil or false keeps the system handler. The second
+        /// argument is the surface's pwd (from OSC 7) when the terminal
+        /// reports one, so relative paths can resolve against the shell's
+        /// current directory.
+        public var openURLHandler: ((String, String?) -> Bool)?
+
         // The currently active key tables. Empty if no tables are active.
         @Published var keyTables: [String] = []
 

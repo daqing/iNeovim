@@ -675,7 +675,14 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   (`GhosttyTerminalController.updateColors` → `Ghostty.App.reloadConfig`,
   driven by `AppModel.$terminalColors`) whenever a session reports a new
   default background, so an open pane follows a dark↔light colorscheme flip
-  instead of keeping its original theme. Menu "Toggle Terminal
+  instead of keeping its original theme. ⌘-clicking a file path recognized in
+  the pane opens it in the editor instead of the system's default app:
+  `Ghostty.SurfaceView.openURLHandler` offers the raw `open_url` target before
+  the system fallback, and `EditorSplitView` routes an existing regular file
+  through `TerminalFileLink` — absolute paths, `file://` URLs, relative paths
+  against the surface's OSC 7 pwd or the pane's initial directory, and an
+  optional `:line[:column]` suffix — to `AppModel.open`, then focuses the
+  editor; web URLs keep the browser. Menu "Toggle Terminal
   Pane" / ⌘D toggles regardless of focus; the keyDown monitor in `AppDelegate`
   claims ⌘D (and its ⌃` alternate) before dispatch because Ghostty's
   `SurfaceView.performKeyEquivalent` would otherwise consume ⌘D for its
