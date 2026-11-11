@@ -6,59 +6,6 @@ import XCTest
 final class MouseHandlerTests: XCTestCase {
     private let cellSize = CGSize(width: 10, height: 20)
 
-    func testCellLocationMapsPointToCell() {
-        let location = MouseHandler.cellLocation(
-            for: CGPoint(x: 25, y: 45),
-            cellSize: cellSize,
-            gridWidth: 80,
-            gridHeight: 24
-        )
-        XCTAssertEqual(location.row, 2)
-        XCTAssertEqual(location.col, 2)
-    }
-
-    func testCellLocationClampsToGrid() {
-        let location = MouseHandler.cellLocation(
-            for: CGPoint(x: 10_000, y: -50),
-            cellSize: cellSize,
-            gridWidth: 80,
-            gridHeight: 24
-        )
-        XCTAssertEqual(location.row, 0)
-        XCTAssertEqual(location.col, 79)
-    }
-
-    func testCellLocationWithoutGridIsNotClampedAbove() {
-        let location = MouseHandler.cellLocation(
-            for: CGPoint(x: 250, y: 90),
-            cellSize: cellSize,
-            gridWidth: nil,
-            gridHeight: nil
-        )
-        XCTAssertEqual(location.row, 4)
-        XCTAssertEqual(location.col, 25)
-    }
-
-    func testCellLocationAccountsForCmdlineGap() {
-        // The last row starts at 23 * 20 + 4 = 464; the 4pt gap band above it
-        // still belongs to the statusline row.
-        let belowGap = MouseHandler.cellLocation(
-            for: CGPoint(x: 0, y: 465),
-            cellSize: cellSize,
-            gridWidth: 80,
-            gridHeight: 24
-        )
-        XCTAssertEqual(belowGap.row, 23)
-
-        let inGap = MouseHandler.cellLocation(
-            for: CGPoint(x: 0, y: 462),
-            cellSize: cellSize,
-            gridWidth: 80,
-            gridHeight: 24
-        )
-        XCTAssertEqual(inGap.row, 22)
-    }
-
     func testGridRowYShiftsCmdlineRow() {
         XCTAssertEqual(TerminalView.gridRowY(22, gridHeight: 24, cellHeight: 20), 440)
         XCTAssertEqual(TerminalView.gridRowY(23, gridHeight: 24, cellHeight: 20), 465)
@@ -102,16 +49,41 @@ final class MouseHandlerTests: XCTestCase {
         XCTAssertNil(MouseHandler.buttonName(for: keyEvent))
     }
 
-    private func mouseEvent(_ type: NSEvent.EventType) -> NSEvent {
+    private func makeMouseHandler(dispatcher: InputDispatcher) -> (MouseHandler, TerminalView) {
+        let view = TerminalView(model: AppModel(inputDispatcher: dispatcher))
+        let handler = MouseHandler(dispatcher: dispatcher)
+        handler.view = view
+        return (handler, view)
+    }
+
+    private func collectEvents(from stream: AsyncStream<InputEvent>) async -> [InputEvent] {
+        let collector = Task.detached {
+            var events: [InputEvent] = []
+            for await event in stream {
+                events.append(event)
+            }
+            return events
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+        collector.cancel()
+        return await collector.value
+    }
+
+    private func mouseEvent(
+        _ type: NSEvent.EventType,
+        location: CGPoint = .zero,
+        modifiers: NSEvent.ModifierFlags = [],
+        clickCount: Int = 1
+    ) -> NSEvent {
         NSEvent.mouseEvent(
             with: type,
-            location: .zero,
-            modifierFlags: [],
+            location: location,
+            modifierFlags: modifiers,
             timestamp: 0,
             windowNumber: 0,
             context: nil,
             eventNumber: 0,
-            clickCount: 1,
+            clickCount: clickCount,
             pressure: 0
         )!
     }

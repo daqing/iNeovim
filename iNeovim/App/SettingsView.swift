@@ -1,12 +1,22 @@
 import SwiftUI
 
-/// Settings window: appearance (font family/size), input behavior, and
-/// animation toggles. Changes apply live — `AppSettings` is shared with the
-/// render view.
+/// Settings window: appearance (font family/size), grid layout padding, input
+/// behavior, and animation toggles. Changes apply live — `AppSettings` is
+/// shared with the render view.
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
 
-    private let families = AppSettings.monospacedFamilies()
+    /// Fixed-pitch families plus the current choice, so a saved family that is
+    /// no longer installed (or is not fixed pitch) still shows in the picker.
+    private var families: [String] {
+        var families = AppSettings.monospacedFamilies()
+        let current = settings.fontFamily
+        if !current.isEmpty && !families.contains(current) {
+            families.append(current)
+            families.sort()
+        }
+        return families
+    }
 
     var body: some View {
         Form {
@@ -21,6 +31,29 @@ struct SettingsView: View {
                     HStack {
                         Slider(value: $settings.fontSize, in: 8...32, step: 1)
                         Text("\(Int(settings.fontSize)) pt")
+                            .monospacedDigit()
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                }
+            }
+
+            Section("Layout") {
+                LabeledContent("Left padding") {
+                    HStack {
+                        Slider(value: $settings.leadingPadding, in: 0...48, step: 1)
+                        Text("\(Int(settings.leadingPadding)) pt")
+                            .monospacedDigit()
+                            .frame(width: 44, alignment: .trailing)
+                    }
+                }
+                LabeledContent("Right padding") {
+                    HStack {
+                        Slider(
+                            value: $settings.trailingPadding,
+                            in: Double(TerminalView.minimumTrailingPadding)...48,
+                            step: 1
+                        )
+                        Text("\(Int(settings.trailingPadding)) pt")
                             .monospacedDigit()
                             .frame(width: 44, alignment: .trailing)
                     }

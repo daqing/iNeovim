@@ -48,20 +48,15 @@ struct ScrollAccumulator: Equatable, Sendable {
     private(set) var credit: CGFloat = 0
     private(set) var sent: CGFloat = 0
     private(set) var confirmed: CGFloat = 0
+    private var minimumSent: CGFloat = 0
+    private var maximumSent: CGFloat = 0
 
     init(maxLead: CGFloat = 0) {
         self.maxLead = maxLead
     }
 
     var offset: CGFloat {
-        let lead = sent - confirmed
-        // Clamp to the gesture's direction as well as to the cap: a
-        // confirmation that outruns the gesture (a late one, or Neovim
-        // scrolling by itself) must not drag the content back the other way.
-        if credit >= 0 {
-            return min(max(lead, 0), maxLead)
-        }
-        return max(min(lead, 0), -maxLead)
+        min(max(sent - confirmed, -maxLead), maxLead)
     }
 
     var isSettled: Bool { offset == 0 }
@@ -86,35 +81,37 @@ struct ScrollAccumulator: Equatable, Sendable {
             sent -= lineHeight
             remainder += lineHeight
         }
+        minimumSent = min(minimumSent, sent)
+        maximumSent = max(maximumSent, sent)
         return requests
     }
 
     /// Neovim scrolled the grid by `rows` (positive moves content up — the
-    /// response to a `.down` request), shrinking the visual lead. The clamp in
-    /// `offset` bounds a catch-up that is itself behind: no more of the
-    /// unpainted screen is exposed than the cap allows.
+    /// response to a `.down` request), shrinking the visual lead. Confirmations
+    /// stay inside the range requested during this gesture, so an out-of-range
+    /// late confirmation cannot drag the content back the other way. Clamping
+    /// also absorbs a wrapped line that scrolls several grid rows at once.
     mutating func confirmScroll(rows: Int, lineHeight: CGFloat) {
         guard lineHeight > 0 else { return }
-        confirmed += CGFloat(-rows) * lineHeight
+        let next = confirmed + CGFloat(-rows) * lineHeight
+        confirmed = min(max(next, minimumSent), maximumSent)
     }
 
-    /// Start a new gesture, preserving the current visual offset. The part of
-    /// that offset already requested is carried over as `sent`, not reset:
-    /// re-requesting a line still in flight would scroll it twice when the
-    /// new gesture's first step crosses a line.
+    /// Start a new gesture. Pending requests keep their accounting so their
+    /// confirmations still match after the gesture boundary; once everything
+    /// is confirmed, rebase the next gesture at rest.
     mutating func beginGesture() {
-        let preserved = offset
-        let inFlight = sent - confirmed
-        credit = preserved
-        sent = preserved >= 0
-            ? min(max(inFlight, 0), preserved)
-            : max(min(inFlight, 0), preserved)
+        guard sent == confirmed else { return }
+        credit = 0
+        sent = 0
         confirmed = 0
+        minimumSent = 0
+        maximumSent = 0
     }
 
     /// Give up on the unconfirmed lead (snap-back). The request accounting is
     /// left alone, so a confirmation still in flight cannot move the content
-    /// against the gesture; the direction clamp keeps it at rest.
+    /// against the gesture; the request-range clamp keeps it at rest.
     mutating func collapse() {
         confirmed = sent
     }

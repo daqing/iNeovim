@@ -172,8 +172,9 @@ There is no published binary yet; build from source:
 
 3. Select the `iNeovim` scheme and run (⌘R).
 
-There is no command-line build script or CI at this time. Release builds are
-archived, notarized, and stapled following `docs/RELEASE.md`.
+`Scripts/publish.sh` archives, signs, notarizes, and staples a release build;
+add `--upload` to publish the ZIP and DMG to GitHub. There is no CI. See
+`docs/RELEASE.md`.
 
 ## License
 

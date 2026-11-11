@@ -56,6 +56,125 @@ the cursor (wide chars spanning two cells, selection bar at the caret), the
 candidate window anchors below it, and committed text inserts and renders
 aligned.
 
+## Gutter padding
+
+nvim's gutter columns (sign, fold, number) are whole cells wide, so the 2 pt
+gap between buffer text and the gutter is drawn by the renderer: the glyphs,
+the block cursor, the IME preedit, and the ⌘-hover underline of a window's
+text area sit 2 pt right of their cells, while the gutter itself stays on the
+grid. nvim pushes each window's text area (rows plus the columns past
+`textoff`) as `ineovim:textlayout`; `NvimClient.installTextLayoutHook` keeps
+it current.
+
+Manual check in the GUI:
+
+1. Open a file with `number` on: the text starts 2 pt clear of the number
+   column. A vertical split keeps the gap in both windows.
+2. Make a sign column appear (`:set signcolumn=yes`, an LSP diagnostic, or a
+   gitsigns change) and collapse again (`:set signcolumn=auto`): the text
+   keeps its 2 pt gap and no row is left 2 pt off.
+3. Turn `number` off with no sign column: the text starts at the normal left
+   inset, with no extra indent.
+
+## Sidebar divider and split separators
+
+The NERDTree sidebar keeps a fixed width. A left press on the divider at its
+right edge is swallowed before it reaches nvim, so the divider cannot be
+dragged and nvim cannot start a window resize.
+
+Manual check in the GUI:
+
+1. Open NERDTree and drag the divider at the sidebar's right edge: it does
+   not move, the sidebar keeps its width, and no stale vertical bars appear.
+2. Drag the divider between two ordinary editor splits: it still resizes.
+3. Click NERDTree entries: the highlight stays inside the sidebar (no
+   full-width horizontal band).
+4. Open a quickfix split (`:copen`), then `:cclose`: the surviving window
+   grows into the vacated rows and no old statusline row is left printed
+   across the middle of the buffer.
+
+## Soft wrap
+
+The app enables nvim's own `wrap` before `ui_attach`, because a single
+linegrid has no horizontal scrolling: a line wider than the window would
+otherwise be unreachable past the right edge. An embedded nvim defers
+startup until the UI attaches, so bootstrap's command runs before `init.lua`;
+`installWrap` therefore re-applies `wrap` from a one-shot `VimEnter` autocmd
+so the user config's `set nowrap` cannot win.
+
+Manual check in the GUI:
+
+1. Open a file with a line longer than the editor width (with the user's
+   config, `:set nowrap` is overridden by the app).
+2. Confirm the line continues on the following screen rows, that only the
+   first row carries the line number (the number column is blank on the
+   continuation rows), and that the next buffer line keeps its own number.
+3. With an LSP diagnostic on such a line, click the gutter on any of its
+   screen rows: every row maps to the same buffer line and shows the same
+   popover.
+4. Scroll with the wheel: Neovim scrolls whole buffer lines (one long
+   wrapped line can move several rows at once), and the transient scroll
+   thumb still appears because it measures buffer lines.
+
+## Truncated long lines
+
+Requires nvim 0.13+. On 0.12 the hook stays off (the unified log shows
+"Truncated lines off: needs nvim 0.13+") because nvim 0.12's conceal_lines +
+virt_lines scroll implementation LOOPS upward scrolling next to preview rows
+(measured on 0.12.5 with the layout below: topline bounces 37→35→37 forever;
+upstream neovim#42317/#42077, fixed only on master for 0.13). On a gated
+nvim, verify over-long lines simply keep their normal wrapped rows and that
+wheel-up scrolls through them normally.
+
+A buffer line whose display width exceeds 280 cells collapses to a one-row
+preview ending in `…` (`installTruncatedLines` — `conceal_lines` extmark plus
+a one-row `virt_lines` preview, `conceallevel` owned at 2); clicking the
+preview row opens the full line in `LineContentPopover`. A run that reaches
+the buffer's last line hangs its previews BELOW the last unconcealed line
+before the run (there is no following line to hang above; a below-mark on
+the concealed last line itself is swallowed), and a run covering the whole
+buffer stays unconcealed. Manual checks (on nvim 0.13+):
+
+1. Open a file with a 400+ character line between normal lines: the long
+   line shows as a single row ending in `…` — not its 7 wrapped rows — while
+   the normal lines around it still soft-wrap as before.
+2. Plain-click the preview row: a popover shows the full line text, wraps it
+   at the popover width, is selectable (copyable), and scrolls for very long
+   lines; clicking anywhere else (or typing, scrolling) dismisses it.
+3. A long RUN (several adjacent over-long lines, e.g. three or more):
+   one preview row per line, in buffer order — an eight-line run draws
+   its previews top-to-bottom in the same order as the lines (same-anchor
+   virt marks would scramble them; the run shares one extmark instead).
+4. With the cursor resting on a truncated line (normal mode), the line
+   stays folded; entering insert mode on it reveals the full line for
+   editing, and leaving insert folds it again.
+5. Delete characters until the line drops under 280 cells: it expands back
+   to full wrapped display without a restart (`TextChanged` rescan).
+6. Open a file whose LAST line is over-long (e.g. a huge close-out bullet
+   at the end of a TASKS doc): it folds to a one-row preview like any other
+   line, sitting directly under the previews of the run it joins; clicking
+   it opens the full last line.
+7. Resize the window wider: the preview grows to the new width and keeps its
+   `…` visible at the right edge (`WinResized` rescan).
+8. The scroll thumb's proportions drift by the hidden rows on such files
+   (the Lua metric counts buffer lines) — known, informational only.
+
+## Last working directory
+
+The launch window resumes in the directory the last session was in, saved as
+the app quits. A window an `ineovim` command opens uses the directory the
+command ran in instead, never the saved one.
+
+Manual check in the GUI:
+
+1. Launch the app, `:cd` into a project, and quit (⌘Q). Launch it again by
+   clicking the app icon: the window's `:pwd` is that project, not `$HOME`.
+2. With the app not running, run `ineovim` from a different directory: its
+   window's `:pwd` is that directory — not the one saved in step 1 — and the
+   file named on the command line is the current buffer.
+3. Quit, rename (or move) the saved directory, and launch by clicking the
+   app: the window starts in `$HOME` instead of failing.
+
 ## App shell checks
 
 - **Tabs (native window tabs):** ⌘T opens a new editor window as a native
@@ -65,8 +184,18 @@ aligned.
   resolve the file against nvim's cwd; **Next/Previous Tab** and ⌘1…⌘9 switch
   native tabs; **Close Tab** (⌘⇧W) closes the current tab; nvim tabpages stay
   reachable through `gt`/`gT` and `:tabnext`-style commands.
+- **Typed quit (`:q`):** with two or more native tabs, type `:q` and press
+  Return in any tab: the alert asks **Close Tab?** — not "Quit iNeovim?" — and
+  confirming closes only that tab while the other tabs' sessions keep
+  running; Cancel leaves the tab alone and dismisses the cmdline. A
+  standalone window beside another editor window asks **Close Window?**, and
+  only the last editor window asks **Quit iNeovim?**; the red close button
+  uses the same wording as the typed command would.
 - **Settings (T8.3):** ⌘, opens Settings. Changing font/size reflows the grid;
   Option-as-Meta and Command passthrough change key behavior immediately.
+  Layout ▸ Left/Right padding moves the grid live and reflows the column
+  count; the right slider cannot go below the scroll indicator's strip, so
+  the wheel's thumb never covers text.
 - **Window title (T8.5):** opening a file updates the window title from
   neovim's `set_title`.
 - **File opening (T8.6):** dragging a text file onto the editor opens it as a
@@ -76,10 +205,11 @@ aligned.
   launch shows install guidance instead of the editor — `brew install neovim`
   with a copy button when Homebrew exists, otherwise a brew.sh link — and
   **Recheck** starts the session once Neovim is installed.
-- **Nvim exit handling:** `:q`/`:qa` on the last tab closes the window
-  silently (and quits the app when no editor window remains) with no dialog;
-  an abnormal exit (e.g. `kill` the nvim process) still shows the
-  **Neovim exited** alert with **Restart**.
+- **Nvim exit handling:** a clean exit — after confirming the typed quit, or
+  from a path the gate never sees (`:wq`, `:x`, a mapping, a plugin) — closes
+  the window silently (and quits the app when no editor window remains) with
+  no second dialog; an abnormal exit (e.g. `kill` the nvim process) still
+  shows the **Neovim exited** alert with **Restart**.
 - **Multiple windows (⌘N):** ⌘N opens a new window running its own embedded
   Neovim in `$HOME` (`:pwd`); typing, scrolling, and tab shortcuts act on the
   focused window only; menu commands and ⌘O opens route to the key window;
@@ -110,13 +240,41 @@ aligned.
   (`(https://…)`, a trailing `.`) and clicks on the continuation cell of an
   adjacent double-width glyph.
 
-## Smooth scrolling and the frozen footer
+## Markdown preview (⌘R)
 
-Neovim never scrolls the statusline and cmdline rows, so the app draws them in
-a layer the scroll lead does not translate: the grid is split into a scrolling
-region and a frozen footer (`GridContentLayer.rowSlice`), and the scrolling
-region is clipped to its own rows. Drawing the whole grid in one translated
-layer let the statusline text slide off its bar mid-gesture.
+A Markdown buffer opens a separate read-only reading window; other buffers
+keep ⌘R for the terminal pane.
+
+Manual checks in the GUI:
+
+1. Open a `.md` file and press ⌘R: a separate window renders headings,
+   bold/italic, lists, code blocks, quotes, and links using the editor's
+   colors; the editor stays put and the preview takes focus.
+2. Open a page with a fenced ASCII or box-drawing architecture diagram (the
+   README architecture block is one): the code block keeps its monospaced
+   alignment and does **not** wrap; a line wider than the 720 pt reading
+   column scrolls horizontally inside the code block.
+3. Edit the buffer without saving and press ⌘R again: the same preview window
+   comes forward with the new contents.
+4. Press ⌘R in a non-Markdown buffer: the terminal pane is focused (or opens);
+   the menu's "Preview Markdown" beeps instead.
+5. Click an http link: the browser opens. A relative link to another file
+   opens in the editor.
+6. Resize the preview: the reading column stays capped around 720 pt and the
+   text reflows; ⌘W closes it.
+
+Automated checks: `MarkdownRendererTests` covers headings, list markers,
+inline bold, links, relative-link resolution, HTML escaping, code-block
+whitespace preservation / no-wrap CSS, and Markdown buffer detection.
+
+## Smooth scrolling across grids
+
+With ext_multigrid every window, float, and the message area is its own grid
+drawn in its own clip layer; the scroll lead translates ONLY the grid the
+gesture grabbed, so the statusline row (global grid), other splits, and floats
+cannot move mid-gesture by construction. The grabbed grid's clip layer keeps
+its content inside its rows, which replaces the old frozen-footer split
+(`GridContentLayer.rowSlice` is retired).
 
 Manual check in the GUI:
 
@@ -131,9 +289,11 @@ statusline, and it closes as soon as Neovim confirms the line. The content must
 not slide back after the gesture ends — the lead is whole lines only, so there
 is no sub-line remainder to give up (a snap-back here means the lead is being
 drawn from `credit` instead of `sent`). Scrolling the other way shows the
-mirror behavior (blank at the top edge, footer still planted).
-Automated check: `FrozenFooterTests` pins the row slices, the layers' tiling,
-and which layer draws a cursor in the cmdline row; `ScrollAccumulatorTests`
+mirror behavior (blank at the top edge, statusline still planted). With two
+side-by-side splits, wheeling one must not move the other, and the cursor
+stays put.
+Automated check: `GridLayerTests` pins the per-grid box layering, z order, and
+cursor ownership; `ScrollAccumulatorTests`
 pins the whole-line lead and its confirmation.
 
 Wheel check (traditional mouse wheel, no trackpad):
@@ -156,7 +316,8 @@ Scroll indicator:
    appears at the right edge from the first delta and follows the viewport
    (top of the buffer → thumb at the top, `G`/bottom → at the bottom, a short
    buffer → a long thumb), spanning the text rows only, not the statusline
-   and cmdline rows.
+   and cmdline rows. The thumb sits in the window's right margin beside the
+   text — 2 pt clear of the last character of a row — so it never covers it.
 2. Stop scrolling: the thumb fades out about 0.7 s after the last delta, and
    moving the wheel again brings it back at once.
 3. Open a file shorter than the window and scroll: no thumb appears.
@@ -165,6 +326,32 @@ Scroll indicator:
 
 Automated check: `ScrollMetricsTests` pins the thumb proportion and the
 clamped position.
+
+## Overlay grid backgrounds (floats and the message grid)
+
+A grid layered above another grid's cells must paint its OWN default
+background: the view's background layer sits under the base grid and the
+tiled window grids, but under a float or the message grid sits another
+grid's text, so a skipped default-background fill is a hole it shows
+through. Manual checks:
+
+1. Open fzf (`<leader>t` or `:Files/LGrep`…): the panel is a solid block in
+   the theme's background color with its own text on top — no buffer text
+   bleeding through its rows.
+2. Trigger an LSP hover/signature float (or `:lua vim.lsp.util.
+   open_floating_preview({'hover'}, 'markdown')`): same, an opaque panel.
+3. Provoke a multi-row message block (`:messages` after a few entries, or a
+   cmdline error: `:call NoSuch()`) that reaches past the cmdline row: the
+   block covers the buffer rows underneath it instead of blending with them,
+   and the inverted statusline bar stays off the rows it covers.
+4. The base grid and the window grids still leave default-background cells to
+   the view's own fill, which is what keeps a scroll frame from repainting the
+   whole viewport (scrolling with a truncated/highlighted file must stay as
+   smooth as before).
+
+Automated check: `GridLayerTests` renders a float layer, a window layer, and
+a re-parked message layer into bitmaps and asserts the float/message pixels
+are opaque and uniform while the window's stay transparent.
 
 ## Native terminal pane (Ghostty)
 
@@ -196,9 +383,15 @@ of the editor instead of an in-buffer terminal. Manual checks:
    background/foreground from nvim's colorscheme at open time).
 8. Multiple windows (⌘N) each own a pane; closing a window cleans up its
    surface; IME composition works inside the pane.
+9. ⌘-click a local file path printed in the pane (absolute or project-relative):
+   the file opens in the editor and the editor takes focus; the terminal pane
+   stays open. A `path:line:column` suffix still resolves the file. ⌘-click an
+   http(s) link: the default browser opens instead.
 
 Automated checks: `TerminalPaneCommandTests` pins the cmdline matcher
-(abbreviations, `vert[ical]`, bang, arguments, non-matches).
+(abbreviations, `vert[ical]`, bang, arguments, non-matches) and
+`TerminalFileLinkTests` covers path resolution, line suffixes, file URLs, and
+web/nonexistent/directory rejection.
 
 ## Command-line tool
 

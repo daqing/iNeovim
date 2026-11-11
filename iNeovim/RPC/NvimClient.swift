@@ -21,7 +21,7 @@ nonisolated struct ScrollMetrics: Equatable {
     /// First buffer line on screen, 1-based (`getwininfo().topline`).
     var topline: Int
     var lineCount: Int
-    /// Screen lines the window shows (its text height in the grid).
+    /// Buffer lines the window shows; a wrapped line counts once.
     var visibleLines: Int
 
     var isScrollable: Bool { lineCount > visibleLines }
@@ -56,6 +56,31 @@ struct NvimClient {
             .int(Int64(width)), .int(Int64(height)), options,
         ])
     }
+
+    /// Soft-wrap long lines, in every window and as the default for windows
+    /// created later. `bootstrap` can reach nvim while `init.lua` is still
+    /// being sourced (a fresh `nvim --embed` answers RPC before `VimEnter`),
+    /// so a user config's `set nowrap` runs *after* a plain `set wrap` and
+    /// wins; while startup is still in flight, apply again on `VimEnter`.
+    func installWrap() async throws {
+        _ = try await execLua(Self.installWrapLua, args: [])
+    }
+
+    private static let installWrapLua = """
+        local function apply()
+          vim.o.wrap = true
+          for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+            for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+              vim.wo[win].wrap = true
+            end
+          end
+        end
+        apply()
+        if vim.v.vim_did_enter == 0 then
+          vim.api.nvim_create_autocmd('VimEnter', { once = true, callback = apply })
+        end
+        return true
+        """
 
     func input(_ keys: String) async throws {
         _ = try await session.call("nvim_input", params: [.string(keys)])
@@ -153,8 +178,11 @@ struct NvimClient {
     /// Find the window covering the clicked cell, map the screen row to a
     /// buffer line (`getwininfo` reports window rects in the same global
     /// grid coordinates `nvim_input_mouse` uses), and list that line's
-    /// `vim.diagnostic` entries. Guarded by pcall so nvim versions without
-    /// the module still return an empty list and the click falls through.
+    /// `vim.diagnostic` entries. A wrapped line covers several screen rows,
+    /// so the line is found from `screenpos` rather than by adding the row
+    /// offset to `topline`; a row past the text (the `~` filler) belongs to
+    /// no line. Guarded by pcall so nvim versions without the module still
+    /// return an empty list and the click falls through.
     private static let lineDiagnosticsLua = """
         local row, col = ...
         local target = nil
@@ -168,7 +196,33 @@ struct NvimClient {
           end
         end
         if not target then return { items = {} } end
-        local lnum = target.info.topline + (row + 1 - target.info.winrow)
+        local screen_row = row + 1
+        local last = target.info.botline
+          or vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(target.win))
+        local lnum = nil
+        local start_row = 0
+        for line = target.info.topline, last do
+          local start = vim.fn.screenpos(target.win, line, 1)
+          if start.row == 0 or start.row > screen_row then break end
+          lnum = line
+          start_row = start.row
+        end
+        if lnum then
+          local length = vim.fn.col({ lnum, '$' }) - 1
+          local end_row = start_row
+          if length > 0 then
+            local ending = vim.fn.screenpos(target.win, lnum, length)
+            if ending.row ~= 0 then
+              end_row = ending.row
+            else
+              -- The line is taller than the window, so its tail is
+              -- off-screen; the clicked row is still inside it.
+              end_row = math.huge
+            end
+          end
+          if screen_row > end_row then lnum = nil end
+        end
+        if not lnum then return { items = {} } end
         local items = {}
         local ok, diags = pcall(vim.diagnostic.get, vim.api.nvim_win_get_buf(target.win), { lnum = lnum - 1 })
         if ok then
@@ -184,9 +238,276 @@ struct NvimClient {
         return { lnum = lnum, items = items }
         """
 
+    /// Installs the truncated-line hook: buffer lines whose display width
+    /// exceeds `TRUNC_LIMIT` cells are hidden with `conceal_lines` extmarks
+    /// and replaced by a one-row `virt_lines` preview ending in an ellipsis
+    /// (nvim re-layouts around them; the renderer needs no awareness). The
+    /// preview rows are what `lineFullContent(row:col:)` resolves. Requires
+    /// nvim 0.13+ (see the version gate in the Lua — on 0.12 the feature's
+    /// own extmark layout freezes upward scrolling). Idempotent per nvim
+    /// instance.
+    func installTruncatedLines() async throws -> Bool {
+        let value = try await execLua(Self.truncatedLinesLua, args: [])
+        return value.boolValue ?? false
+    }
+
+    private static let truncatedLinesLua = """
+        local function install()
+          if _G.ineovim_trunc then return true end
+          -- nvim 0.12 miscounts screen rows around conceal_lines + virt_lines
+          -- and its upward-scroll path LOOPS next to preview rows: measured
+          -- on 0.12.5 with this exact layout (conceal_lines runs + one
+          -- virt_lines_above mark per run), the topline bounces 37->35->37
+          -- forever and every line above the run becomes unreachable —
+          -- wheel-up, C-y, everything (upstream neovim#42317, fixed only on
+          -- master by #42480 for 0.13; #42077 documents the wider stuck/
+          -- scrolls-down behavior and is still open; 0.12.6 predates both).
+          -- Re-anchoring the previews below the run's predecessor or dropping
+          -- "n" from 'concealcursor' removes only the hard loop, not the
+          -- row miscounts (also measured on 0.12.5). Until the user's nvim
+          -- carries the fix, the feature stays OFF: over-long lines keep
+          -- their normal wrapped rows and scrolling works everywhere.
+          -- vim.version() exists on 0.10+; anything older (or without it)
+          -- is gated too.
+          local version = type(vim.version) == 'function' and vim.version() or nil
+          if not version or (version.major == 0 and version.minor < 13) then return false end
+          local ns = vim.api.nvim_create_namespace('ineovim_truncation')
+          local limit = 280
+          local state = { buf = nil, lines = {} }
+          _G.ineovim_trunc = state
+
+          -- Display cells the window's text area offers (gutter excluded);
+          -- the preview ends with the ellipsis inside this width so it is
+          -- never clipped off the row.
+          local function text_width(win)
+            local info = vim.fn.getwininfo(win)[1]
+            if not info then return 0 end
+            return info.width - info.textoff
+          end
+
+          -- The first characters of `line` that fit `width` display cells,
+          -- then an ellipsis. Char-wise because Lua string slices are
+          -- byte-based and a cut inside a UTF-8 sequence would paint
+          -- invalid bytes.
+          local function preview(line, width)
+            local max_cells = width - 1
+            local cells = 0
+            local out = {}
+            for index = 0, vim.fn.strchars(line) - 1 do
+              local char = vim.fn.strcharpart(line, index, 1)
+              local w = vim.fn.strwidth(char)
+              if cells + w > max_cells then
+                return table.concat(out) .. '…'
+              end
+              cells = cells + w
+              out[#out + 1] = char
+            end
+            return line
+          end
+
+          local function rescan()
+            local win = vim.api.nvim_get_current_win()
+            local buf = vim.api.nvim_win_get_buf(win)
+            local width = text_width(win)
+            -- Validate BEFORE clearing: a transient zero-width window (UI
+            -- attach, window drags) must not leave the buffer unmarked.
+            if width < 4 then return end
+            if state.buf ~= buf then
+              state.buf = buf
+              state.lines = {}
+            end
+            vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+            state.lines = {}
+            local count = vim.api.nvim_buf_line_count(buf)
+            -- Runs of over-long lines, including one that reaches the
+            -- buffer's last line.
+            local run_start = nil
+            local runs = {}
+            for lnum = 1, count do
+              local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
+              if vim.fn.strwidth(line) > limit then
+                if not run_start then run_start = lnum end
+              elseif run_start then
+                runs[#runs + 1] = { run_start, lnum - 1 }
+                run_start = nil
+              end
+            end
+            if run_start then
+              runs[#runs + 1] = { run_start, count }
+            end
+            for _, run in ipairs(runs) do
+              -- A run covering the whole buffer (first AND last line
+              -- over-long) has no visible line before or after to hang
+              -- previews from — conceal nothing rather than blank it.
+              if not (run[1] == 1 and run[2] == count) then
+                local rows = {}
+                for lnum = run[1], run[2] do
+                  local full = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
+                  if pcall(vim.api.nvim_buf_set_extmark, buf, ns, lnum - 1, 0, {
+                    end_row = lnum - 1, end_col = #full, conceal_lines = '',
+                  }) then
+                    state.lines[lnum] = true
+                    rows[#rows + 1] = { { preview(full, width), 'Comment' } }
+                  end
+                end
+                if rows[1] then
+                  if run[2] < count then
+                    -- Previews hang off the first unconcealed line after
+                    -- the run: a virt mark attached to a conceal_lines-
+                    -- hidden line is swallowed along with it, so the
+                    -- anchor must be outside the run. ONE mark carries
+                    -- the whole run's previews as a multi-row virt_lines
+                    -- list — separate same-anchor marks do NOT draw in
+                    -- creation order (measured on 0.12: the first draws
+                    -- topmost, the rest in reverse, scrambling runs of
+                    -- three or more). Conceal marks are still per line
+                    -- and guarded, so a single rejection cannot abandon
+                    -- the rest of the buffer.
+                    pcall(vim.api.nvim_buf_set_extmark, buf, ns, run[2] + 1 - 1, 0, {
+                      virt_lines = rows,
+                      virt_lines_above = true,
+                    })
+                  else
+                    -- The run reaches the buffer's last line, so there
+                    -- is no following line to hang above. Previews
+                    -- instead hang BELOW the last unconcealed line
+                    -- before the run: they draw right after that line's
+                    -- (possibly wrapped) rows, exactly where the
+                    -- concealed run sat (measured on 0.12: a below-mark
+                    -- on the concealed last line itself is swallowed
+                    -- with it).
+                    pcall(vim.api.nvim_buf_set_extmark, buf, ns, run[1] - 2, 0, {
+                      virt_lines = rows,
+                    })
+                  end
+                end
+              end
+            end
+          end
+
+          -- conceal_lines only collapses when 'conceallevel' is exactly 2
+          -- (measured on 0.12: levels 0 and 1 leave the line drawn), so the
+          -- window option is owned like `wrap` is. 'concealcursor' "nv"
+          -- keeps a truncated line folded even with the cursor on it
+          -- (measured: otherwise the cursor's line always unfolds, which
+          -- read as random lines refusing to collapse); insert mode is left
+          -- out so a line reveals itself for editing the moment the user
+          -- starts typing on it.
+          local function apply_conceal_level()
+            vim.o.conceallevel = 2
+            vim.o.concealcursor = 'nv'
+            for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+              for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+                vim.wo[win].conceallevel = 2
+                vim.wo[win].concealcursor = 'nv'
+              end
+            end
+          end
+
+          -- Rescans are deferred and coalesced: autocmd storms (resize
+          -- drags, rapid typing) then collapse into one scan against the
+          -- settled state instead of racing their own clears. Defined
+          -- AFTER `apply_conceal_level`/`rescan` — a Lua `local function`
+          -- is only visible below its declaration, and a forward reference
+          -- would silently compile to a nil global call.
+          local pending = false
+          local function request_rescan()
+            if pending then return end
+            pending = true
+            vim.schedule(function()
+              pending = false
+              apply_conceal_level()
+              rescan()
+            end)
+          end
+
+          apply_conceal_level()
+          rescan()
+          -- TextChangedP covers insert-completion selections (CTRL-N/p),
+          -- which never fire TextChanged; BufWritePost/SessionLoadPost/
+          -- BufFilePost cover the remaining buffer-identity changes.
+          vim.api.nvim_create_autocmd({
+            'BufAdd', 'BufNewFile', 'BufReadPost', 'BufWinEnter', 'TextChanged',
+            'TextChangedI', 'TextChangedP', 'InsertLeave', 'BufWritePost',
+            'SessionLoadPost', 'BufFilePost', 'VimResized', 'WinResized', 'VimEnter',
+          }, { callback = request_rescan })
+          return true
+        end
+        return install()
+        """
+
+    /// The full text of the buffer line a clicked truncated-line preview row
+    /// stands for, or nil when the cell is not such a preview. `row`/`col`
+    /// are GLOBAL grid coordinates (the same `getwininfo` space the
+    /// diagnostics lookup uses). Each preview is exactly one grid row — virt
+    /// lines do not wrap — but where a run's previews sit depends on its
+    /// anchor: mid-buffer runs hang above the line after the run, while a
+    /// run reaching the buffer's last line hangs below the line before it
+    /// (see `truncatedLinesLua`).
+    func lineFullContent(row: Int, col: Int) async throws -> String? {
+        let value = try await execLua(Self.lineFullContentLua, args: [
+            .int(Int64(row)), .int(Int64(col)),
+        ])
+        return value.stringValue
+    }
+
+    private static let lineFullContentLua = """
+        local row, col = ...
+        local state = _G.ineovim_trunc
+        if not state or not state.buf or not next(state.lines) then return vim.NIL end
+        local target = nil
+        for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          local info = vim.fn.getwininfo(w)[1]
+          if info
+            and row + 1 >= info.winrow and row + 1 < info.winrow + info.height
+            and col + 1 >= info.wincol and col + 1 < info.wincol + info.width then
+            target = { win = w, info = info }
+            break
+          end
+        end
+        if not target then return vim.NIL end
+        local buf = vim.api.nvim_win_get_buf(target.win)
+        if buf ~= state.buf then return vim.NIL end
+        local screen_row = row + 1
+        local count = vim.api.nvim_buf_line_count(buf)
+        for lnum in pairs(state.lines) do
+          local anchor = lnum
+          while state.lines[anchor + 1] do anchor = anchor + 1 end
+          local preview_row = nil
+          if anchor < count then
+            -- The run ends mid-buffer: its previews sit above the first
+            -- unconcealed line after it (the mark anchor), so that line's
+            -- screen row minus the member's distance to the anchor is the
+            -- preview row.
+            anchor = anchor + 1
+            local start = vim.fn.screenpos(target.win, anchor, 1)
+            if start.row ~= 0 then
+              preview_row = start.row - (anchor - lnum)
+            end
+          elseif lnum > 1 then
+            -- The run reaches the buffer's last line: previews hang below
+            -- the line before the run (see rescan). screenpos of that
+            -- line's LAST byte (col 1 when empty) gives its last — possibly
+            -- wrapped — row, so the first preview is the row after it; each
+            -- later member follows one row down.
+            local run_start = lnum
+            while state.lines[run_start - 1] do run_start = run_start - 1 end
+            local pred = vim.api.nvim_buf_get_lines(buf, run_start - 2, run_start - 1, false)[1] or ''
+            local start = vim.fn.screenpos(target.win, run_start - 1, math.max(1, #pred))
+            if start.row ~= 0 then
+              preview_row = start.row + 1 + (lnum - run_start)
+            end
+          end
+          if preview_row and preview_row == screen_row then
+            return vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ''
+          end
+        end
+        return vim.NIL
+        """
+
     /// The viewport metrics of the window covering a grid cell, for the
     /// scroll indicator: which buffer line is at the top, how long the buffer
-    /// is, and how many screen lines the window shows. A single linegrid
+    /// is, and how many buffer lines the window shows. A single linegrid
     /// carries no buffer position of its own (`win_viewport` needs
     /// `ext_multigrid`), so this asks nvim; nil when there is no window.
     func windowScrollMetrics(row: Int, col: Int) async throws -> ScrollMetrics? {
@@ -200,9 +521,9 @@ struct NvimClient {
         guard case let .map(fields) = value,
               let topline = fields[.string("topline")]?.intValue,
               let lineCount = fields[.string("linecount")]?.intValue,
-              let height = fields[.string("height")]?.intValue,
-              height > 0 else { return nil }
-        return ScrollMetrics(topline: topline, lineCount: lineCount, visibleLines: height)
+              let visible = fields[.string("visible")]?.intValue,
+              visible > 0 else { return nil }
+        return ScrollMetrics(topline: topline, lineCount: lineCount, visibleLines: visible)
     }
 
     /// Find the window covering the pointer's cell (`getwininfo` reports
@@ -217,7 +538,9 @@ struct NvimClient {
           return {
             topline = info.topline,
             linecount = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(w)),
-            height = info.height,
+            -- Buffer lines, not screen rows: a wrapped line can cover
+            -- several rows, and the thumb measures the buffer.
+            visible = info.botline - info.topline + 1,
           }
         end
         for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -243,6 +566,33 @@ struct NvimClient {
         return value.boolValue ?? false
     }
 
+    /// Reload the clicked buffer when its file changed on disk. The grid cell
+    /// selects the window rather than relying on mouse input having changed
+    /// the current window first; gutter and footer cells do not trigger a
+    /// check, and insert mode is checked in nvim to avoid a stale UI snapshot.
+    func reloadChangedFile(row: Int, col: Int) async throws -> Bool {
+        let value = try await execLua(Self.reloadChangedFileLua, args: [
+            .int(Int64(row)), .int(Int64(col)),
+        ])
+        return value.boolValue ?? false
+    }
+
+    private static let reloadChangedFileLua = """
+        local row, col = ...
+        if vim.api.nvim_get_mode().mode:sub(1, 1) == 'i' then return false end
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          local info = vim.fn.getwininfo(win)[1]
+          if info
+            and row + 1 >= info.winrow and row + 1 < info.winrow + info.height
+            and col + 1 >= info.wincol and col + 1 < info.wincol + info.width then
+            if col + 1 < info.wincol + (info.textoff or 0) then return false end
+            vim.cmd('checktime ' .. info.bufnr)
+            return true
+          end
+        end
+        return false
+        """
+
     /// Move the cursor in the active window (problems-sheet jump target).
     /// `line` is 1-based, `column` the zero-based byte offset nvim reports.
     func moveCursor(line: Int, column: Int) async throws {
@@ -251,6 +601,140 @@ struct NvimClient {
             args: [.int(Int64(line)), .int(Int64(column))]
         )
     }
+
+    /// The current buffer's name, filetype, and lines, captured for the
+    /// Markdown preview window.
+    func currentBufferSnapshot() async throws -> NvimBufferSnapshot {
+        let value = try await execLua(Self.currentBufferSnapshotLua, args: [])
+        guard case let .map(map) = value else {
+            return NvimBufferSnapshot(name: "", filetype: "", lines: [])
+        }
+        let lines: [String]
+        if case let .array(rawLines)? = map[.string("lines")] {
+            lines = rawLines.compactMap(\.stringValue)
+        } else {
+            lines = []
+        }
+        return NvimBufferSnapshot(
+            name: map[.string("name")]?.stringValue ?? "",
+            filetype: map[.string("filetype")]?.stringValue ?? "",
+            lines: lines
+        )
+    }
+
+    private static let currentBufferSnapshotLua = """
+        local buf = vim.api.nvim_get_current_buf()
+        return {
+          name = vim.api.nvim_buf_get_name(buf),
+          filetype = vim.bo[buf].filetype,
+          lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false),
+        }
+        """
+
+    /// Watch the text areas of the current tabpage's windows and report them
+    /// as `NvimTextLayout.rpcMethod` notifications, so the renderer can draw
+    /// buffer text clear of the gutter. A window's `textoff` changes with
+    /// options (`number`, `signcolumn`, …) and with signs a language server
+    /// or plugin places, which fire no autocmd, so the hook re-checks on each
+    /// redraw — the decoration provider's first callback — and notifies only
+    /// when the layout actually changed. Idempotent per nvim instance.
+    func installTextLayoutHook() async throws -> Bool {
+        let value = try await execLua(Self.textLayoutHookLua, args: [])
+        return value.boolValue ?? false
+    }
+
+    /// The decoration provider only schedules work: the docs allow `vim.rpcnotify`
+    /// in a redraw callback but call anything else experimental, so the scan
+    /// runs from a scheduled function. Redraws can arrive every frame while
+    /// scrolling, so a pending scan collapses them and runs at most every
+    /// 100 ms; the layout is compared with the last one pushed and an
+    /// unchanged one sends nothing.
+    private static let textLayoutHookLua = """
+        if vim.g.ineovim_textlayout_hooked then return true end
+        vim.g.ineovim_textlayout_hooked = true
+        local ns = vim.api.nvim_create_namespace('ineovim_textlayout')
+        local last = nil
+        local pending = false
+        local function collect()
+          local wins = {}
+          for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+            if vim.api.nvim_win_is_valid(win)
+              and vim.api.nvim_win_get_config(win).relative == '' then
+              local info = vim.fn.getwininfo(win)[1]
+              if info and info.textoff > 0 and info.width > info.textoff then
+                wins[#wins + 1] = {
+                  row = info.winrow - 1,
+                  col = info.wincol - 1 + info.textoff,
+                  height = info.height,
+                  width = info.width - info.textoff,
+                }
+              end
+            end
+          end
+          return wins
+        end
+        local function push()
+          local wins = collect()
+          local parts = {}
+          for _, w in ipairs(wins) do
+            parts[#parts + 1] = w.row .. ',' .. w.col .. ',' .. w.height .. ',' .. w.width
+          end
+          local key = table.concat(parts, ';')
+          if key == last then return end
+          local uis = vim.api.nvim_list_uis()
+          local chan = uis and uis[1] and uis[1].chan or 0
+          if chan == 0 then return end
+          last = key
+          vim.rpcnotify(chan, 'ineovim:textlayout', wins)
+        end
+        local function schedule_push()
+          if pending then return end
+          pending = true
+          vim.schedule(function()
+            vim.defer_fn(function()
+              pending = false
+              push()
+            end, 100)
+          end)
+        end
+        vim.api.nvim_set_decoration_provider(ns, { on_start = schedule_push })
+        vim.schedule(push)
+        return true
+        """
+
+    /// Report the embedded nvim's working directory back to the GUI as
+    /// `ineovim:dirchanged` notifications: once after installing, then on
+    /// every `DirChanged`. The GUI persists the last one so the next launch
+    /// starts where the user left off. Idempotent per nvim instance.
+    func installWorkingDirectoryHook() async throws -> Bool {
+        let value = try await execLua(Self.workingDirectoryHookLua, args: [])
+        return value.boolValue ?? false
+    }
+
+    /// `DirChanged` fires for `:cd`, `:tcd`, and `:lcd`. The report is
+    /// scheduled so `getcwd()` reflects the settled state, and a directory
+    /// that repeats the last one sends nothing (a window-local `:lcd` falls
+    /// back to the same global directory, for instance).
+    private static let workingDirectoryHookLua = """
+        if vim.g.ineovim_workingdirectory_hooked then return true end
+        vim.g.ineovim_workingdirectory_hooked = true
+        local last = nil
+        local function push()
+          local uis = vim.api.nvim_list_uis()
+          local chan = uis and uis[1] and uis[1].chan or 0
+          if chan == 0 then return end
+          local cwd = vim.fn.getcwd()
+          if cwd == last then return end
+          last = cwd
+          vim.rpcnotify(chan, 'ineovim:dirchanged', cwd)
+        end
+        vim.api.nvim_create_autocmd('DirChanged', {
+          pattern = '*',
+          callback = function() vim.schedule(push) end,
+        })
+        vim.schedule(push)
+        return true
+        """
 
     /// The diagnostics hook: re-collects the full per-buffer snapshot through
     /// `vim.diagnostic.get` inside the autocmd (instead of trusting the event

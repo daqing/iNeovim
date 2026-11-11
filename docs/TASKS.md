@@ -16,8 +16,10 @@ in Xcode after each task (no command-line builds).
 - **T1.2** Neovim discovery: locate the `nvim` binary (config override → `PATH` →
   common locations such as `/opt/homebrew/bin`, `/usr/local/bin`) and read its
   version (`nvim --version`) to enforce the minimum API level.
-- **T1.3** Decide and document the `ext_multigrid` policy: single-grid for v1,
-  but keep grid IDs in all redraw handling so multigrid can be enabled later.
+- **T1.3** Decide and document the `ext_multigrid` policy: (superseded) the app
+  now attaches with `ext_multigrid` — per-window/float/message grids, per-grid
+  frames, boxes, hit-testing, and scroll leads; see "ext_multigrid policy" in
+  `AGENTS.md`.
 - **T1.4** App lifecycle: launch/terminate the embedded `nvim` together with the
   app (clean teardown on quit, kill on crash).
 - **T1.5** Project hygiene: add `.gitignore` for `xcuserdata/` and other

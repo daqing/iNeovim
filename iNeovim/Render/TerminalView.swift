@@ -1,36 +1,56 @@
 import AppKit
+import Combine
 import CoreText
 import os
 
 /// The terminal surface: hosts the scrollable grid content layer, paints
 /// the background behind it, and routes keyboard, mouse, and scroll input.
 final class TerminalView: NSView {
-    /// Breathing room around the grid on every side. The grid is sized from
-    /// the inset area only, so the last line (statusline/cmdline) can never
+    /// Breathing room above and below the grid. The grid is sized from the
+    /// inset area only, so the last line (statusline/cmdline) can never
     /// touch the window edges.
     static let contentInset: CGFloat = 6
 
+    /// The narrowest right padding that keeps the text clear of the scroll
+    /// indicator: the strip the thumb occupies along the window edge plus a
+    /// 2 pt gap to the text, both measured from where the text actually ends
+    /// — buffer text is drawn `NvimTextLayout.textShift` right of its cells,
+    /// so that shift is reserved again here.
+    static let minimumTrailingPadding: CGFloat =
+        ScrollIndicator.rightInset + ScrollIndicator.width + NvimTextLayout.textShift + 2
+
+    /// Padding used by a view before `apply(settings:)` supplies the user's
+    /// values; also the reset default.
+    static let defaultLeadingPadding: CGFloat = 4
+    static let defaultTrailingPadding: CGFloat = 12
+
+    /// Breathing room from the window's left edge to the grid. The gutter is
+    /// chrome, not text: the gap between it and the buffer text comes from
+    /// `NvimTextLayout.textShift`.
+    private(set) var leadingPadding: CGFloat = TerminalView.defaultLeadingPadding
+
+    /// Breathing room from the grid to the window's right edge, clamped to
+    /// `minimumTrailingPadding` so the scroll thumb never sits on the text.
+    private(set) var trailingPadding: CGFloat = TerminalView.defaultTrailingPadding
+
+    var leadingContentInset: CGFloat { leadingPadding }
+    var trailingContentInset: CGFloat { max(trailingPadding, Self.minimumTrailingPadding) }
+
     /// Extra vertical space between the statusline row and the cmdline row
     /// below it: the last grid row is drawn this far below its uniform slot,
-    /// so the two rows never touch. The last grid row is nvim's message /
-    /// cmdline area; with `laststatus` >= 2 the row above it is the
-    /// statusline.
+    /// so the two rows never touch. The last global grid row is nvim's
+    /// message / cmdline area; with `laststatus` >= 2 the row above it is
+    /// the statusline.
     static let cmdlineGap: CGFloat = 5
 
-    /// Grid rows nvim never scrolls: the statusline row and the cmdline row
-    /// below it. They are drawn by the frozen footer layer, which the scroll
-    /// lead never translates — nvim does not scroll them either.
-    static let frozenFooterRows = 2
-
-    /// View size minus the content inset on both sides and the cmdline gap:
-    /// the area the grid (rows plus gap) may occupy. Grid cell counts must
-    /// always be derived from this, never from the raw bounds, or the grid
-    /// fills the view edge to edge.
-    static func gridAreaSize(_ size: CGSize) -> CGSize {
-        let inset = contentInset * 2
+    /// View size minus the horizontal and vertical insets and the cmdline
+    /// gap: the area the grid (rows plus gap) may occupy. Grid cell counts
+    /// must always be derived from this, never from the raw bounds, or the
+    /// grid fills the view edge to edge.
+    func gridAreaSize(_ size: CGSize) -> CGSize {
         return CGSize(
-            width: max(0, size.width - inset),
-            height: max(0, size.height - inset - cmdlineGap)
+            width: max(0, size.width - leadingContentInset - trailingContentInset),
+            height: max(0, size.height - Self.contentInset * 2 - Self.cmdlineGap)
         )
     }
 
@@ -121,20 +141,44 @@ final class TerminalView: NSView {
     /// Overlay fading the previous theme's rendering out during a light↔dark
     /// flip seen in place (see `crossfadeThemeTransition`).
     private var themeCrossfadeView: NSView?
-    /// The scrolling region: the grid rows above the frozen footer, drawn in
-    /// a layer the scroll lead translates inside `scrollClipLayer`.
-    private let contentLayer: GridContentLayer
-    /// The grid rows nvim never scrolls — the statusline row and the
-    /// cmdline/message row below it — in a layer of their own. Only the
-    /// scrolling region takes the scroll lead, so the statusline text stays
-    /// on its bar instead of sliding off it mid-gesture.
-    private let footerLayer: GridContentLayer
-    /// Clips the scrolling region to the rows above the frozen footer: the
-    /// lead translates that layer, and without this clip a downward lead
-    /// would draw the last text rows over the statusline bar.
-    private let scrollClipLayer = CALayer()
+
+    /// One displayed grid: the content layer plus the clip bounding it. The
+    /// scroll lead translates only the lead box's content layer, inside its
+    /// own clip, so a gesture never smears rows over neighboring grids or
+    /// the statusline bar.
+    final class GridBox {
+        let gridId: Int
+        let contentLayer: GridContentLayer
+        let clipLayer = CALayer()
+
+        init(gridId: Int, metrics: FontMetrics) {
+            self.gridId = gridId
+            self.contentLayer = GridContentLayer(metrics: metrics, gridId: gridId)
+            clipLayer.masksToBounds = true
+            clipLayer.addSublayer(contentLayer)
+            contentLayer.anchorPoint = .zero
+            contentLayer.position = .zero
+        }
+    }
+
+    /// The global grid's box: always present. It paints the screen
+    /// background, vsplit separators, the statusline rows, and the
+    /// message-area fill; window text lives in the boxes above it.
+    private let baseBox: GridBox
+    /// Boxes per displayed grid (windows, floats, the message grid); grid 1
+    /// resolves to `baseBox`.
+    private var boxes: [Int: GridBox] = [:]
+    /// Box ids in draw order (bottom to top): the global grid, the tiled
+    /// window grids, then floats and the message grid by nvim's z order.
+    private var boxOrder: [Int] = [1]
+    /// The grid a scroll gesture grabbed: the only box the lead translates
+    /// and the only one whose nvim scroll confirmations count.
+    private(set) var scrollLeadGrid = 1
+    /// Live presentation offset of the scroll lead, so IME anchoring follows
+    /// the visually-shifted lead content mid-gesture.
+    private var scrollPresentationOffset: CGFloat = 0
     /// Backdrop painting the statusline row with the opposite theme mode's
-    /// default background, stretched to the window edges. The footer layer
+    /// default background, stretched to the window edges. The global grid
     /// keeps that row's cells transparent, so the backdrop shows across the
     /// whole row; the side bands are the part the grid itself can't reach.
     private let statuslineLayer = CALayer()
@@ -143,6 +187,8 @@ final class TerminalView: NSView {
     private let completionPanel = CompletionPanelView()
     /// Native popover listing the diagnostics on a gutter sign's line.
     private let diagnosticPopover = DiagnosticPopover()
+    /// Native popover showing a truncated line's full text (preview-row clicks).
+    private let lineContentPopover = LineContentPopover()
     private let scrollAnimator = ScrollAnimator()
     private let cursorAnimator = CursorAnimator()
     /// The transient overlay scrollbar shown while the wheel or trackpad
@@ -160,10 +206,14 @@ final class TerminalView: NSView {
     private var sessionReady = false
     /// Grid rect of the link currently underlined for ⌘-hover, nil otherwise.
     private var hoveredLinkRect: CellRect?
+    /// The grid the hovered link lives on, so the underline moves between
+    /// the per-grid layers instead of being set on all of them.
+    private var hoveredLinkGrid = 1
     /// Whether the pointing-hand cursor is currently set by a link hover, so
     /// the cursor is only reset when it was ours to change.
     private var linkCursorActive = false
     private var hoverTrackingArea: NSTrackingArea?
+    private var cancellables: Set<AnyCancellable> = []
     /// The view size for which a corrective resize was already attempted; a
     /// rejected request must not be repeated forever.
     private var reconciledViewSize: CGSize?
@@ -176,24 +226,136 @@ final class TerminalView: NSView {
     /// Whether a typed `:terminal` opens the native pane; from settings.
     var nativeTerminalPaneEnabled = true
 
-    /// Both grid layers: the scrolling region and the frozen footer. They are
-    /// fed the same snapshot so the split stays invisible; only the scrolling
-    /// region is translated by the scroll lead.
-    private var gridLayers: [GridContentLayer] { [contentLayer, footerLayer] }
+    /// The content layers of every displayed grid, in draw order (bottom to
+    /// top).
+    private var gridLayers: [GridContentLayer] {
+        boxOrder.compactMap { boxes[$0]?.contentLayer }
+    }
+    /// Apply a fresh snapshot to every box, reconciling the box set with the
+    /// snapshot's frames first: new grids get boxes, gone grids lose them,
+    /// and the z order follows nvim's (base < windows < floats by zindex).
+    private func syncGridBoxes(with snapshot: ScreenSnapshot) {
+        for (gridId, box) in boxes where snapshot.frames[gridId] == nil && gridId != 1 {
+            box.contentLayer.removeFromSuperlayer()
+            box.clipLayer.removeFromSuperlayer()
+            boxes[gridId] = nil
+        }
+        for gridId in snapshot.frames.keys where boxes[gridId] == nil && gridId != 1 {
+            let box = GridBox(gridId: gridId, metrics: metrics)
+            // Boxes come and go with snapshots, long after the view entered
+            // a window: a layer added to the hierarchy directly never gets
+            // AppKit's scale, so every new box needs the display's scale or
+            // its text draws at 1x and blurs on a Retina screen.
+            box.contentLayer.contentsScale = backingScale
+            boxes[gridId] = box
+            layer?.addSublayer(box.clipLayer)
+        }
+        var order: [Int] = [1]
+        var floats: [(Int, GridFrame)] = []
+        for (gridId, frame) in snapshot.frames where gridId != 1 && !frame.hidden {
+            if frame.isFloat || frame.isMessage {
+                floats.append((gridId, frame))
+            } else {
+                order.append(gridId)
+            }
+        }
+        floats.sort { lhs, rhs in
+            let (lhsGrid, lhsFrame) = lhs
+            let (rhsGrid, rhsFrame) = rhs
+            return (lhsFrame.zindex, lhsFrame.compindex, lhsGrid)
+                < (rhsFrame.zindex, rhsFrame.compindex, rhsGrid)
+        }
+        order.append(contentsOf: floats.map { $0.0 })
+        boxOrder = order
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        var zIndex = 0
+        for gridId in order {
+            boxes[gridId]?.clipLayer.zPosition = CGFloat(zIndex)
+            zIndex += 1
+        }
+        CATransaction.commit()
+    }
 
-    /// Apply user settings: font metrics, input switches, and animation
-    /// toggles. Changing the font reflows the grid at the new cell size.
+    /// Place every displayed box at the global position its frame puts it:
+    /// x from the frame column, y from the frame row's global y (which
+    /// carries the cmdline gap when the frame reaches the last row), sized
+    /// to the grid's cells. A hidden frame hides its box instead of
+    /// removing it — nvim flips the same grid in and out.
+    private func updateBoxGeometry() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let snapshot else { return }
+        for gridId in boxOrder {
+            guard let box = boxes[gridId] else { continue }
+            let frame = snapshot.frames[gridId] ?? GridFrame(row: 0, col: 0)
+            let grid = snapshot.grids[gridId]
+            let cellWidth = metrics.cellSize.width
+            box.clipLayer.isHidden = frame.hidden || grid == nil || grid?.isEmpty != false
+            guard let grid, !grid.isEmpty else { continue }
+            box.clipLayer.frame = CGRect(
+                x: leadingContentInset + CGFloat(frame.col) * cellWidth,
+                y: Self.contentInset + box.contentLayer.originY,
+                width: CGFloat(grid.width) * cellWidth + NvimTextLayout.textShift,
+                height: box.contentLayer.bounds.height
+            )
+        }
+        // The thumb spans the rows the content scrolls through — never the
+        // statusline/cmdline rows — but hugs the window edge like a system
+        // scroller.
+        if let grid = snapshot.grid, !grid.isEmpty {
+            let scrollableHeight = grid.height >= 2
+                ? Self.gridRowY(
+                    grid.height - 2,
+                    gridHeight: grid.height,
+                    cellHeight: metrics.cellSize.height
+                )
+                : bounds.height - Self.contentInset
+            scrollIndicator.layout(
+                track: CGRect(x: 0, y: Self.contentInset, width: bounds.width, height: scrollableHeight),
+                isDark: scrollIndicatorIsDark,
+                scale: backingScale
+            )
+        } else {
+            scrollIndicator.layout(
+                track: .zero, isDark: scrollIndicatorIsDark, scale: backingScale
+            )
+        }
+    }
+
+    /// Apply user settings: font metrics, horizontal padding, input switches,
+    /// and animation toggles. Changing the font reflows the grid at the new
+    /// cell size; changing a padding moves the grid and re-requests its size.
     func apply(settings: AppSettings) {
         let font = settings.resolvedFont()
         if metrics.font != font {
             applyMetrics(FontMetrics(font: font))
         }
+        applyPadding(
+            leading: CGFloat(settings.leadingPadding),
+            trailing: CGFloat(settings.trailingPadding)
+        )
         inputSettings = settings.inputSettings
         nativeTerminalPaneEnabled = settings.nativeTerminalPane
         let animations = settings.animationSettings
         scrollController.settings = animations
         scrollAnimator.settings = animations
         cursorAnimator.settings = animations
+    }
+
+    /// Move the grid for a padding change. The layers are repositioned here
+    /// rather than in `layout()` (this view has no layout override), and the
+    /// smaller area re-requests the grid size so nvim reflows its columns.
+    private func applyPadding(leading: CGFloat, trailing: CGFloat) {
+        let clampedTrailing = max(trailing, Self.minimumTrailingPadding)
+        guard leading != leadingPadding || clampedTrailing != trailingPadding else { return }
+        leadingPadding = leading
+        trailingPadding = clampedTrailing
+        updateBoxGeometry()
+        updateStatuslineBar()
+        updateCompletionPanel()
+        requestResize(to: bounds.size)
     }
 
     /// Notified when the embedded session becomes ready. The very first resize
@@ -210,7 +372,7 @@ final class TerminalView: NSView {
     /// resize below.
     private func requestResize(to size: CGSize) {
         reconciledViewSize = nil
-        let area = Self.gridAreaSize(size)
+        let area = gridAreaSize(size)
         let cellCount = ResizeController.cellCount(for: area, cellSize: metrics.cellSize)
         // Record the size so `ui_attach` can use it instead of 80x24.
         model.noteGridSize(cols: cellCount.cols, rows: cellCount.rows)
@@ -225,13 +387,13 @@ final class TerminalView: NSView {
     private func reconcileGridSize(with snapshot: ScreenSnapshot) {
         guard sessionReady, let grid = snapshot.grid, !grid.isEmpty else { return }
         let expected = ResizeController.cellCount(
-            for: Self.gridAreaSize(bounds.size),
+            for: gridAreaSize(bounds.size),
             cellSize: metrics.cellSize
         )
         guard grid.width != expected.cols || grid.height != expected.rows else { return }
         guard reconciledViewSize != bounds.size else { return }
         reconciledViewSize = bounds.size
-        Task { await resizeController.viewDidResize(to: Self.gridAreaSize(bounds.size)) }
+        Task { await resizeController.viewDidResize(to: gridAreaSize(bounds.size)) }
     }
 
     private func applyMetrics(_ newMetrics: FontMetrics) {
@@ -243,14 +405,14 @@ final class TerminalView: NSView {
             }
             gridLayer.setNeedsDisplay()
         }
-        updateFooterGeometry()
-        updateStatuslineLayer()
+        updateBoxGeometry()
+        updateStatuslineBar()
         updateCompletionPanel()
         let size = bounds.size
         Task { [weak self] in
             guard let self else { return }
             await self.resizeController.setCellSize(newMetrics.cellSize)
-            await self.resizeController.viewDidResize(to: Self.gridAreaSize(size))
+            await self.resizeController.viewDidResize(to: gridAreaSize(size))
         }
         reconciledViewSize = nil
     }
@@ -263,41 +425,32 @@ final class TerminalView: NSView {
     ) {
         self.model = model
         self.metrics = metrics
-        self.contentLayer = GridContentLayer(metrics: metrics)
-        self.footerLayer = GridContentLayer(metrics: metrics)
+        self.baseBox = GridBox(gridId: 1, metrics: metrics)
+        self.boxes = [1: self.baseBox]
         self.mouseHandler = MouseHandler(dispatcher: model.inputDispatcher)
         self.scrollController = ScrollController(dispatcher: model.inputDispatcher)
         self.resizeController = ResizeController(cellSize: metrics.cellSize, client: model.client)
         super.init(frame: NSRect(
             origin: .zero,
             size: CGSize(
-                width: metrics.cellSize.width * 80 + Self.contentInset * 2,
+                width: metrics.cellSize.width * 80 + Self.defaultLeadingPadding + Self.defaultTrailingPadding,
                 height: metrics.cellSize.height * 24 + Self.contentInset * 2 + Self.cmdlineGap
             )
         ))
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         layer?.masksToBounds = true
-        // Anchor the scrolling region's top-left to the inset origin, inside
-        // the clip layer that bounds it to the rows above the frozen footer.
-        // Without the anchor the layer is centered on its origin and clipped
-        // out of view; the footer layer is placed by `updateFooterGeometry`
-        // from the grid height.
+        // The bar paints first (below every grid box), the global grid above
+        // it (its statusline-row cells stay transparent so the bar shows
+        // through), then the window/float/message boxes and the indicator —
+        // added and z-ordered as the snapshots report grids.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        contentLayer.rowSlice = .head(excludingTrailing: Self.frozenFooterRows)
-        footerLayer.rowSlice = .tail(count: Self.frozenFooterRows)
-        contentLayer.anchorPoint = .zero
-        contentLayer.position = .zero
-        footerLayer.anchorPoint = .zero
-        scrollClipLayer.masksToBounds = true
-        CATransaction.commit()
         statuslineLayer.opacity = Self.statuslineBarOpacity
         layer?.addSublayer(statuslineLayer)
-        layer?.addSublayer(scrollClipLayer)
-        scrollClipLayer.addSublayer(contentLayer)
-        layer?.addSublayer(footerLayer)
+        layer?.addSublayer(baseBox.clipLayer)
         layer?.addSublayer(scrollIndicator.layer)
+        CATransaction.commit()
         completionPanel.onSelect = { [weak self] index in
             guard let self else { return }
             Task { try? await self.model.client.selectPopupmenuItem(index) }
@@ -316,20 +469,30 @@ final class TerminalView: NSView {
         }
         scrollAnimator.onUpdate = { [weak self] offset in
             guard let self else { return }
-            self.contentLayer.transform = CATransform3DMakeTranslation(0, offset, 0)
+            self.scrollPresentationOffset = offset
+            self.syncLeadTransform()
         }
         cursorAnimator.onUpdate = { [weak self] in
             guard let self else { return }
-            // The cursor glides across the footer boundary when `:` moves it
-            // into the cmdline row, so both layers carry the offset; only the
-            // layer drawing the cursor uses it.
+            // Only the layer drawing the cursor uses the offset; the rest
+            // find no cursor of their own and skip.
             let offset = self.cursorAnimator.offset
-            self.contentLayer.cursorGlideOffset = offset
-            self.footerLayer.cursorGlideOffset = offset
+            for gridLayer in self.gridLayers { gridLayer.cursorGlideOffset = offset }
         }
         imeHandler.onMarkedTextChange = { [weak self] in
             self?.invalidatePreeditRegion()
         }
+        // nvim reports where each window's text begins (after its gutter);
+        // every grid layer needs it to draw text clear of the gutter, and it
+        // can change without a flush — a sign column that appears or
+        // collapses.
+        model.$textRegions
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] regions in
+                guard let self else { return }
+                for gridLayer in gridLayers { gridLayer.textRegions = regions }
+            }
+            .store(in: &cancellables)
         refreshBackgroundColor()
         refreshWindowAppearance()
     }
@@ -347,6 +510,7 @@ final class TerminalView: NSView {
 
     override func keyDown(with event: NSEvent) {
         diagnosticPopover.close()
+        lineContentPopover.close()
         if imeHandler.hasMarkedText {
             // Composition in progress: let the input context route the event
             // to setMarkedText/insertText/doCommand.
@@ -530,13 +694,15 @@ final class TerminalView: NSView {
     }
 
     /// Hold a typed quit command behind a confirmation: `:q` exits the
-    /// embedded nvim, closing the window — or the whole app when it is the
-    /// last one — so a stray quit must be confirmed. Cancel sends `<Esc>`
-    /// instead, leaving the session running.
+    /// embedded nvim, which closes this tab, this window, or the whole app
+    /// when it is the last editor window — so a stray quit must be confirmed,
+    /// in the words of what it will actually do. Cancel sends `<Esc>` instead,
+    /// leaving the session running.
     private func confirmQuit(pendingKeys: String) {
         cmdlineBuffer = ""
+        let window = self.window ?? model.hostWindow
         Task { @MainActor in
-            if QuitConfirmation.present() {
+            if QuitConfirmation.present(QuitConfirmation.scope(for: window)) {
                 model.inputDispatcher.send(.keys(pendingKeys))
             } else {
                 model.inputDispatcher.send(.keys("<Esc>"))
@@ -593,24 +759,28 @@ final class TerminalView: NSView {
     }
 
     /// View-space rect for a character range of the marked text, anchored at
-    /// the cursor cell and wide as the covered cells, plus the content inset
-    /// and the live scroll offset (the frozen footer is not translated, so a
-    /// cursor in the cmdline row anchors at the statusline row instead). IME
-    /// candidate windows anchor to this (see `firstRect(forCharacterRange:)`).
+    /// the cursor cell of whichever grid holds it, plus that grid's global
+    /// offset, the content inset, and the live scroll lead (the lead grid's
+    /// content visually shifts mid-gesture). IME candidate windows anchor to
+    /// this (see `firstRect(forCharacterRange:)`).
     func preeditRect(forCharacterRange range: NSRange) -> CGRect {
-        guard let (layer, rect) = preeditLayerRect(forCharacterRange: range) else { return .zero }
-        return rect.offsetBy(dx: Self.contentInset, dy: layerOriginY(layer))
+        guard let (box, rect) = preeditLayerRect(forCharacterRange: range) else { return .zero }
+        let frame = snapshot?.frames[box.gridId] ?? GridFrame(row: 0, col: 0)
+        return rect.offsetBy(
+            dx: leadingContentInset + CGFloat(frame.col) * metrics.cellSize.width,
+            dy: layerOriginY(box)
+        )
     }
 
     /// The layer drawing the marked text plus the preedit rect within it; nil
     /// when there is nothing to anchor to.
-    private func preeditLayerRect(forCharacterRange range: NSRange) -> (GridContentLayer, CGRect)? {
+    private func preeditLayerRect(forCharacterRange range: NSRange) -> (GridBox, CGRect)? {
         guard imeHandler.hasMarkedText, let host = cursorHost() else { return nil }
         let anchor = host.rect
         let cellWidth = metrics.cellSize.width
         let start = Self.cellOffset(of: imeHandler.markedText, upToUTF16: range.location)
         let end = Self.cellOffset(of: imeHandler.markedText, upToUTF16: range.location + range.length)
-        return (host.layer, CGRect(
+        return (host.box, CGRect(
             x: anchor.minX + CGFloat(start) * cellWidth,
             y: anchor.minY,
             width: CGFloat(max(end - start, 1)) * cellWidth,
@@ -618,27 +788,40 @@ final class TerminalView: NSView {
         ))
     }
 
-    /// The layer drawing the cursor and the cursor's rect within it, so the
-    /// preedit is drawn by whichever layer owns the cursor's row.
-    private func cursorHost() -> (layer: GridContentLayer, rect: CGRect)? {
-        guard let snapshot, let grid = snapshot.grid, !grid.isEmpty else { return nil }
-        let layer = cursorLayer(for: snapshot.cursor, in: snapshot)
-        guard let rect = layer.cursorAnchorRect() else { return nil }
-        return (layer, rect)
+    /// The box drawing the cursor and the cursor's rect within it, so the
+    /// preedit is drawn by the grid the cursor sits on.
+    private func cursorHost() -> (box: GridBox, rect: CGRect)? {
+        guard let snapshot, let box = boxes[snapshot.cursor.grid],
+              let rect = box.contentLayer.cursorAnchorRect() else { return nil }
+        return (box, rect)
     }
 
-    /// The layer that draws a cursor: the frozen footer owns the rows nvim
-    /// never scrolls, everything above lives in the scrolling region.
-    private func cursorLayer(for cursor: CursorState, in snapshot: ScreenSnapshot) -> GridContentLayer {
-        let footerStart = max(0, (snapshot.grid?.height ?? 0) - Self.frozenFooterRows)
-        return cursor.row >= footerStart ? footerLayer : contentLayer
+    /// View-space y of a grid box's local origin: the scroll lead's live
+    /// offset only shifts the lead grid's content.
+    private func layerOriginY(_ box: GridBox) -> CGFloat {
+        Self.contentInset + box.contentLayer.originY
+            + (box.gridId == scrollLeadGrid ? scrollPresentationOffset : 0)
     }
 
-    /// View-space y of a grid layer's local origin: the scrolling region sits
-    /// under the live scroll lead, the frozen footer is never translated.
-    private func layerOriginY(_ layer: GridContentLayer) -> CGFloat {
-        let gridOrigin = layer === footerLayer ? footerLayer.sliceOriginY : scrollAnimator.presentationOffset
-        return Self.contentInset + gridOrigin
+    /// Translate the scroll lead's live offset onto the lead grid's content
+    /// layer; other grids never move mid-gesture.
+    private func syncLeadTransform() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (gridId, box) in boxes {
+            let offset = gridId == scrollLeadGrid ? scrollPresentationOffset : 0
+            box.contentLayer.transform = CATransform3DMakeTranslation(0, offset, 0)
+        }
+        CATransaction.commit()
+    }
+
+    /// Bind the scroll lead to the grid a gesture grabbed: only that box
+    /// visually translates, and only its nvim scroll confirmations count.
+    /// Called by the scroll controller at gesture start.
+    func setScrollLead(_ grid: Int) {
+        guard scrollLeadGrid != grid else { return }
+        scrollLeadGrid = grid
+        syncLeadTransform()
     }
 
     /// Display width in cells for preedit text: wide characters take two,
@@ -663,13 +846,8 @@ final class TerminalView: NSView {
 
     /// Where the marked text was last drawn and in which layer, so clearing
     /// it repaints the layer that drew it — the preedit follows the cursor,
-    /// which can move between the scrolling region and the cmdline row.
+    /// which can move between grids.
     private var lastPreedit: (layer: GridContentLayer, rect: CGRect)?
-
-    /// Live grid dimensions for input translation (mouse cell coordinates).
-    var gridDimensions: (width: Int, height: Int)? {
-        snapshot?.grid.map { ($0.width, $0.height) }
-    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -724,6 +902,7 @@ final class TerminalView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         diagnosticPopover.close()
+        lineContentPopover.close()
         scrollController.scrollWheel(with: event)
     }
 
@@ -755,37 +934,50 @@ final class TerminalView: NSView {
 
     // MARK: - Link opening
 
-    /// The http(s) URL rendered at a grid cell, used by ⌘-click. Read from the
-    /// same snapshot the renderer draws, so it matches what is on screen.
-    func linkTarget(atRow row: Int, col: Int) -> URL? {
-        linkHit(atRow: row, col: col)?.url
+    /// The http(s) URL rendered at a resolved grid hit, used by ⌘-click. Read
+    /// from the same snapshot the renderer draws, so it matches the screen.
+    func linkTarget(at hit: GridHit) -> URL? {
+        linkHit(at: hit)?.url
     }
 
-    /// The URL and the cells it covers at a grid cell, or nil when the cell is
-    /// not part of an http(s) URL.
-    func linkHit(atRow row: Int, col: Int) -> LinkHit? {
-        guard let grid = snapshot?.grid, !grid.isEmpty,
-              row >= 0, row < grid.height, col >= 0, col < grid.width else { return nil }
-        return LinkDetector.hit(in: Array(grid.rowSlice(row)), column: col)
+    /// The URL and the cells it covers at a resolved grid hit, or nil when
+    /// the cell is not part of an http(s) URL.
+    func linkHit(at hit: GridHit) -> LinkHit? {
+        guard let grid = snapshot?.grids[hit.grid], !grid.isEmpty,
+              hit.row >= 0, hit.row < grid.height, hit.col >= 0, hit.col < grid.width else {
+            return nil
+        }
+        return LinkDetector.hit(in: Array(grid.rowSlice(hit.row)), column: hit.col)
     }
 
     /// Underline the link under a view-space point and switch to the
     /// pointing-hand cursor while Command is held over one; clear both
-    /// otherwise.
+    /// otherwise. The underline lives on the hit grid's own layer.
     private func refreshLinkHover(atViewPoint point: CGPoint, commandHeld: Bool) {
+        var hit: GridHit?
         var rect: CellRect?
-        if commandHeld, bounds.contains(point), let cell = gridCell(atViewPoint: point),
-           let hit = linkHit(atRow: cell.row, col: cell.col) {
-            rect = CellRect(
-                minRow: cell.row,
-                minCol: hit.columns.lowerBound,
-                maxRow: cell.row + 1,
-                maxCol: hit.columns.upperBound
-            )
+        if commandHeld, bounds.contains(point) {
+            hit = gridHit(forViewPoint: point)
+            if let hit, let link = linkHit(at: hit) {
+                rect = CellRect(
+                    minRow: hit.row,
+                    minCol: link.columns.lowerBound,
+                    maxRow: hit.row + 1,
+                    maxCol: link.columns.upperBound
+                )
+            }
         }
-        guard rect != hoveredLinkRect else { return }
+        // The same cell rect on a different grid is still a different link.
+        let newGrid = hit?.grid ?? hoveredLinkGrid
+        guard rect != hoveredLinkRect || newGrid != hoveredLinkGrid else { return }
+        if let previous = boxes[hoveredLinkGrid]?.contentLayer {
+            previous.linkUnderline = nil
+        }
         hoveredLinkRect = rect
-        for gridLayer in gridLayers { gridLayer.linkUnderline = rect }
+        hoveredLinkGrid = newGrid
+        if let rect, let layer = boxes[hoveredLinkGrid]?.contentLayer {
+            layer.linkUnderline = rect
+        }
         setLinkCursor(active: rect != nil)
     }
 
@@ -808,49 +1000,87 @@ final class TerminalView: NSView {
         (active ? NSCursor.pointingHand : NSCursor.arrow).set()
     }
 
-    /// View point → grid point, via the same math the mouse handler uses.
-    /// The live scroll lead translates the scrolling region, so the content
-    /// drawn under the pointer is that much further along the grid; the
-    /// frozen footer never moves and is left alone.
-    func gridPoint(forViewPoint point: CGPoint) -> CGPoint {
-        var y = point.y - Self.contentInset
-        if let grid = snapshot?.grid, !grid.isEmpty {
-            let footerTop = Self.gridRowY(
-                max(0, grid.height - Self.frozenFooterRows),
-                gridHeight: grid.height,
-                cellHeight: metrics.cellSize.height
-            )
-            if y < footerTop { y -= scrollAnimator.presentationOffset }
-        }
-        return CGPoint(x: point.x - Self.contentInset, y: y)
+    /// A resolved input target: the grid under a view point and the cell
+    /// within it, plus the global cell the grid's frame puts it at (Lua
+    /// helpers like the diagnostics query still speak global coordinates).
+    struct GridHit {
+        var grid: Int
+        var row: Int
+        var col: Int
+        var globalRow: Int
+        var globalCol: Int
     }
 
-    /// Grid cell under a point in view coordinates.
-    private func gridCell(atViewPoint point: CGPoint) -> (row: Int, col: Int)? {
-        guard let dimensions = gridDimensions else { return nil }
-        return MouseHandler.cellLocation(
-            for: gridPoint(forViewPoint: point),
-            cellSize: metrics.cellSize,
-            gridWidth: dimensions.width,
-            gridHeight: dimensions.height
+    /// View point → the grid and cell under it. Overlays are tested topmost
+    /// first (the message grid, floats by z order — each only where nvim
+    /// enabled the mouse), then the tiled window grids, then the global
+    /// grid; a point over no laid-out cell falls back to the global grid
+    /// clamped, so mouse events still land somewhere sane.
+    func gridHit(forViewPoint point: CGPoint) -> GridHit? {
+        guard let snapshot, let global = snapshot.grid, !global.isEmpty else { return nil }
+        let cellSize = metrics.cellSize
+        for gridId in boxOrder.reversed() {
+            guard let box = boxes[gridId], !box.clipLayer.isHidden else { continue }
+            let frame = snapshot.frames[gridId] ?? GridFrame(row: 0, col: 0)
+            guard frame.mouseEnabled, let grid = snapshot.grids[gridId], !grid.isEmpty else {
+                continue
+            }
+            var localY = point.y - Self.contentInset - box.contentLayer.originY
+            if gridId == scrollLeadGrid {
+                localY -= scrollPresentationOffset
+            }
+            let localX = point.x - leadingContentInset - CGFloat(frame.col) * cellSize.width
+            let row = Int((localY / cellSize.height).rounded(.down))
+            let col = Int((localX / cellSize.width).rounded(.down))
+            guard row >= 0, col >= 0, row < grid.height, col < grid.width else { continue }
+            return GridHit(
+                grid: gridId,
+                row: row,
+                col: col,
+                globalRow: frame.row + row,
+                globalCol: frame.col + col
+            )
+        }
+        let row = Self.gridRow(
+            atY: point.y - Self.contentInset,
+            gridHeight: global.height,
+            cellHeight: cellSize.height
         )
+        let col = min(max(Int((point.x - leadingContentInset) / cellSize.width), 0), global.width - 1)
+        return GridHit(grid: 1, row: row, col: col, globalRow: row, globalCol: col)
+    }
+
+    /// Whether a resolved hit is the vsplit separator immediately to the
+    /// right of the left-edge sidebar window (NERDTree's divider). The mouse
+    /// handler swallows presses there, so nvim cannot start a window resize;
+    /// the sidebar keeps its width and leaves no stale separator columns.
+    func isSidebarSeparator(at hit: GridHit) -> Bool {
+        guard hit.grid == 1, let snapshot else { return false }
+        return snapshot.isSidebarSeparator(row: hit.globalRow, col: hit.globalCol)
     }
 
     // MARK: - Diagnostics popover
 
     /// A plain left click in the sign column (the gutter carrying the
-    /// diagnostic signs): look up the clicked line's `vim.diagnostic`
-    /// entries and show them in a native popover anchored at the clicked
-    /// cell. A line without diagnostics falls back to a normal click,
-    /// forwarded after the lookup.
-    func presentDiagnostics(atRow row: Int, col: Int) {
-        let anchor = signColumnRect(row: row, col: col)
+    /// diagnostic signs): look up the clicked line's `vim.diagnostic` entries
+    /// and show them in a native popover anchored at the clicked cell. A
+    /// line without diagnostics falls back to a normal click, forwarded in
+    /// the hit grid's own coordinates.
+    func presentDiagnostics(at hit: GridHit) {
+        let anchor = signColumnRect(globalRow: hit.globalRow, globalCol: hit.globalCol)
         let themeIsDark = Self.hasDarkBackground(snapshot?.defaultBackground)
+        let grid = hit.grid
+        let row = hit.row
+        let col = hit.col
         Task { @MainActor in
-            let items = (try? await model.client.lineDiagnostics(row: row, col: col)) ?? []
+            // The Lua lookup has no per-window grid API, so it still takes
+            // the global cell.
+            let items = (try? await model.client.lineDiagnostics(
+                row: hit.globalRow, col: hit.globalCol
+            )) ?? []
             guard !items.isEmpty else {
                 model.inputDispatcher.send(.mouse(
-                    button: "left", action: "press", modifier: "", grid: 1, row: row, col: col
+                    button: "left", action: "press", modifier: "", grid: grid, row: row, col: col
                 ))
                 return
             }
@@ -861,15 +1091,56 @@ final class TerminalView: NSView {
     }
 
     /// View-space rect of the clicked gutter cell, two cells wide so the
-    /// popover arrow centers on the sign slot.
-    private func signColumnRect(row: Int, col: Int) -> CGRect {
+    /// popover arrow centers on the sign slot. Anchored at the global cell,
+    /// where the gutter actually sits.
+    private func signColumnRect(globalRow: Int, globalCol: Int) -> CGRect {
         let cell = metrics.cellSize
-        let gridHeight = gridDimensions?.height ?? 0
         return CGRect(
-            x: Self.contentInset + CGFloat(col) * cell.width,
-            y: Self.contentInset + Self.gridRowY(row, gridHeight: gridHeight, cellHeight: cell.height),
+            x: leadingContentInset + CGFloat(globalCol) * cell.width,
+            y: Self.contentInset + globalRowY(globalRow),
             width: cell.width * 2,
             height: cell.height
+        )
+    }
+
+    /// Global-grid y of a global row's top edge (cmdline gap on the last row).
+    private func globalRowY(_ row: Int) -> CGFloat {
+        Self.gridRowY(
+            row,
+            gridHeight: snapshot?.grid?.height ?? 0,
+            cellHeight: metrics.cellSize.height
+        )
+    }
+
+    // MARK: - Truncated line content
+
+    /// Resolves a plain click to a truncated line's full content before the
+    /// click reaches nvim (see `NvimClient.installTruncatedLines`): a
+    /// forwarded click can scroll nvim, which would invalidate the very row
+    /// this query inspects. nil means the row is not a preview row.
+    func truncatedLineContent(at hit: GridHit) async -> String? {
+        guard let content = try? await model.client.lineFullContent(
+            row: hit.globalRow, col: hit.globalCol
+        ), !content.isEmpty else { return nil }
+        return content
+    }
+
+    /// Shows the resolved full line in a popover anchored at the clicked
+    /// preview row. Called instead of forwarding the click, so a preview
+    /// click never disturbs nvim's layout.
+    func presentLineContent(_ content: String, at hit: GridHit) {
+        let cell = metrics.cellSize
+        let rect = CGRect(
+            x: leadingContentInset + CGFloat(hit.globalCol) * cell.width,
+            y: Self.contentInset + globalRowY(hit.globalRow),
+            width: cell.width * 2,
+            height: cell.height
+        )
+        lineContentPopover.present(
+            content: content,
+            relativeTo: rect,
+            of: self,
+            themeIsDark: Self.hasDarkBackground(snapshot?.defaultBackground)
         )
     }
 
@@ -897,27 +1168,27 @@ final class TerminalView: NSView {
         lastPreedit = nil
         for gridLayer in gridLayers { gridLayer.preedit = nil }
         guard imeHandler.hasMarkedText,
-              let (layer, rect) = preeditLayerRect(forCharacterRange: NSRange(
+              let (box, rect) = preeditLayerRect(forCharacterRange: NSRange(
                   location: 0,
                   length: imeHandler.markedText.utf16.count
               )) else {
             if let previous { previous.layer.setNeedsDisplay(previous.rect) }
             return
         }
-        layer.preedit = GridContentLayer.Preedit(
+        box.contentLayer.preedit = GridContentLayer.Preedit(
             text: imeHandler.markedText,
             selection: imeHandler.markedSelection
         )
         var dirty = rect
         if let previous {
-            if previous.layer === layer {
+            if previous.layer === box.contentLayer {
                 dirty = dirty.union(previous.rect)
             } else {
                 previous.layer.setNeedsDisplay(previous.rect)
             }
         }
-        layer.setNeedsDisplay(dirty)
-        lastPreedit = (layer, rect)
+        box.contentLayer.setNeedsDisplay(dirty)
+        lastPreedit = (box.contentLayer, rect)
     }
 
     override func viewDidMoveToWindow() {
@@ -926,10 +1197,10 @@ final class TerminalView: NSView {
         if snapshot == nil {
             connectScreen()
         }
-        // Place the grid layers before anything can draw: an empty clip layer
-        // would hide the scrolling region entirely, and the snapshot may have
-        // arrived while this view was not yet in a window.
-        updateFooterGeometry()
+        // Place the grid boxes before anything can draw: the snapshot may
+        // have arrived while this view was not yet in a window.
+        updateBoxGeometry()
+        updateStatuslineBar()
         // Take focus so typing reaches the editor without requiring a click.
         // Re-assert on the next main-actor turn in case SwiftUI restores focus
         // to another control while the window is being laid out.
@@ -986,8 +1257,8 @@ final class TerminalView: NSView {
         // Fallback colors follow the system appearance; repaint so cells
         // drawn with nvim-packed colors keep showing through where set.
         refreshBackgroundColor()
-        updateFooterGeometry()
-        updateStatuslineLayer()
+        updateBoxGeometry()
+        updateStatuslineBar()
         for gridLayer in gridLayers {
             gridLayer.invalidateShaping()
             gridLayer.setNeedsDisplay()
@@ -1005,8 +1276,8 @@ final class TerminalView: NSView {
     override func setFrameSize(_ newSize: CGSize) {
         super.setFrameSize(newSize)
         requestResize(to: newSize)
-        updateFooterGeometry()
-        updateStatuslineLayer()
+        updateBoxGeometry()
+        updateStatuslineBar()
         updateCompletionPanel()
     }
 
@@ -1052,6 +1323,7 @@ final class TerminalView: NSView {
         updateCursorGlide(previous: previous, next: snapshot)
         crossfadeThemeTransition(from: previous, to: snapshot)
         self.snapshot = snapshot
+        syncGridBoxes(with: snapshot)
         for gridLayer in gridLayers {
             gridLayer.update(snapshot: snapshot)
             gridLayer.invalidate(cellRects: cellRects)
@@ -1060,9 +1332,9 @@ final class TerminalView: NSView {
         // the one-line lead for the rows Neovim just painted in the same
         // frame, before the transform is ever committed on its own.
         scrollController.applyConfirmedOffset()
-        updateFooterGeometry()
+        updateBoxGeometry()
         refreshBackgroundColor()
-        updateStatuslineLayer()
+        updateStatuslineBar()
         updateCompletionPanel()
         refreshWindowAppearance()
         reconcileGridSize(with: snapshot)
@@ -1071,21 +1343,26 @@ final class TerminalView: NSView {
         )
     }
 
-    /// Pull a fresh snapshot on every nvim flush, then invalidate only the
-    /// cells the flush dirtied.
+    /// Pull a fresh snapshot on every nvim flush (any grid's), then
+    /// invalidate only the cells the flush dirtied. A flush's rects belong
+    /// to its grid; each layer clamps them to itself.
     private func connectScreen() {
         let screen = model.screen
         Task { [weak self] in
             guard let self else { return }
             await screen.setFlushHandler { [weak self] grid, cellRects in
-                guard let self, grid == 1 else { return }
+                guard let self else { return }
                 Task { @MainActor in
                     self.scheduleFlushApply(cellRects: cellRects)
                 }
             }
             await screen.setScrollHandler { [weak self] grid, rows, _ in
-                guard let self, grid == 1, rows != 0 else { return }
+                guard let self, rows != 0 else { return }
                 Task { @MainActor in
+                    // Only the gesture's lead grid drives the smooth-scroll
+                    // lead; other windows scrolling (e.g. `:windo`) confirm
+                    // instantly instead.
+                    guard grid == self.scrollLeadGrid else { return }
                     self.scrollController.confirmScroll(rows: rows)
                 }
             }
@@ -1094,13 +1371,14 @@ final class TerminalView: NSView {
             let snapshot = await screen.snapshot()
             guard snapshot.grid != nil else { return }
             self.snapshot = snapshot
+            self.syncGridBoxes(with: snapshot)
             for gridLayer in self.gridLayers {
                 gridLayer.update(snapshot: snapshot)
                 gridLayer.setNeedsDisplay()
             }
-            self.updateFooterGeometry()
+            self.updateBoxGeometry()
             self.refreshBackgroundColor()
-            self.updateStatuslineLayer()
+            self.updateStatuslineBar()
             self.updateCompletionPanel()
             self.refreshWindowAppearance()
             self.refreshLinkHoverFromPointer(
@@ -1140,56 +1418,25 @@ final class TerminalView: NSView {
         return resolved ?? NSColor.textBackgroundColor.cgColor
     }
 
-    /// Place the two grid layers: the clip container spans the rows the
-    /// scroll lead moves (everything above the statusline row) and the frozen
-    /// footer sits at the statusline row's top edge, so its rows land exactly
-    /// where the grid puts them.
-    private func updateFooterGeometry() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-        guard let grid = snapshot?.grid, !grid.isEmpty else {
-            scrollClipLayer.frame = .zero
-            scrollIndicator.layout(
-                track: .zero, isDark: scrollIndicatorIsDark, scale: backingScale
-            )
-            return
-        }
-        let cellHeight = metrics.cellSize.height
-        let footerStart = max(0, grid.height - Self.frozenFooterRows)
-        let footerTop = Self.gridRowY(
-            footerStart, gridHeight: grid.height, cellHeight: cellHeight
-        )
-        scrollClipLayer.frame = CGRect(
-            x: Self.contentInset,
-            y: Self.contentInset,
-            width: CGFloat(grid.width) * metrics.cellSize.width,
-            height: footerTop
-        )
-        footerLayer.position = CGPoint(x: Self.contentInset, y: Self.contentInset + footerTop)
-        // The thumb spans the rows the content scrolls through — never the
-        // frozen footer — but hugs the window edge like a system scroller.
-        scrollIndicator.layout(
-            track: CGRect(x: 0, y: Self.contentInset, width: bounds.width, height: footerTop),
-            isDark: scrollIndicatorIsDark,
-            scale: backingScale
-        )
-    }
-
     /// Paint the statusline row with the opposite theme mode's default
     /// background, stretched to the full window width: themes pick statusline
     /// backgrounds nearly identical to the editor background (monokai pro
     /// dark: #2E323C on #26292C), so the row itself can't be told apart. The
-    /// row above the last grid row is the statusline — the same layout the
-    /// cmdline gap assumes (last row = cmdline area, `laststatus` >= 2). The
-    /// layer sits below the footer layer, whose statusline-row cells stay
-    /// transparent so this fill shows through; the edges are snapped to the
-    /// same pixels the grid layers snap their fills to.
-    private func updateStatuslineLayer() {
+    /// row above the global grid's last row is the statusline — the same
+    /// layout the cmdline gap assumes (last row = cmdline area, `laststatus`
+    /// >= 2). The bar sits below every grid box, and the global grid's
+    /// statusline-row cells stay transparent so this fill shows through; the
+    /// edges are snapped to the same pixels the grid layers snap their fills
+    /// to. A visible message grid covering the row (error messages, the
+    /// hit-enter prompt) takes the row over: the bar hides until the
+    /// messages go away, or it paints a stray band behind them.
+    private func updateStatuslineBar() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        guard let snapshot, let grid = snapshot.grid, !grid.isEmpty, grid.height >= 2 else {
+        guard let snapshot, let grid = snapshot.grid, !grid.isEmpty, grid.height >= 2,
+              !snapshot.messageGridCovers(row: grid.height - 2)
+        else {
             statuslineLayer.frame = .zero
             statuslineLayer.backgroundColor = nil
             return
@@ -1212,9 +1459,10 @@ final class TerminalView: NSView {
     }
 
     /// Place and update the native completion panel from the popup state in
-    /// the snapshot. The anchor cell comes from nvim (it has already picked
-    /// above/below the cursor); the panel flips up when it would overflow
-    /// the bottom edge and clamps inside the view horizontally.
+    /// the snapshot. The anchor cell is local to the popup's own grid (grid 1
+    /// for an in-window menu, the anchor window's grid otherwise); nvim has
+    /// already picked above/below the cursor, and the panel flips up when it
+    /// would overflow the bottom edge and clamps inside the view horizontally.
     private func updateCompletionPanel() {
         guard let popup = snapshot?.popup, let grid = snapshot?.grid, !grid.isEmpty else {
             if !completionPanel.isHidden { completionPanel.isHidden = true }
@@ -1223,15 +1471,18 @@ final class TerminalView: NSView {
         let size = completionPanel.update(
             popup,
             metrics: metrics,
-            maxWidth: bounds.width - Self.contentInset * 2
+            maxWidth: bounds.width - leadingContentInset - trailingContentInset
         )
         let cellWidth = metrics.cellSize.width
         let cellHeight = metrics.cellSize.height
-        let anchorRowTop = Self.contentInset + CGFloat(popup.row) * cellHeight
-        let x = Self.contentInset + CGFloat(popup.col) * cellWidth
-        var y = Self.contentInset + Self.gridRowY(
-            popup.row, gridHeight: grid.height, cellHeight: cellHeight
+        let anchorFrame = snapshot?.frames[popup.grid] ?? GridFrame(row: 0, col: 0)
+        let anchorRow = anchorFrame.row + popup.row
+        let anchorCol = anchorFrame.col + popup.col
+        let anchorRowTop = Self.contentInset + Self.gridRowY(
+            anchorRow, gridHeight: grid.height, cellHeight: cellHeight
         )
+        let x = leadingContentInset + CGFloat(anchorCol) * cellWidth
+        var y = anchorRowTop
         if y + size.height > bounds.height {
             y = anchorRowTop - size.height
         }
@@ -1312,33 +1563,18 @@ final class TerminalView: NSView {
     }
 
     /// Slide the cursor to its new cell instead of jumping; runs before the
-    /// content layer adopts the new snapshot so the previous cell rect is
-    /// still available as the glide origin.
+    /// content layers adopt the new snapshot so the previous cell rect is
+    /// still available as the glide origin. The glide stays inside the
+    /// cursor's own grid — a cursor jumping between grids snaps.
     private func updateCursorGlide(previous: ScreenSnapshot?, next: ScreenSnapshot) {
         guard let previous,
-              previous.cursor.grid == 1, next.cursor.grid == 1,
+              previous.cursor.grid == next.cursor.grid,
               previous.cursor != next.cursor,
-              let grid = next.grid,
-              next.cursor.row >= 0, next.cursor.row < grid.height,
-              next.cursor.col >= 0, next.cursor.col < grid.width,
-              let oldRect = cursorLayer(for: previous.cursor, in: previous).cursorGridRect() else {
+              let box = boxes[next.cursor.grid],
+              let oldRect = box.contentLayer.cursorRestRect(in: previous),
+              let newRect = box.contentLayer.cursorRestRect(in: next) else {
             return
         }
-        let cellSize = metrics.cellSize
-        // A cursor on a double-width char (empty continuation cell beside it)
-        // glides as a two-cell rect so it matches what gets drawn.
-        let wide = next.cursor.col + 1 < grid.width
-            && grid[next.cursor.row, next.cursor.col + 1].text.isEmpty
-        let newRect = CGRect(
-            x: CGFloat(next.cursor.col) * cellSize.width,
-            y: Self.gridRowY(
-                next.cursor.row,
-                gridHeight: grid.height,
-                cellHeight: cellSize.height
-            ),
-            width: cellSize.width * (wide ? 2 : 1),
-            height: cellSize.height
-        )
         let distance = max(
             abs(next.cursor.row - previous.cursor.row),
             abs(next.cursor.col - previous.cursor.col)

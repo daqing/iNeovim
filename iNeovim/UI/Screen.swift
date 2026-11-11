@@ -9,17 +9,27 @@ nonisolated struct CursorState: Equatable, Sendable {
 }
 
 /// The ext_popupmenu completion menu state: items, the selected index
-/// (-1 = none), and the grid cell the panel anchors at.
+/// (-1 = none), and the grid cell the panel anchors at. Under multigrid the
+/// anchor row/col are local to `grid`.
 nonisolated struct PopupState: Equatable, Sendable {
     var items: [PopupItem]
     var selected: Int
     var row: Int
     var col: Int
+    var grid: Int = 1
 }
 
 /// An immutable copy of the applied UI state for one render pass.
 nonisolated struct ScreenSnapshot: Equatable, Sendable {
+    /// The global (root) grid: the screen background, separators, the
+    /// statusline rows, and message-area fill. Window text lives in the
+    /// grids positioned by `frames`.
     var grid: Grid?
+    /// Cell storage per grid id (the renderer draws `grids[gridId]`).
+    var grids: [Int: Grid]
+    /// Layout of every known grid in global coordinates; window grids are
+    /// tiled by `win_pos`, floats by `win_float_pos`/`msg_set_pos`.
+    var frames: [Int: GridFrame]
     var highlights: HighlightStore
     var defaultForeground: Int?
     var defaultBackground: Int?
@@ -30,9 +40,57 @@ nonisolated struct ScreenSnapshot: Equatable, Sendable {
     var modeName: String?
     var popup: PopupState?
 
+    /// True when `(row, col)` is the vsplit separator immediately to the
+    /// right of a tiled window pinned to the screen's left edge — the
+    /// NERDTree-style sidebar. Nvim resizes that window when the separator is
+    /// dragged and leaves a separator behind at every column it crosses, so
+    /// the app swallows presses there instead of forwarding them.
+    nonisolated func isSidebarSeparator(row: Int, col: Int) -> Bool {
+        guard let global = grid, !global.isEmpty,
+              row >= 0, row < global.height, col >= 0, col < global.width else {
+            return false
+        }
+        func tiledWindow(row: Int, col: Int) -> (frame: GridFrame, width: Int)? {
+            for (id, frame) in frames
+            where id != 1 && !frame.hidden && !frame.isFloat && !frame.isMessage {
+                guard let window = grids[id], !window.isEmpty else { continue }
+                if row >= frame.row, row < frame.row + window.height,
+                   col >= frame.col, col < frame.col + window.width {
+                    return (frame, window.width)
+                }
+            }
+            return nil
+        }
+        guard let left = tiledWindow(row: row, col: col - 1),
+              let right = tiledWindow(row: row, col: col + 1),
+              left.frame.col == 0,
+              left.frame.col + left.width == col,
+              right.frame.col == col + 1 else {
+            return false
+        }
+        return true
+    }
+
     var cursorModeInfo: ModeInfo? {
         guard modes.indices.contains(modeIndex) else { return nil }
         return modes[modeIndex]
+    }
+
+    /// True when a visible message grid (placed by `msg_set_pos`) covers the
+    /// global row. While messages occupy the bottom rows — error text, the
+    /// hit-enter prompt — nvim rails the screen and the row above the last
+    /// row carries a message, not the statusline, so the inverted statusline
+    /// bar must stay off it.
+    func messageGridCovers(row: Int) -> Bool {
+        guard let screenHeight = grid?.height else { return false }
+        for (id, frame) in frames where frame.isMessage && !frame.hidden {
+            guard let messageGrid = grids[id], messageGrid.height > 0 else { continue }
+            // The message grid's capacity is a full screen, so its rows can
+            // extend past the global grid; coverage stops at the bottom row.
+            let bottom = min(frame.row + messageGrid.height, screenHeight)
+            if frame.row <= row, row < bottom { return true }
+        }
+        return false
     }
 }
 
@@ -62,6 +120,11 @@ nonisolated struct CellRect: Equatable, Sendable {
 /// from here instead of touching raw msgpack or events.
 actor Screen {
     private(set) var grids: [Int: Grid] = [:]
+    /// Layout (global position, visibility, z-order, viewport) per grid, from
+    /// the multigrid events. Grid 1 is implicit: full-size at the origin.
+    private(set) var frames: [Int: GridFrame] = [:]
+    /// The grid currently displaying messages/cmdline, from `msg_set_pos`.
+    private var messageGrid: Int?
     private(set) var highlights = HighlightStore()
     private(set) var defaultForeground: Int?
     private(set) var defaultBackground: Int?
@@ -74,6 +137,15 @@ actor Screen {
     private(set) var popup: PopupState?
     private var consumeTask: Task<Void, Never>?
     private var dirtyRects: [Int: [CellRect]] = [:]
+    private struct CellPosition: Hashable {
+        var row: Int
+        var col: Int
+    }
+    private var separatorCells: Set<CellPosition> = []
+    /// The character nvim paints in a vsplit separator column (`│` unless
+    /// 'fillchars' overrides it), learned from the cells the layout requires.
+    private var separatorGlyph = "\u{2502}"
+    private var globalLayoutChanged = false
 
     /// Called on the screen's executor once per `flush` for every grid that
     /// received events since the previous flush, with the dirty regions in
@@ -136,10 +208,13 @@ actor Screen {
             markGridDirty(grid)
         case let .gridResize(grid, width, height):
             grids[grid, default: Grid(id: grid)].resize(width: width, height: height)
+            globalLayoutChanged = true
             markGridDirty(grid)
         case let .gridDestroy(grid):
             if grid != 1 {
                 grids[grid] = nil
+                frames[grid] = nil
+                globalLayoutChanged = true
             }
         case let .cursorGoto(grid, row, col):
             markCursorDirty(cursor.grid, cursor.row, cursor.col)
@@ -164,13 +239,90 @@ actor Screen {
             self.title = title
             titleHandler?(title)
         case let .popupmenuShow(items, selected, row, col, grid):
-            guard grid == 1 else { break }
-            popup = PopupState(items: items, selected: selected, row: row, col: col)
+            popup = PopupState(items: items, selected: selected, row: row, col: col, grid: grid)
         case let .popupmenuSelect(selected):
             popup?.selected = selected
         case .popupmenuHide:
             popup = nil
+        case let .winPos(grid, row, col, width, height):
+            var gridState = grids[grid, default: Grid(id: grid)]
+            gridState.resize(width: width, height: height)
+            grids[grid] = gridState
+            frames[grid] = GridFrame(row: row, col: col)
+            globalLayoutChanged = true
+            markGridDirty(grid)
+        case let .winFloatPos(grid, anchorGrid, anchorRow, anchorCol, corner, mouseEnabled, zindex, compindex, screenRow, screenCol):
+            if grids[grid] == nil { grids[grid] = Grid(id: grid) }
+            var frame = GridFrame(
+                row: 0, col: 0, isFloat: true, mouseEnabled: mouseEnabled,
+                zindex: zindex, compindex: compindex,
+                anchor: FloatAnchor(
+                    grid: anchorGrid, row: anchorRow, col: anchorCol, corner: corner
+                )
+            )
+            if let screenRow, let screenCol {
+                frame.row = Int(screenRow.rounded())
+                frame.col = Int(screenCol.rounded())
+            } else {
+                let base = floatAnchorBase(grid: anchorGrid)
+                let width = grids[grid]?.width ?? 0
+                let height = grids[grid]?.height ?? 0
+                switch corner {
+                case "NW":
+                    frame.row = base.row + Int(anchorRow.rounded())
+                    frame.col = base.col + Int(anchorCol.rounded())
+                case "NE":
+                    frame.row = base.row + Int(anchorRow.rounded())
+                    frame.col = base.col + Int(anchorCol.rounded()) - width
+                case "SW":
+                    frame.row = base.row + Int(anchorRow.rounded()) - height
+                    frame.col = base.col + Int(anchorCol.rounded())
+                default: // "SE"
+                    frame.row = base.row + Int(anchorRow.rounded()) - height
+                    frame.col = base.col + Int(anchorCol.rounded()) - width
+                }
+            }
+            frames[grid] = frame
+            globalLayoutChanged = true
+            markGridDirty(grid)
+        case let .winExternalPos(grid):
+            // No desktop-window representation: keep the grid's cells but
+            // stop displaying it.
+            frames[grid]?.hidden = true
+            globalLayoutChanged = true
+        case let .winHide(grid):
+            frames[grid]?.hidden = true
+            globalLayoutChanged = true
+        case let .winClose(grid):
+            frames[grid] = nil
+            globalLayoutChanged = true
+        case let .msgSetPos(grid, row, _, zindex, compindex):
+            guard grid != 0 else {
+                if let messageGrid { frames[messageGrid]?.hidden = true }
+                messageGrid = nil
+                return
+            }
+            messageGrid = grid
+            if grids[grid] == nil { grids[grid] = Grid(id: grid) }
+            frames[grid] = GridFrame(
+                row: row, col: 0, isMessage: true,
+                zindex: zindex, compindex: compindex
+            )
+            markGridDirty(grid)
+        case let .winViewport(grid, topline, botline, curline, curcol, lineCount, scrollDelta):
+            frames[grid]?.viewport = GridViewport(
+                topline: topline, botline: botline, curline: curline,
+                curcol: curcol, lineCount: lineCount, scrollDelta: scrollDelta
+            )
+        case .winViewportMargins:
+            break
+        case let .gridMouseEnabled(grid, enabled):
+            frames[grid]?.mouseEnabled = enabled
         case .flush:
+            if globalLayoutChanged {
+                reconcileGlobalGrid()
+                globalLayoutChanged = false
+            }
             for (grid, rects) in dirtyRects {
                 flushHandler?(grid, rects)
             }
@@ -181,6 +333,117 @@ actor Screen {
             scrollDeltas = [:]
         case let .unknown(name):
             Log.render.debug("Ignoring unknown redraw event \(name, privacy: .public)")
+        }
+    }
+
+    /// The absolute position a float's anchor resolves against: the anchor
+    /// grid's own frame origin (grid 1 spans the screen from the origin).
+    /// An anchor grid that has no frame yet (or is grid 1) anchors to the
+    /// origin — nvim always orders float events after their anchor is placed.
+    private func floatAnchorBase(grid id: Int) -> (row: Int, col: Int) {
+        guard id != 1, let frame = frames[id] else { return (0, 0) }
+        return (frame.row, frame.col)
+    }
+
+    /// Nvim paints the parts of the frame that live outside the window grids —
+    /// vsplit separators and every window's statusline — into the global grid,
+    /// and does not erase them when the layout changes. Two kinds of leftovers
+    /// then show through the window grids, whose default-background cells are
+    /// transparent: a separator that the closed window left behind, and the
+    /// statusline of a window that expanded over the row it used to occupy
+    /// (closing a split moves the surviving window's statusline down and the
+    /// old row becomes ordinary buffer rows).
+    ///
+    /// A separator drag resizes the window one column per mouse event, painting
+    /// a separator at every intermediate column; because redraw batches are
+    /// coalesced, the frames only show the edge before and after a burst, and
+    /// a fast back-and-forth drag can sweep far outside those two endpoints.
+    /// So reconcile once per flush against the final layout: clear every
+    /// separator glyph the layout no longer requires and every global cell
+    /// that a visible tiled window's text area covers — inside those
+    /// rectangles the window's own grid is the only owner.
+    private func reconcileGlobalGrid() {
+        guard let global = grids[1], !global.isEmpty else {
+            separatorCells = []
+            return
+        }
+        var current: Set<CellPosition> = []
+        var windowRows: Set<Int> = []
+        var windowAreas: [CellRect] = []
+        for (id, frame) in frames
+        where id != 1 && !frame.hidden && !frame.isFloat && !frame.isMessage {
+            guard let window = grids[id], !window.isEmpty else { continue }
+            let top = max(0, frame.row)
+            let bottom = min(global.height, frame.row + window.height)
+            guard top < bottom else { continue }
+            windowRows.formUnion(top..<bottom)
+            let left = max(0, frame.col)
+            let right = min(global.width, frame.col + window.width)
+            if left < right {
+                windowAreas.append(CellRect(
+                    minRow: top, minCol: left, maxRow: bottom, maxCol: right
+                ))
+            }
+            let col = frame.col - 1
+            guard frame.col > 0, col < global.width else { continue }
+            for row in top..<bottom {
+                current.insert(CellPosition(row: row, col: col))
+            }
+        }
+        // The separator glyph is part of the theme ('fillchars' vert); learn it
+        // from a required separator cell rather than assuming the default.
+        for sample in current where sample.row < global.height && sample.col < global.width {
+            let text = global[sample.row, sample.col].text
+            if !text.isEmpty, text != " " {
+                separatorGlyph = text
+                break
+            }
+        }
+
+        var stale = separatorCells.subtracting(current)
+        // Clear every leftover separator glyph in the tiled window rows. The
+        // recorded set only knows the last reconciled layout; a coalesced drag
+        // can have left bars at columns the frames never reported, including
+        // columns outside the old/new edge span when the drag reversed.
+        for row in windowRows where row < global.height {
+            for col in 0..<global.width {
+                let cell = CellPosition(row: row, col: col)
+                if !current.contains(cell), global[row, col].text == separatorGlyph {
+                    stale.insert(cell)
+                }
+            }
+        }
+        // Nothing in the global grid belongs under a window's own cells: the
+        // window grid draws that area, so a stale statusline row left there
+        // would show through every cell whose background is the default.
+        // Required separators are exempt: a frame's width can nominally reach
+        // the separator column that the next window's frame claims (the widths
+        // arrive independently), and that column must survive.
+        for area in windowAreas {
+            for row in area.minRow..<area.maxRow {
+                for col in area.minCol..<area.maxCol where global[row, col] != GridCell() {
+                    let cell = CellPosition(row: row, col: col)
+                    if !current.contains(cell) { stale.insert(cell) }
+                }
+            }
+        }
+        separatorCells = current
+        guard !stale.isEmpty else { return }
+        let cells = stale.filter {
+            $0.row >= 0 && $0.row < global.height && $0.col >= 0 && $0.col < global.width
+        }.sorted { ($0.col, $0.row) < ($1.col, $1.row) }
+        guard !cells.isEmpty else { return }
+        var updated = global
+        for cell in cells {
+            updated.applyLine(
+                row: cell.row,
+                colStart: cell.col,
+                runs: [GridCellRun(text: " ", attrId: 0, count: 1)]
+            )
+        }
+        grids[1] = updated
+        for cell in cells {
+            markDirty(1, .cell(cell.row, cell.col))
         }
     }
 
@@ -244,6 +507,8 @@ actor Screen {
     func snapshot() -> ScreenSnapshot {
         ScreenSnapshot(
             grid: grids[1],
+            grids: grids,
+            frames: frames,
             highlights: highlights,
             defaultForeground: defaultForeground,
             defaultBackground: defaultBackground,
@@ -277,6 +542,8 @@ actor Screen {
         consumeTask?.cancel()
         consumeTask = nil
         grids = [:]
+        frames = [:]
+        messageGrid = nil
         highlights = HighlightStore()
         defaultForeground = nil
         defaultBackground = nil
@@ -289,5 +556,7 @@ actor Screen {
         popup = nil
         dirtyRects = [:]
         scrollDeltas = [:]
+        separatorCells = []
+        globalLayoutChanged = false
     }
 }

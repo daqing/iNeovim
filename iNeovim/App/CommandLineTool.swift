@@ -10,7 +10,7 @@ import os
 enum CommandLineTool {
     static let commandName = "ineovim"
     static let bundleIdentifier = "com.mzevo.iNeovim"
-    static let urlScheme = "ineovim"
+    nonisolated static let urlScheme = "ineovim"
 
     private static let scriptMarker = "# iNeovim command-line launcher"
 
@@ -37,7 +37,9 @@ enum CommandLineTool {
     /// The window's directory follows the arguments: the first one's
     /// directory (or the argument itself when it is a directory), falling
     /// back to the shell's directory when there is no argument.
-    static func openRequest(from url: URL) -> OpenRequest? {
+    /// nonisolated: pure URL/path parsing, callable from any isolation
+    /// (the NSApplicationDelegate open callback is not MainActor).
+    nonisolated static func openRequest(from url: URL) -> OpenRequest? {
         guard url.scheme?.lowercased() == urlScheme, url.host == "open",
               let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: true)?.queryItems,
               let payload = queryItems.first(where: { $0.name == "payload" })?.value,
@@ -56,7 +58,7 @@ enum CommandLineTool {
     /// A path argument decides the directory — running `ineovim
     /// /elsewhere/file.go` from `$HOME` opens the window in `/elsewhere`,
     /// not in `$HOME`. A directory argument is its own target.
-    private static func workingDirectory(for files: [URL], fallback: URL) -> URL {
+    nonisolated private static func workingDirectory(for files: [URL], fallback: URL) -> URL {
         guard let first = files.first else { return fallback }
         var isDirectory: ObjCBool = false
         if FileManager.default.fileExists(atPath: first.path, isDirectory: &isDirectory),
@@ -66,7 +68,7 @@ enum CommandLineTool {
         return first.deletingLastPathComponent()
     }
 
-    private static func decodePayload(_ payload: String) -> [String]? {
+    nonisolated private static func decodePayload(_ payload: String) -> [String]? {
         var base64 = payload
             .replacingOccurrences(of: "-", with: "+")
             .replacingOccurrences(of: "_", with: "/")
@@ -87,7 +89,7 @@ enum CommandLineTool {
         return components.isEmpty ? nil : components
     }
 
-    private static func resolvePath(_ path: String, relativeTo directory: URL?) -> URL {
+    nonisolated private static func resolvePath(_ path: String, relativeTo directory: URL?) -> URL {
         let expanded = (path as NSString).expandingTildeInPath
         if expanded.hasPrefix("/") {
             return URL(fileURLWithPath: expanded).standardizedFileURL

@@ -15,6 +15,8 @@ final class AppSettingsTests: XCTestCase {
         let settings = AppSettings(defaults: makeDefaults())
         XCTAssertEqual(settings.fontFamily, "")
         XCTAssertEqual(settings.fontSize, Double(FontMetrics.defaultSize))
+        XCTAssertEqual(settings.leadingPadding, Double(TerminalView.defaultLeadingPadding))
+        XCTAssertEqual(settings.trailingPadding, Double(TerminalView.defaultTrailingPadding))
         XCTAssertFalse(settings.optionAsMeta)
         XCTAssertFalse(settings.passCmdKeysThrough)
         XCTAssertTrue(settings.scrollAnimationEnabled)
@@ -42,13 +44,21 @@ final class AppSettingsTests: XCTestCase {
         let defaults = makeDefaults()
         let first = AppSettings(defaults: defaults)
         first.fontSize = 18
+        first.leadingPadding = 10
+        first.trailingPadding = 20
         first.optionAsMeta = true
         first.nativeTerminalPane = false
 
         let second = AppSettings(defaults: defaults)
         XCTAssertEqual(second.fontSize, 18)
+        XCTAssertEqual(second.leadingPadding, 10)
+        XCTAssertEqual(second.trailingPadding, 20)
         XCTAssertTrue(second.optionAsMeta)
         XCTAssertFalse(second.nativeTerminalPane)
+    }
+
+    func testMonospacedFamiliesIncludeInstalledFixedPitchFamilies() {
+        XCTAssertTrue(AppSettings.monospacedFamilies().contains("Menlo"))
     }
 
     func testResolvedFontUsesRequestedSize() {
@@ -61,6 +71,8 @@ final class AppSettingsTests: XCTestCase {
         let settings = AppSettings(defaults: makeDefaults())
         settings.fontFamily = "Menlo"
         settings.fontSize = 22
+        settings.leadingPadding = 10
+        settings.trailingPadding = 20
         settings.optionAsMeta = true
         settings.scrollAnimationEnabled = false
         settings.nativeTerminalPane = false
@@ -69,6 +81,8 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(settings.fontFamily, "")
         XCTAssertEqual(settings.fontSize, Double(FontMetrics.defaultSize))
+        XCTAssertEqual(settings.leadingPadding, Double(TerminalView.defaultLeadingPadding))
+        XCTAssertEqual(settings.trailingPadding, Double(TerminalView.defaultTrailingPadding))
         XCTAssertFalse(settings.optionAsMeta)
         XCTAssertTrue(settings.scrollAnimationEnabled)
         XCTAssertTrue(settings.nativeTerminalPane)

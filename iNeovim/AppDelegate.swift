@@ -95,15 +95,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
             switch (modifiers, key) {
             case (.command, "d"):
-                return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimTerminalPaneChord() } ? nil : event
             case (.control, "`"):
-                return MainActor.assumeIsolated(Self.claimTerminalPaneChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimTerminalPaneChord() } ? nil : event
             case (.command, "p"):
-                return MainActor.assumeIsolated(Self.claimProblemsPanelChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimProblemsPanelChord() } ? nil : event
             case (.command, "l"):
-                return MainActor.assumeIsolated(Self.claimEditorFocusChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimEditorFocusChord() } ? nil : event
             case (.command, "r"):
-                return MainActor.assumeIsolated(Self.claimTerminalPaneFocusChord) ? nil : event
+                return MainActor.assumeIsolated { Self.claimMarkdownOrTerminalChord() } ? nil : event
             default:
                 return event
             }
@@ -145,13 +145,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// ⌘R focuses the terminal pane, opening it when it is hidden. A local
-    /// monitor sees the keydown before the responder chain and before
-    /// Ghostty's `SurfaceView.performKeyEquivalent`, so the chord works while
-    /// the pane already owns the keyboard.
-    private static func claimTerminalPaneFocusChord() -> Bool {
+    /// ⌘R previews the current Markdown buffer in a separate reading window.
+    /// Every other buffer keeps the chord's old meaning: focus the terminal
+    /// pane, opening it when it is hidden. A local monitor sees the keydown
+    /// before the responder chain and before Ghostty's
+    /// `SurfaceView.performKeyEquivalent`, so the chord works while the pane
+    /// already owns the keyboard.
+    private static func claimMarkdownOrTerminalChord() -> Bool {
         guard NSApp.modalWindow == nil else { return false }
-        AppModel.active?.focusTerminalPane()
+        AppModel.active?.handleCmdR()
         return true
     }
 
@@ -175,6 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Log.app.info("Application will terminate")
+        // Remember where the user was, before the sessions go away, so the
+        // next launch by clicking the app resumes there.
+        AppModel.persistWorkingDirectory(AppModel.active?.currentWorkingDirectory)
         for model in AppModel.live {
             model.beginShutdown()
             Task { await model.shutdownSession() }
@@ -268,7 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ?? (sender as? NSWindow)
             ?? NSApp.keyWindow
         guard let window else { return }
-        guard QuitConfirmation.present() else { return }
+        guard QuitConfirmation.present(QuitConfirmation.scope(for: window)) else { return }
         let hasOtherWindows = AppModel.live.count > 1
             || (window.tabGroup?.windows.count ?? 0) > 1
         if !hasOtherWindows {
@@ -327,6 +332,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // `pumpCommandLineRequests`); later windows never do.
             if launchWindowModel == nil, !launchWindowTookRequest {
                 launchWindowModel = model
+                // It is also the only window that resumes in the last saved
+                // working directory instead of `$HOME`.
+                model.isLaunchWindow = true
             }
         }
         // The red close button goes through the same confirmation a typed

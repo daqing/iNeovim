@@ -268,14 +268,287 @@ final class ScreenTests: XCTestCase {
         XCTAssertNil(snapshot.popup)
     }
 
-    func testPopupmenuIgnoresForeignGridsAndSelectWithoutShow() async {
+    func testPopupmenuAcceptsAnyGrid() async {
         let screen = Screen()
         await screen.apply(.popupmenuShow(items: [PopupItem(word: "x")], selected: 0, row: 0, col: 0, grid: 2))
-        var snapshot = await screen.snapshot()
-        XCTAssertNil(snapshot.popup)
+        let snapshot = await screen.snapshot()
+        // The completion panel anchors inside the popup's own grid, so a
+        // float window's grid is a valid anchor target.
+        XCTAssertEqual(snapshot.popup?.grid, 2)
+    }
 
+    func testPopupmenuSelectWithoutShowIsIgnored() async {
+        let screen = Screen()
         await screen.apply(.popupmenuSelect(2))
-        snapshot = await screen.snapshot()
+        let snapshot = await screen.snapshot()
         XCTAssertNil(snapshot.popup)
+    }
+
+    // MARK: - ext_multigrid layout
+
+    func testWinPosLaysOutWindowGrid() async {
+        let screen = Screen()
+        await screen.apply(.winPos(grid: 2, row: 0, col: 46, width: 44, height: 26))
+        await screen.apply(.winHide(grid: 2))
+
+        let snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.frames[2]?.hidden, true)
+        XCTAssertEqual(snapshot.grids[2]?.width, 44)
+    }
+
+    func testWinFloatPosComputesNorthWestPlacement() async {
+        let screen = Screen()
+        await screen.apply(.winFloatPos(
+            grid: 5, anchorGrid: 1, anchorRow: 5.0, anchorCol: 10.0,
+            corner: "NW", mouseEnabled: true, zindex: 50, compindex: 1,
+            screenRow: 5, screenCol: 10
+        ))
+
+        let snapshot = await screen.snapshot()
+        let frame = snapshot.frames[5]
+        XCTAssertEqual(frame?.row, 5)
+        XCTAssertEqual(frame?.col, 10)
+        XCTAssertEqual(frame?.isFloat, true)
+        XCTAssertEqual(frame?.zindex, 50)
+    }
+
+    func testWinFloatPosFallsBackToAnchorMathWithoutScreenCoords() async {
+        let screen = Screen()
+        await screen.apply(.winFloatPos(
+            grid: 5, anchorGrid: 1, anchorRow: 3.0, anchorCol: 4.0,
+            corner: "SE", mouseEnabled: false, zindex: 50, compindex: 1,
+            screenRow: nil, screenCol: nil
+        ))
+
+        let snapshot = await screen.snapshot()
+        let frame = snapshot.frames[5]
+        // A SE-anchored float's top-left corner sits anchorRow/anchorCol
+        // cells up and left of the anchor point.
+        XCTAssertEqual(frame?.row, -3)
+        XCTAssertEqual(frame?.col, -4)
+        XCTAssertEqual(frame?.mouseEnabled, false)
+    }
+
+    func testWindowLayoutChangeClearsStaleVerticalSeparators() async {
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 0, width: 80, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 48, height: 22))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        for row in [0, 21] {
+            await screen.apply(.gridLine(grid: 1, row: row, colStart: 31, runs: [
+                GridCellRun(text: "│", attrId: 927, count: 1),
+            ]))
+        }
+        await screen.apply(.flush)
+
+        let flushed = Box<[Int: [CellRect]]>([:])
+        await screen.setFlushHandler { grid, rects in flushed.value[grid] = rects }
+        await screen.apply(.winClose(grid: 4))
+        await screen.apply(.gridDestroy(grid: 4))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 0, width: 80, height: 22))
+        await screen.apply(.flush)
+
+        let snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.grid?[0, 31], GridCell())
+        XCTAssertEqual(snapshot.grid?[21, 31], GridCell())
+        XCTAssertEqual(flushed.value[1], [
+            CellRect(minRow: 0, minCol: 31, maxRow: 22, maxCol: 32),
+        ])
+    }
+
+    func testFastSeparatorDragClearsEveryIntermediateColumn() async {
+        // Dragging the NERDTree/editor divider resizes the window one column
+        // per mouse event. Nvim paints a separator at every intermediate
+        // boundary and never erases the ones it leaves behind. A fast drag
+        // coalesces many of those layout changes into one flush, so the app
+        // sees only the final edge position; it must still clear every stale
+        // separator, including columns the edge crossed when it reversed
+        // direction, or the sidebar ends up striped with vertical bars.
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.gridResize(grid: 4, width: 31, height: 22))
+        await screen.apply(.gridResize(grid: 2, width: 48, height: 22))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 48, height: 22))
+        for row in [0, 21] {
+            await screen.apply(.gridLine(grid: 1, row: row, colStart: 31, runs: [
+                GridCellRun(text: "│", attrId: 927, count: 1),
+            ]))
+        }
+        await screen.apply(.flush)
+
+        // The edge sweeps left to column 2 and then right to 55 between two
+        // flushes; nvim left a separator at every column it crossed.
+        for col in 2...55 {
+            for row in [0, 21] {
+                await screen.apply(.gridLine(grid: 1, row: row, colStart: col, runs: [
+                    GridCellRun(text: "│", attrId: 927, count: 1),
+                ]))
+            }
+        }
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 55, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 56, width: 24, height: 22))
+        await screen.apply(.flush)
+
+        let snapshot = await screen.snapshot()
+        for col in 2...54 {
+            XCTAssertEqual(
+                snapshot.grid?[0, col], GridCell(),
+                "column \(col) kept a stale separator"
+            )
+            XCTAssertEqual(
+                snapshot.grid?[21, col], GridCell(),
+                "column \(col) kept a stale separator"
+            )
+        }
+        // The separator at the final boundary is still required and stays.
+        XCTAssertEqual(snapshot.grid?[0, 55], GridCell(text: "│", attrId: 927))
+        XCTAssertEqual(snapshot.grid?[21, 55], GridCell(text: "│", attrId: 927))
+    }
+
+    func testSidebarSeparatorHitDetectsTheLeftEdgeDivider() async {
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 48, height: 22))
+
+        let snapshot = await screen.snapshot()
+        // The column between the left-edge sidebar and the editor.
+        XCTAssertTrue(snapshot.isSidebarSeparator(row: 5, col: 31))
+        // Cells inside either window, and the statusline row, are not
+        // dividers.
+        XCTAssertFalse(snapshot.isSidebarSeparator(row: 5, col: 30))
+        XCTAssertFalse(snapshot.isSidebarSeparator(row: 5, col: 32))
+        XCTAssertFalse(snapshot.isSidebarSeparator(row: 22, col: 31))
+    }
+
+    func testSidebarSeparatorHitIgnoresInteriorSplitDividers() async {
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 24, height: 22))
+        await screen.apply(.winPos(grid: 5, row: 0, col: 57, width: 23, height: 22))
+
+        let snapshot = await screen.snapshot()
+        // A divider between two editor splits is still draggable.
+        XCTAssertFalse(snapshot.isSidebarSeparator(row: 5, col: 56))
+    }
+
+    func testWindowLayoutChangePreservesSeparatorsStillInUse() async {
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 80, height: 24))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 31, height: 22))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 32, width: 32, height: 22))
+        await screen.apply(.winPos(grid: 5, row: 0, col: 64, width: 16, height: 22))
+        for col in [31, 63] {
+            await screen.apply(.gridLine(grid: 1, row: 0, colStart: col, runs: [
+                GridCellRun(text: "│", attrId: 927, count: 1),
+            ]))
+        }
+        await screen.apply(.flush)
+
+        await screen.apply(.winClose(grid: 4))
+        await screen.apply(.gridDestroy(grid: 4))
+        await screen.apply(.winPos(grid: 2, row: 0, col: 0, width: 64, height: 22))
+        await screen.apply(.flush)
+
+        let snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.grid?[0, 31], GridCell())
+        XCTAssertEqual(snapshot.grid?[0, 63], GridCell(text: "│", attrId: 927))
+    }
+
+    func testClosedSplitLeavesNoStaleStatuslineRow() async {
+        // Closing a split makes the window above grow over the row that held
+        // its statusline. Nvim repaints the window's own grid but not the
+        // global grid, where it drew that statusline — and the window's
+        // default-background cells are transparent, so the old statusline (text
+        // and highlight) would show through the middle of the buffer.
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 40, height: 12))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 40, height: 1))
+        await screen.apply(.winPos(grid: 2, row: 2, col: 0, width: 40, height: 1))
+        await screen.apply(.winPos(grid: 5, row: 4, col: 0, width: 40, height: 6))
+        for row in [1, 3, 10] {
+            await screen.apply(.gridLine(grid: 1, row: row, colStart: 0, runs: [
+                GridCellRun(text: "s", attrId: 922, count: 40),
+            ]))
+        }
+        await screen.apply(.flush)
+
+        let flushed = Box<[Int: [CellRect]]>([:])
+        await screen.setFlushHandler { grid, rects in flushed.value[grid] = rects }
+        await screen.apply(.winClose(grid: 5))
+        await screen.apply(.gridDestroy(grid: 5))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 40, height: 5))
+        await screen.apply(.gridResize(grid: 4, width: 40, height: 5))
+        await screen.apply(.winPos(grid: 2, row: 6, col: 0, width: 40, height: 4))
+        await screen.apply(.gridResize(grid: 2, width: 40, height: 4))
+        // The surviving bottom window repaints its new statusline row.
+        await screen.apply(.gridLine(grid: 1, row: 10, colStart: 0, runs: [
+            GridCellRun(text: "t", attrId: 922, count: 40),
+        ]))
+        await screen.apply(.flush)
+
+        let snapshot = await screen.snapshot()
+        for row in [1, 3] {
+            for col in [0, 19, 39] {
+                XCTAssertEqual(
+                    snapshot.grid?[row, col], GridCell(),
+                    "row \(row) col \(col) kept stale statusline content"
+                )
+            }
+        }
+        // The statusline row above the cmdline still belongs to nvim.
+        XCTAssertEqual(snapshot.grid?[10, 0], GridCell(text: "t", attrId: 922))
+
+        // The cleared rows are flushed so the layers repaint them.
+        let rects = flushed.value[1] ?? []
+        for row in [1, 3] {
+            XCTAssertTrue(
+                rects.contains {
+                    $0.minRow <= row && row < $0.maxRow && $0.minCol == 0 && $0.maxCol == 40
+                },
+                "row \(row) was cleared but not flushed: \(rects)"
+            )
+        }
+    }
+
+    func testMsgSetPosTracksTheMessageGridAndHidesItOnZero() async {
+        let screen = Screen()
+        await screen.apply(.msgSetPos(grid: 3, row: 27, scrolled: false, zindex: 200, compindex: 0))
+
+        var snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.frames[3]?.isMessage, true)
+        XCTAssertEqual(snapshot.frames[3]?.row, 27)
+
+        await screen.apply(.msgSetPos(grid: 0, row: 0, scrolled: false, zindex: 200, compindex: 0))
+        snapshot = await screen.snapshot()
+        XCTAssertEqual(snapshot.frames[3]?.hidden, true)
+    }
+
+    func testWinViewportRecordsBufferMetrics() async {
+        let screen = Screen()
+        await screen.apply(.winPos(grid: 2, row: 0, col: 0, width: 40, height: 26))
+        await screen.apply(.winViewport(
+            grid: 2, topline: 9, botline: 34, curline: 11, curcol: 3,
+            lineCount: 42, scrollDelta: 0
+        ))
+
+        let snapshot = await screen.snapshot()
+        let viewport = snapshot.frames[2]?.viewport
+        XCTAssertEqual(viewport?.topline, 9)
+        XCTAssertEqual(viewport?.botline, 34)
+        XCTAssertEqual(viewport?.lineCount, 42)
+    }
+
+    func testGridDestroyDropsTheFrame() async {
+        let screen = Screen()
+        await screen.apply(.winPos(grid: 6, row: 0, col: 0, width: 10, height: 10))
+        await screen.apply(.gridDestroy(grid: 6))
+
+        let snapshot = await screen.snapshot()
+        XCTAssertNil(snapshot.frames[6])
+        XCTAssertNil(snapshot.grids[6])
     }
 }

@@ -50,6 +50,21 @@ nonisolated extension MsgPackValue {
         return value
     }
 
+    /// Numeric payload widened to Double; nvim sends floats and whole
+    /// numbers interchangeably for sub-cell positions (`win_float_pos`).
+    var doubleValue: Double? {
+        switch self {
+        case .float(let value):
+            Double(value)
+        case .int(let value):
+            Double(value)
+        case .uint(let value):
+            Double(value)
+        default:
+            nil
+        }
+    }
+
     var stringValue: String? {
         guard case let .string(value) = self else { return nil }
         return value

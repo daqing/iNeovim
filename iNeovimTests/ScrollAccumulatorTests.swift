@@ -129,6 +129,57 @@ final class ScrollAccumulatorTests: XCTestCase {
         XCTAssertEqual(accumulator.offset, 10)
     }
 
+    func testReverseWheelStepLeadsImmediately() {
+        var accumulator = makeAccumulator()
+        _ = accumulator.addDelta(30, lineHeight: line)
+        for _ in 0..<3 { accumulator.confirmScroll(rows: -1, lineHeight: line) }
+        XCTAssertTrue(accumulator.isSettled)
+
+        XCTAssertEqual(accumulator.addDelta(-10, lineHeight: line), [.down])
+        XCTAssertEqual(accumulator.offset, -10)
+
+        var downward = makeAccumulator()
+        _ = downward.addDelta(-30, lineHeight: line)
+        for _ in 0..<3 { downward.confirmScroll(rows: 1, lineHeight: line) }
+        XCTAssertTrue(downward.isSettled)
+
+        XCTAssertEqual(downward.addDelta(10, lineHeight: line), [.up])
+        XCTAssertEqual(downward.offset, 10)
+    }
+
+    func testLateConfirmationDuringReversalKeepsVisualPosition() {
+        var accumulator = makeAccumulator()
+        _ = accumulator.addDelta(20, lineHeight: line)
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, 10)
+
+        XCTAssertEqual(accumulator.addDelta(-10, lineHeight: line), [.down])
+        XCTAssertEqual(accumulator.offset, 0)
+        // The older upward request is confirmed after the reversal. The new
+        // grid and the opposite lead must still describe the same position.
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, -10)
+    }
+
+    func testBeginGesturePreservesWholeBurstInFlight() {
+        var accumulator = makeAccumulator()
+        _ = accumulator.addDelta(50, lineHeight: line)
+        accumulator.beginGesture()
+
+        accumulator.confirmScroll(rows: -1, lineHeight: line)
+        XCTAssertEqual(accumulator.sent, 50)
+        XCTAssertEqual(accumulator.offset, 10)
+        XCTAssertEqual(accumulator.addDelta(10, lineHeight: line), [.up])
+        XCTAssertEqual(accumulator.sent, 60)
+    }
+
+    func testMultiRowConfirmationSettlesTheLead() {
+        var accumulator = makeAccumulator()
+        _ = accumulator.addDelta(10, lineHeight: line)
+        accumulator.confirmScroll(rows: -3, lineHeight: line)
+        XCTAssertEqual(accumulator.offset, 0)
+    }
+
     func testOffsetNeverCrossesZeroAgainstTheGesture() {
         // A confirmation that outruns the gesture (Neovim scrolling on its
         // own, or a late one) must not drag the content the other way.

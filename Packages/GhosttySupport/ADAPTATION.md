@@ -41,9 +41,11 @@ which this embedding does not have. Adaptations, per file:
   pwd, cell size, mouse shape/visibility/links, bell, key tables,
   config/color change, open URL). Window-management actions (new
   window/tab/split, fullscreen, quit, notifications, inspector, quick
-  terminal) return "not performed". `reloadConfig()` is `public` (upstream
-  it is internal) so the embedding can rewrite its generated config on a
-  theme change and push it into the running app.
+  terminal) return "not performed". `open_url` first offers the raw target
+  to the surface's `openURLHandler` (so the embedding can open local files
+  in its editor) and falls back to `NSWorkspace`. `reloadConfig()` is `public`
+  (upstream it is internal) so the embedding can rewrite its generated config
+  on a theme change and push it into the running app.
 - `SurfaceView_AppKit.swift` — kept nearly verbatim (NSTextInputClient,
   key translation, mouse handling, drag & drop, context menus). Pruned:
   search overlay state, key-sequence indicator, progress reports, user
@@ -53,7 +55,8 @@ which this embedding does not have. Adaptations, per file:
   `UserDefaults.standard`).
 - `OSSurfaceView.swift` — pruned to the published state a plain embedding
   needs (pwd, cellSize, health, error, hover URL, key tables, size info,
-  readonly) plus the two search-navigation helpers.
+  readonly, plus the embedder's `openURLHandler` hook) and the two
+  search-navigation helpers.
 - `SurfaceConfiguration.swift` — extracted verbatim from the SwiftUI
   `SurfaceView.swift`, plus the `withCStrings` Array helper; the optional
   string C-pointer nesting uses a small `withOptionalCString` helper.

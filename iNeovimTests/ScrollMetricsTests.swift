@@ -36,7 +36,7 @@ final class ScrollMetricsTests: XCTestCase {
         let value = MsgPackValue.map(MsgPackValueMap([
             .string("topline"): .int(12),
             .string("linecount"): .int(400),
-            .string("height"): .int(40),
+            .string("visible"): .int(40),
         ]))
         XCTAssertEqual(
             NvimClient.parseScrollMetrics(value),
@@ -46,11 +46,11 @@ final class ScrollMetricsTests: XCTestCase {
 
     func testParseToleratesMissingFields() {
         XCTAssertNil(NvimClient.parseScrollMetrics(.nil))
-        let zeroHeight = MsgPackValue.map(MsgPackValueMap([
+        let zeroVisible = MsgPackValue.map(MsgPackValueMap([
             .string("topline"): .int(1),
             .string("linecount"): .int(10),
-            .string("height"): .int(0),
+            .string("visible"): .int(0),
         ]))
-        XCTAssertNil(NvimClient.parseScrollMetrics(zeroHeight))
+        XCTAssertNil(NvimClient.parseScrollMetrics(zeroVisible))
     }
 }

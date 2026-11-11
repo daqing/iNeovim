@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import GhosttySupport
 
 /// Window content container: the nvim editor fills the view, flanked left by
 /// the optional problems panel (docked issues sidebar, driven by
@@ -201,6 +202,7 @@ final class EditorSplitView: NSView {
         ) else { return }
         let paneView = TerminalPaneView(surfaceView: surface)
         paneView.onClose = { [weak self] in self?.paneDidClose() }
+        installTerminalLinkHandler(on: surface, initialDirectory: request.workingDirectory)
         pane = paneView
         addSubview(paneView)
         divider.isHidden = false
@@ -211,6 +213,36 @@ final class EditorSplitView: NSView {
         )
         if window?.makeFirstResponder(surface) == true {
             showFocusToast("Focus: Terminal")
+        }
+    }
+
+    /// ⌘-clicking a file path in the terminal opens it in this window's editor
+    /// instead of handing it to the system's default application. Ghostty's
+    /// link action reports the raw string (a path, a `file://` URL, or a web
+    /// URL); only existing regular files are claimed here, and the editor is
+    /// focused so the file can be edited immediately. Relative paths resolve
+    /// against the surface's pwd when Ghostty reports one (OSC 7), else the
+    /// directory the pane was opened in (the editor's cwd).
+    private func installTerminalLinkHandler(
+        on surface: Ghostty.SurfaceView,
+        initialDirectory: String
+    ) {
+        let base = initialDirectory.isEmpty
+            ? nil
+            : URL(fileURLWithPath: initialDirectory, isDirectory: true)
+        surface.openURLHandler = { [weak self] raw, pwd in
+            var path = initialDirectory
+            if let pwd, !pwd.isEmpty { path = pwd }
+            let directory = path.isEmpty ? base : URL(fileURLWithPath: path, isDirectory: true)
+            guard let link = TerminalFileLink.parse(raw, workingDirectory: directory) else {
+                return false
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.model.open([link.url])
+                self.window?.makeFirstResponder(self.terminalView)
+            }
+            return true
         }
     }
 

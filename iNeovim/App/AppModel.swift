@@ -86,6 +86,36 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.object(forKey: persistedBackgroundKey) as? Int
     }
 
+    /// Notification carrying nvim's working directory (see
+    /// `NvimClient.installWorkingDirectoryHook`).
+    private static let workingDirectoryNotification = "ineovim:dirchanged"
+
+    /// The active session's working directory, persisted so a launch by
+    /// clicking the app starts where the user left off. A window opened by an
+    /// `ineovim` command never uses it: that window's directory comes from the
+    /// command, which would otherwise be shadowed by this value on a cold
+    /// launch (the launch window boots before the request reaches it).
+    private static let persistedWorkingDirectoryKey = "lastWorkingDirectory"
+
+    /// The persisted directory, or nil when there is none or it no longer
+    /// exists (nvim then starts in `$HOME`).
+    static var persistedWorkingDirectory: URL? {
+        guard let path = UserDefaults.standard.string(forKey: persistedWorkingDirectoryKey) else {
+            return nil
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    static func persistWorkingDirectory(_ directory: URL?) {
+        guard let path = directory?.path(percentEncoded: false) else { return }
+        if UserDefaults.standard.string(forKey: persistedWorkingDirectoryKey) != path {
+            UserDefaults.standard.set(path, forKey: persistedWorkingDirectoryKey)
+        }
+    }
+
     /// The seeded packed default background, used to paint this window until
     /// nvim reports its own (the first flush replaces it in the snapshot).
     private(set) var seededBackground: Int?
@@ -140,6 +170,30 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Buffer text areas of the current tabpage's windows, as nvim reports
+    /// them (see `NvimClient.installTextLayoutHook`). The renderer draws their
+    /// glyphs a few points right of the grid so buffer text clears the gutter.
+    @Published private(set) var textRegions: [NvimTextRegion] = []
+
+    func setTextRegions(_ regions: [NvimTextRegion]) {
+        if textRegions != regions {
+            textRegions = regions
+        }
+    }
+
+    /// Take the working directory nvim reported, saving it when this is the
+    /// active window so the next launch resumes there.
+    func setWorkingDirectory(_ path: String) {
+        guard !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        if currentWorkingDirectory != directory {
+            currentWorkingDirectory = directory
+        }
+        if AppModel.active === self {
+            Self.persistWorkingDirectory(directory)
+        }
+    }
+
     let session: RPCSession
     let screen: Screen
     let inputDispatcher: InputDispatcher
@@ -169,6 +223,14 @@ final class AppModel: ObservableObject {
     /// nvim child process (so init.lua sees it) and doubles as the
     /// post-attach `:cd` when the request arrives after startup began.
     private var workingDirectory: URL?
+    /// The session's live working directory, reported by nvim on startup and
+    /// on every `DirChanged`. Persisted while this window is active (and again
+    /// as the app terminates) so the next launch can start there.
+    private(set) var currentWorkingDirectory: URL?
+    /// True for the window SwiftUI opened at launch, marked by
+    /// `AppDelegate.registerEditorWindow`. It is the only window that starts
+    /// in the saved working directory; `$HOME` stays the default otherwise.
+    var isLaunchWindow = false
     private var terminationTask: Task<Void, Never>?
     private var isShuttingDown = false
     private var isBootstrapping = false
@@ -216,9 +278,11 @@ final class AppModel: ObservableObject {
 
     /// Called when the hosting window becomes (or is installed in) the key
     /// window so menu commands and system file opens reach the session the
-    /// user is driving.
+    /// user is driving. The window's directory is saved on the way: the active
+    /// window's is the one the next launch resumes in.
     func becameActive() {
         AppModel.active = self
+        AppModel.persistWorkingDirectory(currentWorkingDirectory)
     }
 
     /// Remember the window hosting this session (used by the clean-exit
@@ -363,7 +427,11 @@ final class AppModel: ObservableObject {
         do {
             bootstrapError = nil
             setup = nil
-            try await session.start(workingDirectory: workingDirectory)
+            // The launch window resumes in the directory the last session
+            // was in; a window an `ineovim` command opened starts in the
+            // directory the command ran in, which takes precedence.
+            let resumed = isLaunchWindow ? Self.persistedWorkingDirectory : nil
+            try await session.start(workingDirectory: workingDirectory ?? resumed)
             try await session.handshake()
             // Subscribe before attaching: nvim sends its first full screen as
             // the redraw batch that immediately follows ui_attach, and that
@@ -382,12 +450,43 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 Task { @MainActor in self.handleDiagnosticUpdate(update) }
             }
+            // The gutter layout (how many columns each window's `textoff`
+            // gutter occupies) arrives as `ineovim:textlayout` notifications.
+            await session.addNotificationHandler(for: NvimTextLayout.rpcMethod) { [weak self] params in
+                guard let regions = NvimTextLayout.parse(params) else { return }
+                guard let self else { return }
+                Task { @MainActor in self.setTextRegions(regions) }
+            }
+            // The working directory follows `:cd` in the session; the latest
+            // one is remembered for the next launch.
+            await session.addNotificationHandler(for: Self.workingDirectoryNotification) { [weak self] params in
+                guard let path = params.first?.stringValue else { return }
+                guard let self else { return }
+                Task { @MainActor in self.setWorkingDirectory(path) }
+            }
+            // Long lines soft-wrap at the window's right edge. A single
+            // linegrid exposes no horizontal scrolling, so without wrap the
+            // rest of the line is unreachable; applied before attaching so
+            // the first full screen is already wrapped instead of reflowing.
+            try await client.installWrap()
+            // A directory an `ineovim` command asked for must be in effect
+            // before `ui_attach`: nvim finishes startup — and sources
+            // init.lua — only once the UI attaches, so a `:cd` after that
+            // would leave a config that reads `getcwd()` at startup in the
+            // wrong directory. The request can land at any point in the
+            // sequence, so it is re-read after every later suspension.
+            let appliedDirectory = await applyRequestedDirectory()
             let attach = pendingGridSize ?? (cols: 80, rows: 24)
             try await client.uiAttach(width: attach.cols, height: attach.rows, options: .map(MsgPackValueMap([
                 .string("ext_linegrid"): .bool(true),
                 .string("ext_popupmenu"): .bool(true),
+                // Per-window grids: splits, floats, and the message/cmdline
+                // area each arrive as their own grid positioned on the
+                // screen, so the renderer layers windows instead of
+                // compositing one global grid.
+                .string("ext_multigrid"): .bool(true),
             ])))
-            Log.render.info("UI attached \(attach.cols)x\(attach.rows) (ext_linegrid, ext_popupmenu)")
+            Log.render.info("UI attached \(attach.cols)x\(attach.rows) (ext_linegrid, ext_popupmenu, ext_multigrid)")
             // One wheel event scrolls exactly one line so the visual lead
             // in ScrollAccumulator maps 1:1 to grid_scroll confirmations.
             try await client.command("set mousescroll=ver:1,hor:1")
@@ -398,18 +497,36 @@ final class AppModel: ObservableObject {
             } catch {
                 Log.app.error("Failed to install diagnostics hook: \(error.localizedDescription, privacy: .public)")
             }
+            do {
+                if try await client.installTextLayoutHook() != true {
+                    Log.render.warning("Text layout hook did not install; text keeps its cell origin")
+                }
+            } catch {
+                Log.render.error("Failed to install text layout hook: \(error.localizedDescription, privacy: .public)")
+            }
+            do {
+                if try await client.installTruncatedLines() != true {
+                    // false is the expected outcome on nvim 0.12, whose
+                    // conceal_lines + virt_lines scroll bugs freeze upward
+                    // scrolling next to preview rows (see the version gate
+                    // in `NvimClient.truncatedLinesLua`).
+                    Log.app.info("Truncated lines off: needs nvim 0.13+; over-long lines stay fully wrapped")
+                }
+            } catch {
+                Log.app.error("Failed to install truncated-line hook: \(error.localizedDescription, privacy: .public)")
+            }
+            do {
+                if try await client.installWorkingDirectoryHook() != true {
+                    Log.app.warning("Working directory hook did not install; the next launch starts in $HOME")
+                }
+            } catch {
+                Log.app.error("Failed to install working directory hook: \(error.localizedDescription, privacy: .public)")
+            }
             await inputDispatcher.startConsuming(with: client)
             startObservingTermination()
-            // An `ineovim` request can land while startup is still running —
-            // the launch window adopts one after its nvim has already booted.
-            // Read the directory after the last suspension point and repeat
-            // when the `:cd` itself suspends, so the request that arrived last
-            // is the one applied before the queued files open.
-            var appliedDirectory: URL?
-            while let directory = workingDirectory, directory != appliedDirectory {
-                appliedDirectory = directory
-                await changeWorkingDirectory(to: directory)
-            }
+            // A request can also land while the attach and the hooks run; it
+            // must be applied before the queued files open.
+            await applyRequestedDirectory(after: appliedDirectory)
             isReady = true
             flushPendingFiles()
             AppModel.flushStagedFiles()
@@ -645,6 +762,90 @@ final class AppModel: ObservableObject {
         requestTerminalPane(command: "")
     }
 
+    // MARK: - Markdown preview
+
+    /// Open preview windows owned by this editor window, keyed by the
+    /// previewed buffer's name (one window per file). Re-previewing a file
+    /// re-renders its existing window.
+    private var markdownPreviews: [String: MarkdownPreviewWindowController] = [:]
+
+    /// ⌘R: preview the current Markdown buffer in a separate reading window.
+    /// For every other buffer the chord keeps its old meaning — focus the
+    /// terminal pane (opening it when hidden).
+    func handleCmdR() {
+        Task { @MainActor in
+            if let snapshot = try? await client.currentBufferSnapshot(), snapshot.isMarkdown {
+                presentMarkdownPreview(snapshot)
+            } else {
+                focusTerminalPane()
+            }
+        }
+    }
+
+    /// Menu action for "Preview Markdown": open the reading window for the
+    /// current buffer, or beep when the buffer is not Markdown.
+    func previewMarkdown() {
+        Task { @MainActor in
+            guard let snapshot = try? await client.currentBufferSnapshot(),
+                  snapshot.isMarkdown else {
+                NSSound.beep()
+                return
+            }
+            presentMarkdownPreview(snapshot)
+        }
+    }
+
+    private func presentMarkdownPreview(_ snapshot: NvimBufferSnapshot) {
+        let theme = markdownTheme()
+        let key = snapshot.name.isEmpty ? "<untitled>" : snapshot.name
+        if let preview = markdownPreviews[key] {
+            preview.update(markdown: snapshot.text, baseURL: snapshot.baseURL, theme: theme)
+            preview.present()
+            return
+        }
+        let preview = MarkdownPreviewWindowController(
+            title: snapshot.previewTitle,
+            fileURL: snapshot.fileURL,
+            markdown: snapshot.text,
+            baseURL: snapshot.baseURL,
+            theme: theme,
+            onOpenLink: { [weak self] url in self?.openPreviewLink(url) },
+            onClose: { [weak self] in self?.markdownPreviews[key] = nil }
+        )
+        markdownPreviews[key] = preview
+        preview.present()
+    }
+
+    private func markdownTheme() -> MarkdownRenderer.Theme {
+        let background = terminalColors.background.flatMap(NSColor.init(packedRGB:))
+            ?? .textBackgroundColor
+        let isDark = TerminalView.hasDarkBackground(terminalColors.background)
+            ?? (NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        let foreground = terminalColors.foreground.flatMap(NSColor.init(packedRGB:))
+            ?? (isDark ? .white : .black)
+        let linkColor: NSColor = isDark
+            ? NSColor(srgbRed: 0.45, green: 0.72, blue: 1.0, alpha: 1)
+            : NSColor(srgbRed: 0.0, green: 0.38, blue: 0.75, alpha: 1)
+        return MarkdownRenderer.Theme(
+            foreground: foreground,
+            background: background,
+            isDark: isDark,
+            bodyFont: .systemFont(ofSize: 15),
+            codeFont: AppSettings.shared.resolvedFont(),
+            linkColor: linkColor
+        )
+    }
+
+    /// Preview links: local files open in this session's editor (the next
+    /// reading step stays in the app); web links use the default browser.
+    private func openPreviewLink(_ url: URL) {
+        if url.isFileURL {
+            open([url])
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Menu / ⌘L action: return keyboard focus to the editor.
     func focusEditor() {
         terminalPaneIntent = .focusEditor
@@ -730,6 +931,20 @@ final class AppModel: ObservableObject {
                 "Failed to change directory to \(directory.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    /// Apply the directory a command-line request asked for, and return it.
+    /// The request can arrive (and the `:cd` itself can suspend) at any point
+    /// of `bootstrap`, so the current request is re-read after every
+    /// suspension and the last one wins.
+    @discardableResult
+    private func applyRequestedDirectory(after applied: URL? = nil) async -> URL? {
+        var applied = applied
+        while let directory = workingDirectory, directory != applied {
+            applied = directory
+            await changeWorkingDirectory(to: directory)
+        }
+        return applied
     }
 
     /// Open files in this window's session, queueing them until the session

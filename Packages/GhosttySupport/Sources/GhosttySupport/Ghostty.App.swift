@@ -591,13 +591,24 @@ extension Ghostty {
 
             case GHOSTTY_ACTION_OPEN_URL:
                 let v = action.action.open_url
+                guard let pointer = v.url else { return true }
+                let raw = String(
+                    data: Data(bytes: pointer, count: Int(v.len)),
+                    encoding: .utf8
+                ) ?? ""
+                // Give the embedder first refusal: an app that hosts an
+                // editor can open local file paths itself instead of handing
+                // them to the system's default application.
+                if let surface = target.target.surface,
+                   let surfaceView = self.surfaceView(from: surface),
+                   surfaceView.openURLHandler?(raw, surfaceView.pwd) == true {
+                    return true
+                }
                 let url: URL
-                if let candidate = String(cString: v.url!, encoding: .utf8).flatMap(URL.init(string:)),
-                   candidate.scheme != nil {
+                if let candidate = URL(string: raw), candidate.scheme != nil {
                     url = candidate
                 } else {
-                    let path = String(cString: v.url!, encoding: .utf8) ?? ""
-                    url = URL(fileURLWithPath: NSString(string: path).standardizingPath)
+                    url = URL(fileURLWithPath: NSString(string: raw).standardizingPath)
                 }
                 NSWorkspace.shared.open(url)
                 return true

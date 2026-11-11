@@ -9,15 +9,17 @@ final class InputDispatcherTests: XCTestCase {
 
         dispatcher.send(.keys("i"))
         dispatcher.send(.mouse(button: "left", action: "press", modifier: "", grid: 1, row: 2, col: 3))
+        dispatcher.send(.reloadChangedFile(row: 2, col: 3))
 
         var received: [InputEvent] = []
         for await event in stream {
             received.append(event)
-            if received.count == 2 { break }
+            if received.count == 3 { break }
         }
         XCTAssertEqual(received, [
             .keys("i"),
             .mouse(button: "left", action: "press", modifier: "", grid: 1, row: 2, col: 3),
+            .reloadChangedFile(row: 2, col: 3),
         ])
     }
 

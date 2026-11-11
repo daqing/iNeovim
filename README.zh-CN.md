@@ -143,7 +143,8 @@ surface(libghostty),而不是 Neovim 内的终端缓冲区。面板在 Neovim �
 
 3. 选择 `iNeovim` scheme 并运行(⌘R)。
 
-目前没有命令行构建脚本和 CI。发布构建按 `docs/RELEASE.md` 进行归档、公证并装订。
+`Scripts/publish.sh` 负责归档、签名、公证并装订发布构建;加上 `--upload` 会把
+ZIP 和 DMG 发布到 GitHub。项目没有 CI,详见 `docs/RELEASE.md`。
 
 ## 许可证
 

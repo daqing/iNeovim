@@ -3,8 +3,9 @@
 ## Project overview
 
 iNeovim is a native macOS desktop application written in Swift with SwiftUI. It embeds one
-`nvim --embed` child process per window over msgpack-RPC and renders Neovim's linegrid
-protocol itself (Core Text + `CALayer`), with macOS-native input, smooth scrolling, and an
+`nvim --embed` child process per window over msgpack-RPC and renders Neovim's linegrid +
+multigrid protocol itself (Core Text + `CALayer`), with macOS-native input, smooth
+scrolling, and an
 app shell. Phases 1–8 of `docs/TASKS.md` are implemented: RPC, UI state, rendering, input,
 scrolling, and the SwiftUI app shell (tabs, settings, menus, window title, file opening).
 Phase 9 (polish and release) added crash recovery, performance baselines/signposts, an
@@ -42,7 +43,7 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── AppDelegate.swift     NSApplicationDelegate: bootstrap, open-file requests, teardown
 ├── App/                  SwiftUI app shell (Phase 8)
 │   ├── AppModel.swift        per-window session stack, command routing, file queues, title
-│   ├── AppSettings.swift     persisted font/input/animation settings
+│   ├── AppSettings.swift     persisted font/layout/input/animation settings
 │   ├── SettingsView.swift    settings window
 │   ├── SetupView.swift       first-run guidance when no nvim is installed
 │   ├── EditorCommands.swift  File + Neovim menu commands
@@ -71,12 +72,12 @@ iNeovim/                  App sources (a PBXFileSystemSynchronizedRootGroup)
 ├── Render/               Core Text + CALayer rendering layer (Phase 5)
 │   ├── FontMetrics.swift     NSFont → cell size/ascent/baseline metrics
 │   ├── CellRenderer.swift    grid rows → styled runs for CTLine shaping
-│   ├── GridContentLayer.swift  cells/cursor/preedit in a scrollable CALayer
-│   │                           (one row slice per layer: the scrolling
-│   │                           region and the frozen footer)
-│   ├── TerminalView.swift    layer-backed NSView hosting the content layer
+│   ├── GridContentLayer.swift  one grid's cells/cursor/preedit in a CALayer
+│   │                           (one instance per displayed grid)
+│   ├── TerminalView.swift    layer-backed NSView hosting the per-grid layers
 │   ├── CompletionPanelView.swift  native ext_popupmenu completion list
 │   ├── DiagnosticPopover.swift  native vim.diagnostic popover for gutter clicks
+│   ├── LineContentPopover.swift  native full-line popover for truncated rows
 │   ├── CursorBlinker.swift   cursor blink timing (wait/on/off)
 │   └── NSColor+PackedRGB.swift  0xRRGGBB ↔ NSColor helpers
 ├── Input/                keyboard/mouse translation layer (Phase 6)
@@ -104,7 +105,8 @@ Packages/GhosttySupport/  Local Swift package wrapping the self-built
                           GhosttyKit xcframework (Vendor/) and the adapted
                           libghostty Swift bindings (Sources/); see its
                           ADAPTATION.md for provenance and pruning notes
-Scripts/                  One-off tooling (app-icon generator); not part of the build
+Scripts/                  One-off tooling (app-icon generator) and the release
+                          pipeline (publish.sh); not part of the build
 iNeovimTests/             XCTest target (synchronized group); codec round-trip,
                           redraw-parsing, settings/model, and embedded-nvim tests
 Config/Info.plist         Partial Info.plist merged into the generated one
@@ -122,7 +124,8 @@ folder are not compiled.
 
 ## Build and run
 
-- There is no `Package.swift`, no Makefile, no CI configuration, and no build scripts.
+- There is no `Package.swift`, no Makefile, no CI configuration, and no build scripts
+  other than the release pipeline in `Scripts/publish.sh`.
   Building is done in **Xcode** (open `iNeovim.xcodeproj`, target `iNeovim`, Debug/Release).
 - **Do not run `xcodebuild` or `swift build` as part of routine changes** — the project
   owner verifies builds manually in Xcode. When delivering a change, make sure the Swift
@@ -215,23 +218,129 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `window.animationBehavior = .none` so AppKit contributes no order-in or
   tab-bar-entrance motion on top of the redraw. The 80x24 fallback only
   applies if bootstrap beats the first layout.
-- **Content inset & cmdline gap:** the grid is inset `TerminalView.contentInset`
-  (6 pt) from the view on all sides, and the last grid row (nvim's
-  cmdline/message area) is drawn `TerminalView.cmdlineGap` (4 pt) below the
+- **Content inset & cmdline gap:** the grid is inset
+  `TerminalView.contentInset` (6 pt) above and below, the user's
+  `leadingPadding` on the left and `trailingPadding` on the right (Settings ▸
+  Layout; defaults 4 pt and 12 pt) — the trailing value is clamped to
+  `TerminalView.minimumTrailingPadding`, which reserves the transient scroll
+  thumb that hugs the window's right edge
+  (`ScrollIndicator` width plus `rightInset`), a 2 pt gap to it, and the
+  gutter shift buffer text carries (see "Gutter-to-text padding" below) — and
+  the last grid row (nvim's cmdline/message area) is drawn
+  `TerminalView.cmdlineGap` (5 pt) below the
   row above it, so the statusline and the cmdline never touch. Every grid
   cell-count computation (`ResizeController.cellCount` via
   `TerminalView.gridAreaSize`) derives from the inset- and gap-adjusted size,
   never the raw bounds — otherwise the floor-rounded grid fills the view edge
   to edge and the last line hugs — or, while resizes race, overflows — the
   window's bottom edge. All view-space→grid-space conversions (mouse
-  `MouseHandler`, wheel pointer `ScrollController`, IME preedit rects)
-  subtract the inset, and row↔y math everywhere goes through
-  `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent.
-  Pointer hit-testing (`MouseHandler`, link hover) goes through
-  `TerminalView.gridPoint(forViewPoint:)`, which also subtracts the live
-  scroll lead for points in the scrolling region — with a one-line lead the
-  cell under the pointer is one row further along the grid — but not in the
-  frozen footer, which never moves.
+  `MouseHandler`, wheel pointer `ScrollController`, IME preedit rects) subtract
+  the leading inset, and row↔y math everywhere goes through
+  `TerminalView.gridRowY`/`gridRow(atY:)` so the gap stays consistent. Pointer
+  hit-testing (`MouseHandler`, link hover, wheel targeting) goes through
+  `TerminalView.gridHit(forViewPoint:)`, which resolves the topmost
+  mouse-enabled grid under the point — the message grid, floats by z order,
+  then window grids, then grid 1 — returns grid-local row/col plus the global
+  cell the frame puts it at, and subtracts the live scroll lead for points in
+  the lead grid (the only one that visually moves mid-gesture).
+- **Gutter-to-text padding:** nvim's gutter (sign, fold, and number columns)
+  is whole cells wide, so the extra 2 pt of air the buffer text needs between
+  itself and the gutter cannot come from an option; the renderer draws a text
+  region's glyphs `NvimTextLayout.textShift` (2 pt) right of their cell
+  origins instead. The gutter, the statusline row, and the cmdline row are
+  outside every region and stay on the grid, and a window with no gutter
+  (`textoff` 0) reports no region — its text starts at the leading inset with
+  nothing to clear. Cell backgrounds, the statusline bar, and all hit-testing
+  stay on cell origins; only glyphs, the block cursor, the cursor glyph reuse,
+  the IME preedit, and the ⌘-hover underline carry the shift, which is why the
+  layers and the scroll clip are `textShift` wider (a shifted last column must
+  not be clipped) and the trailing inset reserves the shift again. nvim
+  reports each window's text area — its rows plus the columns past `textoff`,
+  from `getwininfo` in global grid coordinates, floats excluded — as
+  `ineovim:textlayout` notifications. `textoff` changes with options
+  (`number`, `signcolumn`, …) but also when a language server or plugin places
+  signs, which fire no autocmd (`signcolumn=auto` collapsing is the everyday
+  case), so `NvimClient.installTextLayoutHook` re-checks the layout from a
+  decoration provider's `on_start` — the only callback that sees every
+  redraw — and pushes only when the collected layout changed. The provider
+  may only schedule work (the docs call anything but `vim.rpcnotify`
+  experimental), so the scan runs from `vim.schedule` plus a 100 ms
+  `vim.defer_fn`, with a pending flag collapsing a scrolling frame burst.
+  A run shifts as a whole by its first cell, because `GridContentLayer`'s
+  pinned glyph groups are shaped and cached without an offset; a run spanning
+  the gutter boundary only happens when both share one highlight, and then it
+  keeps the gutter's alignment.
+- **Soft wrap:** `NvimClient.installWrap` sets `wrap` in every window and
+  as the global default before `ui_attach`, so the first full screen is
+  already wrapped instead of reflowing after the paint. An embedded nvim
+  does not finish startup until the UI attaches: bootstrap's RPC commands
+  run before `init.lua` is sourced (measured: `vim.v.vim_did_enter == 0`
+  and no scripts loaded when they execute), so a plain `set wrap` is
+  undone by a user config's `set nowrap` moments later. While startup is
+  still in flight the setting is therefore applied again from a one-shot
+  `VimEnter` autocmd, the last startup event. (Any other option
+  bootstrap must own needs the same treatment.) The app offers no
+  horizontal scrolling (the wheel's horizontal deltas are ignored; vertical
+  smooth-scrolling only), so a clipped tail would be unreachable. Wrapping is
+  nvim's, not the renderer's: continuation rows arrive as ordinary `grid_line`s
+  and nvim leaves the number column blank on them, so a buffer line keeps
+  exactly one number. Any screen-row→buffer-line math must therefore use
+  `screenpos` (see the gutter diagnostics popover below), because one
+  line can cover several rows.
+- **Truncated long lines:** lines whose display width exceeds 280 cells
+  (`vim.fn.strwidth`) collapse to a ONE-ROW preview ending in
+  `…`, and clicking the preview row opens the full line in
+  `LineContentPopover`. The feature REQUIRES nvim 0.13+
+  (`NvimClient.truncatedLinesLua` gates on `vim.version()` and returns
+  false below): on 0.12 the feature's own extmark layout freezes upward
+  scrolling — with `conceal_lines` runs plus the `virt_lines_above`
+  preview mark, the topline LOOPS (measured on 0.12.5: 37→35→37 forever,
+  wheel-up included, so every line above the run is unreachable;
+  upstream neovim#42317, fixed only on master by #42480 for 0.13,
+  and #42077's wider stuck/scrolls-down behavior is still open; 0.12.6
+  predates both). Re-anchoring previews below the run's predecessor or
+  dropping "n" from 'concealcursor' removes only the hard loop, not the
+  row miscounts (measured). On gated nvim the hook stays off entirely:
+  over-long lines keep their normal wrapped rows and scrolling works.
+  Implemented nvim-side (`NvimClient.installTruncatedLines`,
+  idempotent via `_G.ineovim_trunc`), not in the renderer: a `conceal_lines`
+  extmark hides the whole line INCLUDING its wrap rows, and ONE `virt_lines`
+  extmark per run carries the run's previews as a multi-row list (attached to
+  the FIRST unconcealed line after the run with `virt_lines_above` — marks
+  attached to a concealed line are swallowed with it, and separate
+  same-anchor marks do NOT draw in creation order: the first lands topmost
+  and the rest in reverse, scrambling runs of three or more). A run that
+  reaches the buffer's LAST line has no following line to hang above, so its
+  previews instead hang BELOW the last unconcealed line before the run —
+  they land right after that line's (possibly wrapped) rows, exactly where
+  the concealed run sat; a below-mark on the concealed last line itself is
+  swallowed (measured on 0.12), and a run covering the WHOLE buffer (first
+  AND last line over-long) stays unconcealed rather than blanking the
+  buffer. Each preview
+  takes exactly one grid row, because virt lines
+  never wrap. Measured on nvim 0.12: `conceal_lines` collapses ONLY at
+  `conceallevel` 2 (0 and 1 leave the line drawn), and the cursor's own line
+  unfolds unless `concealcursor` includes the mode — both options are owned
+  like `wrap` (`conceallevel` 2, `concealcursor` "nv" so reading keeps a
+  line folded with the cursor on it while insert mode reveals it for
+  editing; global + every window + rescan re-apply). The
+  preview text is the longest char-prefix fitting `winwidth - textoff - 1`
+  cells plus the ellipsis (char-wise walk; Lua string slices are byte-based).
+  Rescans run on buffer/enter/text-change/resize autocmds with a full-buffer
+  width scan — fine for code files, a future optimization if huge buffers
+  feel sluggish in insert. Plain left clicks (outside the gutter) ask
+  `NvimClient.lineFullContent(row:col:)` for the clicked row's line: the Lua
+  walks the registered lines and locates each preview by run shape —
+  mid-buffer runs use `screenpos(run_end + 1, 1).row - (run_end - lnum)`;
+  last-line runs use the predecessor's LAST byte (`screenpos(run_start - 1,
+  #pred).row + 1 + (lnum - run_start)`, so a wrapped predecessor counts
+  from its bottom row) — and returns the full
+  text (nil elsewhere). The click itself still reaches nvim first, so the
+  cursor may land on a neighboring real line — the popover is the reading
+  path, `j`/`k` still traverse the hidden lines. Concealing is
+  buffer-global: every split showing the buffer truncates, previews sized
+  for the rescanning window clip in narrower ones, and the scroll
+  indicator's visible-lines metric drifts by the run's hidden rows.
 - **Full-width statusline bar:** the statusline row (the one above the cmdline
   row) gets a backdrop layer (`TerminalView.statuslineLayer`, below the grid
   layers) filled with the OPPOSITE theme mode's default background — a
@@ -242,34 +351,101 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   is nearly indistinguishable from the editor background (monokai pro dark:
   #2E323C on #26292C). The bar composites at 75% opacity
   (`TerminalView.statuslineBarOpacity`), blending toward the editor background
-  — the user found the full-strength inversion glaring at night. The footer
-  layer skips per-run background fills on that row and draws its text in the
-  opposite mode's default foreground — the theme's statusline text matches its
-  editor background and would vanish on the inverted bar. An unknown nvim
-  background (nil) follows the window appearance. `updateStatuslineLayer()`
-  keeps its frame/color in sync from the flush, initial-snapshot, metrics-,
-  resize-, and appearance-change paths; like the cmdline gap it assumes the
-  last row is the cmdline area and the row above it the statusline
-  (`laststatus` >= 2, `cmdheight` 1).
-- **Frozen footer (statusline + cmdline rows):** nvim never scrolls the last
-  two rows, so the app must not either. The grid is therefore drawn as two
-  `GridContentLayer`s — the scrolling region (`.head(excludingTrailing:
-  TerminalView.frozenFooterRows)`) and the frozen footer (`.tail(count:)`),
-  which share one snapshot and split `CellRect` invalidations by row — and
-  only the scrolling region takes the scroll lead's transform. The scrolling
-  region lives inside `scrollClipLayer` (`masksToBounds`), because a lead that
-  moves it *down* would otherwise paint the last text rows over the statusline
-  bar; the clip band ends exactly where the footer begins. Doing this in one
-  layer (the original design) dragged the statusline text off its bar mid-drag
-  while the sibling bar stayed put, which read as a style error. Because both
-  layers keep grid coordinates internally (`GridRowSlice` + `sliceOriginY`),
-  the cursor, the IME preedit, and the cursor glide were re-routed by row
-  (`TerminalView.cursorLayer`) but their geometry math is unchanged; the
-  footer is positioned by `updateFooterGeometry()`, which every snapshot,
-  metrics, resize, and appearance path calls next to `updateStatuslineLayer()`.
-  At most a one-line band of blank background opens between the last text row
-  and the footer while the lead lasts — the same blank the top edge shows, and
-  the price of leading Neovim at all (T7.4).
+  — the user found the full-strength inversion glaring at night. The global
+  grid's layer skips per-run background fills on that row and draws its text
+  in the opposite mode's default foreground — the theme's statusline text
+  matches its editor background and would vanish on the inverted bar. An
+  unknown nvim background (nil) follows the window appearance.
+  `updateStatuslineBar()` keeps its frame/color in sync from the flush,
+  initial-snapshot, metrics-, resize-, and appearance-change paths; like the
+  cmdline gap it assumes the last row is the cmdline area and the row above it
+  the statusline (`laststatus` >= 2, `cmdheight` 1) — EXCEPT while a
+  message block rails the screen: a visible message grid whose `msg_set_pos`
+  rows reach the statusline row (cmdline errors + the hit-enter prompt)
+  suppresses the bar and the row's inverted text
+  (`ScreenSnapshot.messageGridCovers`, consulted by `updateStatuslineBar` and
+  `GridContentLayer.effectiveStatuslineRow`, which also invalidates the row
+  when the coverage flips without grid 1 receiving dirty rects); otherwise
+  the inverted bar painted a stray full-width band behind
+  `E…: Command failed`.
+- **Message-grid re-parking:** after a hit-enter prompt is dismissed,
+  nvim 0.12 sends ONE flush that moves the message grid onto the cmdline row
+  (`msg_set_pos [grid, H-1, false, …]`) and clears only its row 0 with
+  blanks; rows 1+ keep their stale cells and never get cleared (identical
+  with `-u NONE` and real configs). The app therefore renders that parked
+  grid like any other grid — blank row 0 draws nothing — and must not
+  trust the move's dirty rects alone: `GridContentLayer.update` fully
+  invalidates itself whenever its `GridFrame` changes (and `contentsGravity`
+  is pinned to `.topLeft`), so a stale backing store can neither linger at
+  the new position nor squash into shrunken bounds as a ghost message band.
+  `draw(in:)` also caps its row loop to the same visible band as the bounds:
+  without that cap, stale row 1 loses the cmdline gap in the beyond-screen y
+  math and lands back inside the one-row bounds, repainting the old error as
+  a red strip even though its backing store was invalidated.
+- **Vertical separator cleanup:** nvim paints vsplit separators into the
+  global grid but does not erase separators that disappear when a window
+  closes, moves, or is resized (closing NERDTree otherwise leaves a vertical
+  line). `Screen` records the separator cells required by the last flush's
+  window layout; after position, size, visibility, or close events it
+  reconciles once at the flush against the final layout, clears only stale
+  cells to default blanks, and marks grid 1 dirty. A separator is required at
+  `frame.col - 1` for every visible, non-float, non-message window grid with
+  `frame.col > 0`, over that window grid's rows, so separators used by other
+  splits survive the cleanup. A separator drag resizes the window one column
+  per mouse event and nvim leaves a separator at every intermediate column;
+  when redraw batches coalesce, the frames only show the edge before and after
+  a burst, and a fast back-and-forth drag can sweep outside both endpoints.
+  The cleanup therefore does not try to reconstruct the crossed columns from
+  the frames: grid 1's tiled-window rows hold nothing but separators, so it
+  clears every `│` there that the current layout does not require (the glyph
+  is learned from a required separator cell because `'fillchars'` can change
+  it). Without that sweep, dragging the sidebar divider left the whole pane
+  striped with vertical bars. The divider is also no longer draggable:
+  `MouseHandler` swallows a left press on the separator column immediately to
+  the right of a window pinned to the screen's left edge
+  (`ScreenSnapshot.isSidebarSeparator`), so nvim never starts the sidebar
+  resize in the first place. Interior split dividers stay draggable.
+  The same reconcile pass also clears the global grid under every visible
+  tiled window's text rectangle: nvim draws each window's statusline into the
+  global grid (not the window's own grid), and when a split closes the
+  surviving window grows over the row that held its old statusline — which
+  nvim never clears. The window grids leave default-background cells
+  transparent, so the stale statusline showed through the buffer text
+  (closing a quickfix split printed the old statusline across the middle of
+  the file). Inside a window's rectangle the window's own grid is the only
+  owner (gutter, text, and winbar all live there), so any non-blank global
+  cell found there after a layout change is stale by construction.
+- **ext_multigrid layering:** nvim attaches with `ext_linegrid`,
+  `ext_popupmenu`, AND `ext_multigrid` (AppModel.bootstrap). Grid 1 stays the
+  GLOBAL grid — the screen background, vsplit separators, the statusline row,
+  and the message-area fill — while every window, float, and the
+  message/cmdline area arrive as their OWN grid (`grid_resize` +
+  `win_pos`/`win_float_pos`/`msg_set_pos`) laid out in grid-1 coordinates.
+  `Screen` stores that layout per grid in `frames: [Int: GridFrame]` (position,
+  hidden, isFloat/isMessage, mouseEnabled, zindex/compindex, `win_viewport`
+  metrics) and ships it inside every `ScreenSnapshot` next to `grids:
+  [Int: Grid]`. `TerminalView` keeps one `GridBox` (a clip layer plus a
+  `GridContentLayer`) per displayed grid: `syncGridBoxes(with:)` reconciles
+  the box set and z order (base < window grids < floats and the message grid
+  by zindex/compindex) on every applied snapshot, and `updateBoxGeometry()`
+  places each box at its frame's global position. The cmdline gap belongs to
+  the GLOBAL last row: `GridContentLayer` computes row y from the frame's
+  global offset, so a grid reaching the last row (grid 1 itself, the message
+  grid) carries the gap in its own row math and window grids never do. A grid
+  taller than the visible band (the message grid's capacity is a full screen)
+  draws only the visible band. The smooth-scroll lead binds to ONE grid — the
+  one the gesture grabbed (`ScrollController` resolves the hit per event and
+  calls `TerminalView.setScrollLead`); only that box translates mid-gesture
+  only that box translates mid-gesture and only its `grid_scroll`
+  confirmations collapse the lead (other grids' scrolls are ignored, so
+  `:windo`-style scrolling never smears). The cursor,
+  the IME preedit, and the cursor glide live entirely on the cursor grid's
+  layer — a cursor jumping between grids snaps instead of gliding.
+  `ineovim:textlayout` regions stay in global coordinates; each layer maps its
+  local cells through its frame before the gutter-shift lookup. nvim has no
+  window→grid Lua API, so the diagnostics lookup and `reloadChangedFile` keep
+  taking GLOBAL coordinates (`GridHit.globalRow/GlobalCol`) while
+  `nvim_input_mouse` gets the grid-local ones.
 - **RPC read path:** nvim's stdout is drained by a dedicated blocking-read
   thread (POSIX `read(2)` loop → `AsyncStream<Data>` → a single consumer task
   feeding `RPCSession.feed`), **not** by `FileHandle.readabilityHandler` (can
@@ -334,8 +510,9 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   paths. Keyboard navigation stays with nvim (`popupmenu_select` updates the
   panel); row clicks call `nvim_select_popupmenu_item`. The panel is the
   only completion UI while attached — there is no in-grid fallback. Hover /
-  signature-help floats still render as grid content; making those native
-  requires `ext_multigrid` and is a separate, much larger iteration.
+  signature-help floats render as float grids (`win_float_pos`) like any
+  other floating window; they are grid content, not native panels, but they
+  place, layer, and hit-test correctly through the ext_multigrid machinery.
 - **⌘-click opens URLs:** `MouseHandler.mouseDown` intercepts a left click
   carrying Command before anything reaches nvim: it hit-tests the clicked grid
   cell against the rendered snapshot via `TerminalView.linkTarget` and
@@ -369,7 +546,8 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `MouseHandler` before `nvim_input_mouse`: `TerminalView` asks nvim via
   `nvim_exec_lua` (`NvimClient.lineDiagnostics`) to map the screen row to a
   buffer line — across splits, using `getwininfo` window rects in global
-  grid coordinates — and to collect the diagnostics. An empty result (clean
+  grid coordinates, and `screenpos` because a wrapped line covers several
+  rows — and to collect the diagnostics. An empty result (clean
   line, non-text row, or an nvim without `vim.diagnostic`, guarded by
   pcall) forwards the original press, so behavior outside the feature is
   unchanged. The rest of the intercepted gesture (drag/release) is always
@@ -464,9 +642,13 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   session's theme). Its `AppModel.openFromCommandLine` seeds
   `NvimProcess.start(workingDirectory:)` when its session has not started —
   so init.lua already sees the directory — otherwise `:cd`s before opening
-  the files; startup re-reads the requested directory after its last
-  suspension point (and repeats when the `:cd` itself suspends), because a
-  launch request can arrive while nvim is already booting. It also marks the
+  the files. Startup re-reads the requested directory after every suspension
+  point and once more right before `ui_attach` (nvim sources init.lua only
+  when the UI attaches, so a later `:cd` would be too late for a config that
+  reads `getcwd()` at startup), because a launch request can arrive while
+  nvim is already booting. That also makes the request's directory win on a
+  cold launch over the one the launch window resumed in (see "Last working
+  directory"). It also marks the
   window (`focusAfterCommandLineOpen`) to activate the app and take keyboard
   focus as it is revealed (`fadeIn` uses `makeKeyAndOrderFront` instead of
   `orderFront`), so the command line can be typed into without clicking
@@ -505,16 +687,25 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   (`GhosttyTerminalController.updateColors` → `Ghostty.App.reloadConfig`,
   driven by `AppModel.$terminalColors`) whenever a session reports a new
   default background, so an open pane follows a dark↔light colorscheme flip
-  instead of keeping its original theme. Menu "Toggle Terminal
+  instead of keeping its original theme. ⌘-clicking a file path recognized in
+  the pane opens it in the editor instead of the system's default app:
+  `Ghostty.SurfaceView.openURLHandler` offers the raw `open_url` target before
+  the system fallback, and `EditorSplitView` routes an existing regular file
+  through `TerminalFileLink` — absolute paths, `file://` URLs, relative paths
+  against the surface's OSC 7 pwd or the pane's initial directory, and an
+  optional `:line[:column]` suffix — to `AppModel.open`, then focuses the
+  editor; web URLs keep the browser. Menu "Toggle Terminal
   Pane" / ⌘D toggles regardless of focus; the keyDown monitor in `AppDelegate`
   claims ⌘D (and its ⌃` alternate) before dispatch because Ghostty's
   `SurfaceView.performKeyEquivalent` would otherwise consume ⌘D for its
   default `new_split:right` binding while the pane is focused, so the menu
   shortcut alone only ever opened the pane. The same monitor claims ⌘L, ⌘R,
-  and ⌘P (the problems panel). ⌘L focuses the editor and ⌘R focuses the
-  terminal pane, opening it first when it is hidden (the pane's `.focus`
-  intent and the editor's `.focusEditor` intent). A focus change is often
-  invisible — two panes both filled with text, or a second ⌘R — so
+  and ⌘P (the problems panel). ⌘L focuses the editor; ⌘R previews the current
+  Markdown buffer in a reading window, and every other buffer keeps the
+  chord's old meaning — focus the terminal pane, opening it first when it is
+  hidden (the pane's `.focus` intent and the editor's `.focusEditor` intent).
+  A focus change is often invisible — two panes both filled with text, or a
+  second ⌘R — so
   `EditorSplitView` answers every successful `makeFirstResponder` for these
   intents (and for a pane that opens and takes focus) with a short
   `FocusToastView` card at the center of the window ("Focus: Editor" /
@@ -538,10 +729,37 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   at `$(BUILT_PRODUCTS_DIR)/PackageFrameworks`), and the symptom of losing it
   is a dyld abort at launch — before `main` — on the exported app: "Library
   not loaded: @rpath/GhosttySupport.framework/Versions/A/GhosttySupport".
-- **`ext_multigrid` policy (T1.3):** v1 attaches to nvim with a single grid
-  (`ext_multigrid` off). All redraw and grid handling must still carry grid
-  IDs from day one — event cases take a `grid` identifier and grid state is
-  keyed by ID — so enabling multigrid later is a switch flip, not a rewrite.
+- **Markdown preview (⌘R):** the keyDown monitor's ⌘R asks
+  `AppModel.handleCmdR`, which snapshots the current buffer through
+  `NvimClient.currentBufferSnapshot` (name, filetype, and lines, so unsaved
+  edits preview). A Markdown buffer (filetype `markdown*` or a Markdown
+  extension) opens in a standalone `MarkdownPreviewWindowController` — a
+  read-only `WKWebView` rendering HTML from `MarkdownRenderer`, one window
+  per buffer name, re-rendered and brought forward when previewed again.
+  The renderer parses with Foundation's `AttributedString(markdown:)` and
+  maps its presentation intents to headings, lists, block quotes, code
+  blocks, and thematic breaks, and its inline intents to
+  bold/italic/code/strikethrough/links; the CSS follows the editor's nvim
+  default colors, keeps the reading column at 720 pt, and renders code
+  blocks `white-space: pre` with `overflow-x: auto` so ASCII and
+  box-drawing diagrams keep their layout instead of wrapping at the reading
+  column. File links open in this session's editor,
+  web links in the browser. A non-Markdown buffer keeps ⌘R's old meaning
+  (focus/open the terminal pane); the Neovim menu's "Preview Markdown" item
+  carries the ⌘R hint and beeps on a non-Markdown buffer.
+- **`ext_multigrid` policy:** the app attaches with `ext_linegrid`,
+  `ext_popupmenu`, AND `ext_multigrid` — there is no single-grid path and no
+  feature flag. Every grid is first-class: `Screen.grids`/`Screen.frames` key
+  state by grid ID, `ScreenSnapshot` carries both, and `TerminalView` renders
+  one `GridBox` per displayed grid with hit-testing (`gridHit`) and scrolling
+  (`setScrollLead`) resolving per grid. New per-window features should read
+  `frames` (position, z, mouseEnabled, viewport metrics) rather than assuming
+  one screen-sized grid. KNOWN DEFERRAL: the scroll indicator still queries
+  nvim per wheel event (`windowScrollMetrics` Lua, cursor's window — so it
+  reflects the focused window when wheeling an unfocused split). `Screen`
+  already stores `win_viewport` metrics per grid in `GridFrame.viewport`;
+  switching the indicator to those (per hit grid, no RPC) is the intended
+  follow-up.
 - **Wide-glyph rendering:** nvim signals double-width cells by following the
   character with an empty-text continuation cell in `grid_line` ("the right
   cell of a double-width char will be represented as the empty string"); cell
@@ -585,8 +803,25 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   through `AppModel.active` (the key window's session, tracked via
   `NSWindow.didBecomeKey`); files that arrive before any session is ready are
   staged app-level and flushed to the first ready session. New sessions start
-  in `$HOME` (`NvimProcess` sets the child's cwd), and closing a window
+  in `$HOME` (`NvimProcess` sets the child's cwd) — except the launch window,
+  which resumes in the last working directory — and closing a window
   terminates its nvim in `AppModel.deinit`.
+- **Last working directory:** the launch window resumes where the last session
+  was. nvim reports its working directory once after
+  `NvimClient.installWorkingDirectoryHook` installs and again on every
+  `DirChanged` (`:cd`, `:tcd`, `:lcd`) as `ineovim:dirchanged`; `AppModel`
+  keeps the latest and writes it to `lastWorkingDirectory` whenever that
+  window is active (`becameActive`), plus once more from
+  `applicationWillTerminate` — so closing from another window or a crash
+  cannot save a stale directory. Only the launch window
+  (`registerEditorWindow` marks it) seeds `NvimProcess.start` from it; ⌘N and
+  native-tab windows keep starting in `$HOME`, and a directory that no longer
+  exists restores nothing. A window an `ineovim` command opened never uses the
+  saved value: the request's own directory takes precedence, and on a cold
+  launch — where the launch window may already have spawned in the saved
+  directory before the URL reaches it — the startup `:cd` is applied before
+  `ui_attach`, so nvim finishes startup with the requested directory, not the
+  saved one.
 - **⌘W (File > Close):** `EditorCommands.closeKeyWindow` closes the key
   editor window — with native tabs that is the current tab, and a window in
   a tab group with other tabs never quits the app. It closes the window with
@@ -599,6 +834,19 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `applicationWillTerminate` begins shutdown for every live session) —
   SwiftUI would otherwise leave the app running with no window. A non-editor
   key window (e.g. Settings) closes directly.
+- **Typed quit confirmation:** a typed `:q`/`:qu`/`:quit`/`:qa`/`:qall`
+  (with optional `!`) is held at Enter — `TerminalView.sendKeys` matches it
+  before sending anything — and only confirmed Enter reaches nvim; Cancel
+  sends `<Esc>` and the cmdline goes away. The red close button
+  (`confirmCloseEditorWindow`) routes through the same alert. Because the
+  embedded session's clean exit closes only its own tab — and quits the app
+  only when nothing else is left — the alert names that scope
+  (`QuitConfirmation.scope(for:)` → `QuitConfirmation.scope(tabCount:
+  editorWindowCount:)`): more than one native tab shows "Close Tab?" (only
+  that tab's session ends), a standalone window while another session is live
+  shows "Close Window?", and the last editor window keeps "Quit iNeovim?".
+  `editorWindowCount` is `AppModel.live.count`, the same measure the ⌘W path
+  uses to decide whether the app would have anything left to show.
 - **Scroll sync (T7.3):** the embedded nvim runs with `mousescroll=ver:1,hor:1`
   so one wheel event scrolls exactly one line and the visual lead in
   `ScrollAccumulator` maps 1:1 to incoming `grid_scroll` confirmations.
@@ -641,9 +889,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   stands. (The earlier policy suspended a whole-line lead outright, which is
   why wheel steps used to move only when Neovim answered.) Deltas are never
   dropped: throttling requests past the cap made the content fall behind the
-  wheel *and* left up to a screen of blank. The lead translates the scrolling
-  grid layer only — never the frozen footer, and never past the clip band
-  above it (see "Frozen footer" above).
+  wheel *and* left up to a screen of blank. The lead translates only the
+  grabbed grid's content layer, inside that grid's own clip layer — the other
+  boxes (statusline row, message area, floats) never move mid-gesture, and no
+  box's content can paint outside its clip.
 - **Animation pacing (T7.6):** all easing is time-based (elapsed/duration,
   sampled from `CVDisplayLink` frame timestamps), so animation speed is
   identical at 60 Hz and 120 Hz ProMotion; ProMotion just samples the curve
@@ -664,8 +913,15 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `CTLine` rather than taking the context fill color — and drops the cache
   when highlights, the default colors, the font, or the window appearance
   change (the adaptive `.textColor` fallback resolves at shaping time). Runs whose background
-  resolves to nvim's default skip their fill; the view's layer already paints
-  it. `CellRenderer.runs` accumulates a run in locals and appends it when it
+  resolves to nvim's default skip their fill, because the view's layer already paints
+  it — true only where that fill is actually underneath the cells: the base
+  grid and the tiled window grids sit directly on the view's background
+  layer, but a grid layered above another grid's CELLS must paint its own
+  default background (`GridContentLayer.overlaysOtherGridContent` — floats
+  and the message grid). A skipped fill there is a HOLE the covered text
+  shows through: an fzf panel (a float over the buffer) lost its background
+  and the buffer text rendered on top of the panel's rows.
+  `CellRenderer.runs` accumulates a run in locals and appends it when it
   ends, instead of mutating `runs[last]` per cell (which copied the run's text
   and slot array per cell). `TerminalView` coalesces flush applies: flushes
   that arrive while one apply is queued only add their dirty cells, and the
@@ -679,15 +935,24 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   cursor glide until nvim repainted those rows.
 - **Scroll indicator:** wheel and trackpad deltas flash a transient overlay
   scrollbar (`ScrollIndicator`): a 6 pt rounded thumb at the window's right
-  edge, spanning the scrolling region but never the frozen footer, faded out
+  edge (`rightInset` 2 pt), leaving the text 2 pt clear of the thumb (the
+  trailing inset reserves the shifted text's edge, see "Gutter-to-text
+  padding"), spanning the global grid's content rows (its last two rows —
+  statusline and cmdline — stay thumb-free), faded out
   0.7 s after the last delta — the system overlay scrollers' show-on-scroll,
-  hide-when-idle behavior. A single linegrid's `redraw` stream carries no
-  buffer position (`win_viewport` needs `ext_multigrid`, out of scope), so
-  the thumb's place and size come from `NvimClient.windowScrollMetrics`: Lua
-  that finds the window under the pointer cell via `getwininfo` rects
+  hide-when-idle behavior. The `redraw` stream's `win_viewport` metrics are
+  already stored per grid (`GridFrame.viewport`), but the thumb still gets its
+  geometry from `NvimClient.windowScrollMetrics`: Lua that finds the window
+  under the pointer cell via `getwininfo` rects
   (falling back to the current window when the pointer is over the
   statusline/cmdline rows) and returns `topline`, the buffer's line count,
-  and the window height. One query per delta with at most one in flight
+  and the number of visible buffer lines (`botline - topline + 1`, so a
+  wrapped line counts once and a fully wrapped buffer still reports as
+  scrollable) — so the thumb reflects the CURSOR's window when a wheel
+  gesture targets an unfocused split. Switching the thumb to
+  `GridFrame.viewport` of the hit grid (no RPC round trip, correct per-window
+  metrics) is the planned follow-up (see "ext_multigrid policy"). One query
+  per delta with at most one in flight
   (sub-millisecond round trips; against a blocked nvim the queries would
   otherwise pile up behind the input it is not processing). A buffer that
   fits the window shows no thumb; a failed query leaves the geometry as it
@@ -715,4 +980,6 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 No automated pipeline or CI exists. Release signing uses automatic signing with team
 `S39RD89QY9`; Release enables the hardened runtime for notarization. The full
 archive → export (`Config/ExportOptions.plist`) → notarize (`notarytool`) → staple flow
-is documented in `docs/RELEASE.md`. The app is MIT-licensed (`LICENSE`).
+is documented in `docs/RELEASE.md`; `Scripts/publish.sh` runs it, and its `--upload`
+flag publishes the ZIP and DMG to the GitHub release for tag `v<version>` (the script
+never creates or pushes the tag itself). The app is MIT-licensed (`LICENSE`).
