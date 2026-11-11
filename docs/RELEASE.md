@@ -1,8 +1,11 @@
 # Release
 
-How to build, sign, notarize, and ship iNeovim. There is no CI or deployment
-pipeline; releases are produced from an Xcode archive on a machine with the
-Developer ID certificate.
+How to build, sign, notarize, and ship iNeovim. There is no CI; releases are
+produced from an Xcode archive on a machine with the Developer ID certificate.
+
+`Scripts/publish.sh` automates steps 2–6 (archive → export → notarize → staple
+→ verify → optionally publish). The steps below are the equivalent manual
+flow.
 
 ## Prerequisites
 
@@ -83,6 +86,30 @@ hdiutil create -volname iNeovim -srcfolder build/export/iNeovim.app \
 xcrun notarytool submit build/iNeovim.dmg --keychain-profile "iNeovim-notary" --wait
 xcrun stapler staple build/iNeovim.dmg
 ```
+
+## 6. Publish to GitHub
+
+`Scripts/publish.sh --upload` runs the whole flow and then publishes the ZIP and
+DMG to the GitHub release for tag `v<MARKETING_VERSION>`:
+
+```
+Scripts/publish.sh --upload
+```
+
+- The tag must already exist locally as an **annotated** tag, point at `HEAD`,
+  and be pushed to `origin`; the working tree must be clean. The script fails
+  with the exact commands to run instead of creating or pushing anything
+  itself, so a release always matches its tag.
+- The release is created public with `gh release create --generate-notes`.
+  Running it again for an existing release overwrites the same-named assets
+  (`gh release upload --clobber`) and publishes the release if it was a draft.
+- Asset names carry the build number
+  (`iNeovim-<version>-<build>.zip` / `.dmg`), so bumping
+  `CURRENT_PROJECT_VERSION` keeps the previous build's files on the release
+  alongside the new ones.
+- `--upload` requires the notarized output and cannot be combined with
+  `--skip-notarize`; it also needs the GitHub CLI authenticated (`gh auth
+  login`).
 
 ## Notes
 

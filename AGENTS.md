@@ -105,7 +105,8 @@ Packages/GhosttySupport/  Local Swift package wrapping the self-built
                           GhosttyKit xcframework (Vendor/) and the adapted
                           libghostty Swift bindings (Sources/); see its
                           ADAPTATION.md for provenance and pruning notes
-Scripts/                  One-off tooling (app-icon generator); not part of the build
+Scripts/                  One-off tooling (app-icon generator) and the release
+                          pipeline (publish.sh); not part of the build
 iNeovimTests/             XCTest target (synchronized group); codec round-trip,
                           redraw-parsing, settings/model, and embedded-nvim tests
 Config/Info.plist         Partial Info.plist merged into the generated one
@@ -123,7 +124,8 @@ folder are not compiled.
 
 ## Build and run
 
-- There is no `Package.swift`, no Makefile, no CI configuration, and no build scripts.
+- There is no `Package.swift`, no Makefile, no CI configuration, and no build scripts
+  other than the release pipeline in `Scripts/publish.sh`.
   Building is done in **Xcode** (open `iNeovim.xcodeproj`, target `iNeovim`, Debug/Release).
 - **Do not run `xcodebuild` or `swift build` as part of routine changes** — the project
   owner verifies builds manually in Xcode. When delivering a change, make sure the Swift
@@ -978,4 +980,6 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
 No automated pipeline or CI exists. Release signing uses automatic signing with team
 `S39RD89QY9`; Release enables the hardened runtime for notarization. The full
 archive → export (`Config/ExportOptions.plist`) → notarize (`notarytool`) → staple flow
-is documented in `docs/RELEASE.md`. The app is MIT-licensed (`LICENSE`).
+is documented in `docs/RELEASE.md`; `Scripts/publish.sh` runs it, and its `--upload`
+flag publishes the ZIP and DMG to the GitHub release for tag `v<version>` (the script
+never creates or pushes the tag itself). The app is MIT-licensed (`LICENSE`).
