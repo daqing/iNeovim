@@ -458,6 +458,62 @@ final class ScreenTests: XCTestCase {
         XCTAssertEqual(snapshot.grid?[0, 63], GridCell(text: "│", attrId: 927))
     }
 
+    func testClosedSplitLeavesNoStaleStatuslineRow() async {
+        // Closing a split makes the window above grow over the row that held
+        // its statusline. Nvim repaints the window's own grid but not the
+        // global grid, where it drew that statusline — and the window's
+        // default-background cells are transparent, so the old statusline (text
+        // and highlight) would show through the middle of the buffer.
+        let screen = Screen()
+        await screen.apply(.gridResize(grid: 1, width: 40, height: 12))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 40, height: 1))
+        await screen.apply(.winPos(grid: 2, row: 2, col: 0, width: 40, height: 1))
+        await screen.apply(.winPos(grid: 5, row: 4, col: 0, width: 40, height: 6))
+        for row in [1, 3, 10] {
+            await screen.apply(.gridLine(grid: 1, row: row, colStart: 0, runs: [
+                GridCellRun(text: "s", attrId: 922, count: 40),
+            ]))
+        }
+        await screen.apply(.flush)
+
+        let flushed = Box<[Int: [CellRect]]>([:])
+        await screen.setFlushHandler { grid, rects in flushed.value[grid] = rects }
+        await screen.apply(.winClose(grid: 5))
+        await screen.apply(.gridDestroy(grid: 5))
+        await screen.apply(.winPos(grid: 4, row: 0, col: 0, width: 40, height: 5))
+        await screen.apply(.gridResize(grid: 4, width: 40, height: 5))
+        await screen.apply(.winPos(grid: 2, row: 6, col: 0, width: 40, height: 4))
+        await screen.apply(.gridResize(grid: 2, width: 40, height: 4))
+        // The surviving bottom window repaints its new statusline row.
+        await screen.apply(.gridLine(grid: 1, row: 10, colStart: 0, runs: [
+            GridCellRun(text: "t", attrId: 922, count: 40),
+        ]))
+        await screen.apply(.flush)
+
+        let snapshot = await screen.snapshot()
+        for row in [1, 3] {
+            for col in [0, 19, 39] {
+                XCTAssertEqual(
+                    snapshot.grid?[row, col], GridCell(),
+                    "row \(row) col \(col) kept stale statusline content"
+                )
+            }
+        }
+        // The statusline row above the cmdline still belongs to nvim.
+        XCTAssertEqual(snapshot.grid?[10, 0], GridCell(text: "t", attrId: 922))
+
+        // The cleared rows are flushed so the layers repaint them.
+        let rects = flushed.value[1] ?? []
+        for row in [1, 3] {
+            XCTAssertTrue(
+                rects.contains {
+                    $0.minRow <= row && row < $0.maxRow && $0.minCol == 0 && $0.maxCol == 40
+                },
+                "row \(row) was cleared but not flushed: \(rects)"
+            )
+        }
+    }
+
     func testMsgSetPosTracksTheMessageGridAndHidesItOnZero() async {
         let screen = Screen()
         await screen.apply(.msgSetPos(grid: 3, row: 27, scrolled: false, zindex: 200, compindex: 0))

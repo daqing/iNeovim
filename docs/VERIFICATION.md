@@ -89,6 +89,9 @@ Manual check in the GUI:
 2. Drag the divider between two ordinary editor splits: it still resizes.
 3. Click NERDTree entries: the highlight stays inside the sidebar (no
    full-width horizontal band).
+4. Open a quickfix split (`:copen`), then `:cclose`: the surviving window
+   grows into the vacated rows and no old statusline row is left printed
+   across the middle of the buffer.
 
 ## Soft wrap
 

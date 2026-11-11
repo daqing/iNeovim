@@ -137,15 +137,15 @@ actor Screen {
     private(set) var popup: PopupState?
     private var consumeTask: Task<Void, Never>?
     private var dirtyRects: [Int: [CellRect]] = [:]
-    private struct SeparatorCell: Hashable {
+    private struct CellPosition: Hashable {
         var row: Int
         var col: Int
     }
-    private var separatorCells: Set<SeparatorCell> = []
+    private var separatorCells: Set<CellPosition> = []
     /// The character nvim paints in a vsplit separator column (`│` unless
     /// 'fillchars' overrides it), learned from the cells the layout requires.
     private var separatorGlyph = "\u{2502}"
-    private var separatorLayoutChanged = false
+    private var globalLayoutChanged = false
 
     /// Called on the screen's executor once per `flush` for every grid that
     /// received events since the previous flush, with the dirty regions in
@@ -208,13 +208,13 @@ actor Screen {
             markGridDirty(grid)
         case let .gridResize(grid, width, height):
             grids[grid, default: Grid(id: grid)].resize(width: width, height: height)
-            separatorLayoutChanged = true
+            globalLayoutChanged = true
             markGridDirty(grid)
         case let .gridDestroy(grid):
             if grid != 1 {
                 grids[grid] = nil
                 frames[grid] = nil
-                separatorLayoutChanged = true
+                globalLayoutChanged = true
             }
         case let .cursorGoto(grid, row, col):
             markCursorDirty(cursor.grid, cursor.row, cursor.col)
@@ -249,7 +249,7 @@ actor Screen {
             gridState.resize(width: width, height: height)
             grids[grid] = gridState
             frames[grid] = GridFrame(row: row, col: col)
-            separatorLayoutChanged = true
+            globalLayoutChanged = true
             markGridDirty(grid)
         case let .winFloatPos(grid, anchorGrid, anchorRow, anchorCol, corner, mouseEnabled, zindex, compindex, screenRow, screenCol):
             if grids[grid] == nil { grids[grid] = Grid(id: grid) }
@@ -283,19 +283,19 @@ actor Screen {
                 }
             }
             frames[grid] = frame
-            separatorLayoutChanged = true
+            globalLayoutChanged = true
             markGridDirty(grid)
         case let .winExternalPos(grid):
             // No desktop-window representation: keep the grid's cells but
             // stop displaying it.
             frames[grid]?.hidden = true
-            separatorLayoutChanged = true
+            globalLayoutChanged = true
         case let .winHide(grid):
             frames[grid]?.hidden = true
-            separatorLayoutChanged = true
+            globalLayoutChanged = true
         case let .winClose(grid):
             frames[grid] = nil
-            separatorLayoutChanged = true
+            globalLayoutChanged = true
         case let .msgSetPos(grid, row, _, zindex, compindex):
             guard grid != 0 else {
                 if let messageGrid { frames[messageGrid]?.hidden = true }
@@ -319,9 +319,9 @@ actor Screen {
         case let .gridMouseEnabled(grid, enabled):
             frames[grid]?.mouseEnabled = enabled
         case .flush:
-            if separatorLayoutChanged {
-                reconcileVerticalSeparators()
-                separatorLayoutChanged = false
+            if globalLayoutChanged {
+                reconcileGlobalGrid()
+                globalLayoutChanged = false
             }
             for (grid, rects) in dirtyRects {
                 flushHandler?(grid, rects)
@@ -345,22 +345,31 @@ actor Screen {
         return (frame.row, frame.col)
     }
 
-    /// Nvim paints vsplit separators into the global grid but does not erase
-    /// the ones that disappear when a window closes, moves, or is resized. A
-    /// separator drag resizes the window one column per mouse event, painting
+    /// Nvim paints the parts of the frame that live outside the window grids —
+    /// vsplit separators and every window's statusline — into the global grid,
+    /// and does not erase them when the layout changes. Two kinds of leftovers
+    /// then show through the window grids, whose default-background cells are
+    /// transparent: a separator that the closed window left behind, and the
+    /// statusline of a window that expanded over the row it used to occupy
+    /// (closing a split moves the surviving window's statusline down and the
+    /// old row becomes ordinary buffer rows).
+    ///
+    /// A separator drag resizes the window one column per mouse event, painting
     /// a separator at every intermediate column; because redraw batches are
     /// coalesced, the frames only show the edge before and after a burst, and
     /// a fast back-and-forth drag can sweep far outside those two endpoints.
-    /// Grid 1's tiled-window rows carry nothing but separators, so reconcile
-    /// once per flush against the final layout and clear EVERY cell holding
-    /// the separator glyph that the final layout does not require.
-    private func reconcileVerticalSeparators() {
+    /// So reconcile once per flush against the final layout: clear every
+    /// separator glyph the layout no longer requires and every global cell
+    /// that a visible tiled window's text area covers — inside those
+    /// rectangles the window's own grid is the only owner.
+    private func reconcileGlobalGrid() {
         guard let global = grids[1], !global.isEmpty else {
             separatorCells = []
             return
         }
-        var current: Set<SeparatorCell> = []
+        var current: Set<CellPosition> = []
         var windowRows: Set<Int> = []
+        var windowAreas: [CellRect] = []
         for (id, frame) in frames
         where id != 1 && !frame.hidden && !frame.isFloat && !frame.isMessage {
             guard let window = grids[id], !window.isEmpty else { continue }
@@ -368,10 +377,17 @@ actor Screen {
             let bottom = min(global.height, frame.row + window.height)
             guard top < bottom else { continue }
             windowRows.formUnion(top..<bottom)
+            let left = max(0, frame.col)
+            let right = min(global.width, frame.col + window.width)
+            if left < right {
+                windowAreas.append(CellRect(
+                    minRow: top, minCol: left, maxRow: bottom, maxCol: right
+                ))
+            }
             let col = frame.col - 1
             guard frame.col > 0, col < global.width else { continue }
             for row in top..<bottom {
-                current.insert(SeparatorCell(row: row, col: col))
+                current.insert(CellPosition(row: row, col: col))
             }
         }
         // The separator glyph is part of the theme ('fillchars' vert); learn it
@@ -391,9 +407,23 @@ actor Screen {
         // columns outside the old/new edge span when the drag reversed.
         for row in windowRows where row < global.height {
             for col in 0..<global.width {
-                let cell = SeparatorCell(row: row, col: col)
+                let cell = CellPosition(row: row, col: col)
                 if !current.contains(cell), global[row, col].text == separatorGlyph {
                     stale.insert(cell)
+                }
+            }
+        }
+        // Nothing in the global grid belongs under a window's own cells: the
+        // window grid draws that area, so a stale statusline row left there
+        // would show through every cell whose background is the default.
+        // Required separators are exempt: a frame's width can nominally reach
+        // the separator column that the next window's frame claims (the widths
+        // arrive independently), and that column must survive.
+        for area in windowAreas {
+            for row in area.minRow..<area.maxRow {
+                for col in area.minCol..<area.maxCol where global[row, col] != GridCell() {
+                    let cell = CellPosition(row: row, col: col)
+                    if !current.contains(cell) { stale.insert(cell) }
                 }
             }
         }
@@ -527,6 +557,6 @@ actor Screen {
         dirtyRects = [:]
         scrollDeltas = [:]
         separatorCells = []
-        separatorLayoutChanged = false
+        globalLayoutChanged = false
     }
 }

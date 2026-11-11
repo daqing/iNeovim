@@ -403,6 +403,16 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   the right of a window pinned to the screen's left edge
   (`ScreenSnapshot.isSidebarSeparator`), so nvim never starts the sidebar
   resize in the first place. Interior split dividers stay draggable.
+  The same reconcile pass also clears the global grid under every visible
+  tiled window's text rectangle: nvim draws each window's statusline into the
+  global grid (not the window's own grid), and when a split closes the
+  surviving window grows over the row that held its old statusline — which
+  nvim never clears. The window grids leave default-background cells
+  transparent, so the stale statusline showed through the buffer text
+  (closing a quickfix split printed the old statusline across the middle of
+  the file). Inside a window's rectangle the window's own grid is the only
+  owner (gutter, text, and winbar all live there), so any non-blank global
+  cell found there after a layout change is stale by construction.
 - **ext_multigrid layering:** nvim attaches with `ext_linegrid`,
   `ext_popupmenu`, AND `ext_multigrid` (AppModel.bootstrap). Grid 1 stays the
   GLOBAL grid — the screen background, vsplit separators, the statusline row,
