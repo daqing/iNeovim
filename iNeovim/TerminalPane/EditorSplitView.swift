@@ -9,7 +9,7 @@ import GhosttySupport
 /// visibility is reported back through `setTerminalPaneVisible`. Narrowing
 /// the editor reflows the nvim grid through the normal resize pipeline.
 final class EditorSplitView: NSView {
-    static let defaultPaneWidth: CGFloat = 420
+    static let defaultPaneFraction: CGFloat = 0.4
     static let minPaneWidth: CGFloat = 280
     static let defaultPanelWidth: CGFloat = 280
     static let minPanelWidth: CGFloat = 200
@@ -24,7 +24,8 @@ final class EditorSplitView: NSView {
     private let focusToast = FocusToastView()
     private var pane: TerminalPaneView?
     private var problemsPanel: ProblemsPanelController?
-    private var paneWidth: CGFloat = EditorSplitView.defaultPaneWidth
+    private var paneWidth: CGFloat?
+    private var paneWidthIsUserSet = false
     private var panelWidth: CGFloat = EditorSplitView.defaultPanelWidth
     private var cancellables: Set<AnyCancellable> = []
     private var willCloseObserver: NSObjectProtocol?
@@ -38,7 +39,7 @@ final class EditorSplitView: NSView {
         divider.isHidden = true
         divider.onDrag = { [weak self] deltaX in
             guard let self else { return }
-            setPaneWidth(paneWidth - deltaX, animated: false)
+            setPaneWidth(effectivePaneWidth() - deltaX, animated: false)
         }
         addSubview(divider)
         problemsDivider.isHidden = true
@@ -168,7 +169,16 @@ final class EditorSplitView: NSView {
     }
 
     private func paneSpans() -> CGFloat {
-        pane != nil ? Self.dividerThickness + paneWidth : 0
+        pane != nil ? Self.dividerThickness + effectivePaneWidth() : 0
+    }
+
+    /// The pane's default is a share of the window measured at open time, so a
+    /// dragged width (once set) survives closing and reopening the pane.
+    private func effectivePaneWidth() -> CGFloat {
+        Self.clampedPaneWidth(
+            paneWidth ?? Self.defaultPaneWidth(containerWidth: bounds.width),
+            containerWidth: bounds.width
+        )
     }
 
     static func clampedPanelWidth(_ width: CGFloat, containerWidth: CGFloat, otherSpans: CGFloat) -> CGFloat {
@@ -215,10 +225,12 @@ final class EditorSplitView: NSView {
         addSubview(paneView)
         divider.isHidden = false
         model.setTerminalPaneVisible(true)
-        setPaneWidth(
-            Self.clampedPaneWidth(paneWidth, containerWidth: bounds.width),
-            animated: bounds.width > 0
-        )
+        if !paneWidthIsUserSet {
+            paneWidth = bounds.width > 0
+                ? Self.defaultPaneWidth(containerWidth: bounds.width)
+                : nil
+        }
+        placeSubviews(animated: bounds.width > 0)
         if window?.makeFirstResponder(surface) == true {
             showFocusToast("Focus: Terminal")
         }
@@ -303,24 +315,32 @@ final class EditorSplitView: NSView {
 
     private func setPaneWidth(_ width: CGFloat, animated: Bool) {
         paneWidth = Self.clampedPaneWidth(width, containerWidth: bounds.width)
+        paneWidthIsUserSet = true
         placeSubviews(animated: animated)
     }
 
+    static func defaultPaneWidth(containerWidth: CGFloat) -> CGFloat {
+        clampedPaneWidth(containerWidth * defaultPaneFraction, containerWidth: containerWidth)
+    }
+
     static func clampedPaneWidth(_ width: CGFloat, containerWidth: CGFloat) -> CGFloat {
-        guard containerWidth > 0 else { return defaultPaneWidth }
+        guard containerWidth > 0 else { return minPaneWidth }
         let maxWidth = max(minPaneWidth, containerWidth * 0.6)
         return min(max(width, minPaneWidth), maxWidth)
     }
 
     override func layout() {
         super.layout()
+        if pane != nil, paneWidth == nil, bounds.width > 0 {
+            paneWidth = Self.defaultPaneWidth(containerWidth: bounds.width)
+        }
         placeSubviews()
     }
 
     private func placeSubviews(animated: Bool = false) {
         guard bounds.width > 0, bounds.height > 0 else { return }
         let panelVisible = problemsPanel?.view.superview != nil
-        let paneWidth = pane != nil ? self.paneWidth : 0
+        let paneWidth = pane != nil ? effectivePaneWidth() : 0
         let paneSpan = paneWidth > 0 ? Self.dividerThickness + paneWidth : 0
         let panelWidth = panelVisible
             ? min(self.panelWidth, max(0, bounds.width - paneSpan - Self.minEditorWidth))
