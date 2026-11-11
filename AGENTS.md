@@ -208,7 +208,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `TerminalView.crossfadeThemeTransition`: the old rendering is snapshotted
   and faded out (0.25 s) over the redrawn content; on a first paint the
   seen mode falls back to the seeded theme and then to the window's
-  effective appearance.
+  effective appearance. The snapshot lives in an AppKit subview, so it needs
+  the same `zPosition` lift as the completion panel (`syncGridBoxes` re-stacks
+  it above every grid box); with the default 0 the window grids composite
+  over it and only the base grid fades.
 - **New-tab first paint:** `ui_attach` uses the view's real grid size
   (`AppModel.pendingGridSize`, reported from `TerminalView.requestResize`
   as the window lays out) instead of a placeholder 80x24. The placeholder
@@ -509,7 +512,11 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   flush, initial-snapshot, metrics-, and resize
   paths. Keyboard navigation stays with nvim (`popupmenu_select` updates the
   panel); row clicks call `nvim_select_popupmenu_item`. The panel is the
-  only completion UI while attached — there is no in-grid fallback. Hover /
+  only completion UI while attached — there is no in-grid fallback. The panel
+  is an AppKit subview, while every grid box is a raw sublayer carrying
+  `zPosition` 0…n; composition sorts by `zPosition`, so
+  `syncGridBoxes` lifts the panel above the highest box — without that, the
+  buffer's window grid paints its text straight across the menu. Hover /
   signature-help floats render as float grids (`win_float_pos`) like any
   other floating window; they are grid content, not native panels, but they
   place, layer, and hit-test correctly through the ext_multigrid machinery.

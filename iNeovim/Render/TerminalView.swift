@@ -274,6 +274,14 @@ final class TerminalView: NSView {
             boxes[gridId]?.clipLayer.zPosition = CGFloat(zIndex)
             zIndex += 1
         }
+        // AppKit subview layers sit at zPosition 0 while the grid boxes take
+        // 0…n, so the window grids composite over them: the completion
+        // panel's text mixes with the document's, and the theme crossfade
+        // only covers the base grid. Lift both above the whole box stack
+        // whenever the boxes are re-stacked (the panel belongs over floats
+        // too; the crossfade covers everything, panel included).
+        completionPanel.layer?.zPosition = CGFloat(zIndex)
+        themeCrossfadeView?.layer?.zPosition = CGFloat(zIndex + 1)
         CATransaction.commit()
     }
 
@@ -1529,6 +1537,10 @@ final class TerminalView: NSView {
         overlay.image = NSImage(cgImage: contents, size: bounds.size)
         overlay.autoresizingMask = [.width, .height]
         addSubview(overlay)
+        // A subview layer defaults to zPosition 0 and would land under the
+        // window grids; keep the snapshot above every box (and above the
+        // completion panel) so the whole old rendering fades as one.
+        overlay.layer?.zPosition = CGFloat(boxOrder.count + 1)
         themeCrossfadeView = overlay
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.themeCrossfadeDuration
