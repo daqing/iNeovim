@@ -545,6 +545,39 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   the scrolling layer and follows a scroll lead — and the pointer becomes
   `NSCursor.pointingHand`. Both are cleared on `mouseExited`, Command release,
   and when the pointer leaves a link.
+- **Mouse-drag selection auto-copy:** a left mouse release that leaves nvim in
+  a visual mode — press–drag–release, double/triple click, or a click
+  reshaping an existing selection — copies that selection to the system
+  pasteboard. The hook sits in `InputDispatcher.startConsuming` because
+  ordering is the whole design: the copy query is sent only after the release
+  `nvim_input_mouse` RPC has been answered, and same-session RPC ordering
+  guarantees the Lua then sees the final selection (measured with a real RPC
+  client, pynvim + `nvim_ui_attach`: release then `nvim_exec_lua` sees
+  post-release `mode()`; headless without a UI the mouse events never
+  process). `NvimClient.copyVisualSelectionToPasteboard` runs
+  `visualSelectionLua`: `mode()` decides the kind (`v`/`V`/`\22`, with select
+  mode `s`/`S`/`\19` mapped onto its visual kind — a user config with
+  `selectmode=mouse` still copies), and nvim 0.10+ takes
+  `getregion(getpos('v'), getpos('.'))`, which handles backwards, multiline,
+  blockwise, and multibyte selections; nvim 0.9 falls back to slicing
+  `nvim_buf_get_lines` between the marks (byte-accurate via `charidx`/
+  `byteidx`; blockwise returns nil there). Empty selections and plain clicks
+  (release lands in normal mode) no-op without touching the pasteboard; the
+  write clears the pasteboard like the Edit-menu Copy and must run on the
+  main actor (`NvimClient` methods are MainActor by default). Gestures
+  `MouseHandler` swallows (gutter popover, ⌘-click) never send a release, so
+  they never copy. nvim keeps visual mode after a mouse-drag release — the
+  selection stays visible and `y` still works. ⌘C (Edit-menu Copy,
+  `TerminalView.copy`) prefers the same live selection when nvim is in a
+  visual mode — a keyboard selection then copies too, and a habitual ⌘C after
+  the auto-copy cannot overwrite it with a stale unnamed register — and falls
+  back to the unnamed register outside visual mode. The copy is announced
+  200 ms later with a centered `FocusToastView` HUD reading "已复制": the
+  event flows InputDispatcher (`onSelectionCopied`, fired only when a
+  selection actually landed on the pasteboard) → `AppModel.selectionCopyCount`
+  (@Published counter, so repeated copies each re-announce) → EditorSplitView
+  sink, the same model→view channel the pane intents use; ⌘C's own copy path
+  stays silent.
 - **Sign-column diagnostics popover:** a plain left click in the gutter
   (grid columns 0–1, where LSP signs such as gopls' "E" render) opens a
   native popover listing that line's `vim.diagnostic` entries — severity
@@ -716,11 +749,12 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `EditorSplitView` answers every successful `makeFirstResponder` for these
   intents (and for a pane that opens and takes focus) with a short
   `FocusToastView` card at the center of the window ("Focus: Editor" /
-  "Focus: Terminal"), a `.popover`-material `NSVisualEffectView` rounded 10 pt
-  that fades in over 0.12 s, holds ~0.9 s, and fades out over 0.25 s from a
-  cancellable main-actor task; it hit-tests to nil so clicks fall through, is
-  re-raised above its siblings on show, and is re-centered in
-  `placeSubviews`. The
+  "Focus: Terminal"), bare text with a leading `checkmark` SF Symbol (tinted
+  to match), no background, drawn in the pale `secondaryLabelColor`, that
+  fades in over 0.12 s, holds ~0.9 s, and fades
+  out over 0.25 s from a cancellable main-actor task; it hit-tests to nil so
+  clicks fall through, is re-raised above its siblings on show, and is
+  re-centered in `placeSubviews`. The
   toast only appears when the responder change actually succeeded, so it also
   reports a pane that refused focus by staying silent. The
   settings toggle

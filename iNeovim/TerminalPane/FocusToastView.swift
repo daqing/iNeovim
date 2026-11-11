@@ -1,15 +1,13 @@
 import AppKit
 import QuartzCore
 
-/// Small centered HUD shown after a keyboard focus switch, so ⌘L / ⌘R
-/// report where focus went even when nothing else visibly moves. Clicks fall
-/// through to the views underneath.
+/// Small centered HUD for short confirmations: keyboard focus switches (⌘L /
+/// ⌘R report where focus went even when nothing else visibly moves) and
+/// mouse-selection copies. Clicks fall through to the views underneath.
 @MainActor
 final class FocusToastView: NSView {
-    private static let horizontalPadding: CGFloat = 16
-    private static let verticalPadding: CGFloat = 8
-    private static let cornerRadius: CGFloat = 10
     private static let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+    private static let iconGap: CGFloat = 2
     private static let unboundedRect = NSRect(
         x: 0,
         y: 0,
@@ -17,7 +15,7 @@ final class FocusToastView: NSView {
         height: CGFloat.greatestFiniteMagnitude
     )
 
-    private let effect = NSVisualEffectView()
+    private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private var hideTask: Task<Void, Never>?
 
@@ -27,16 +25,13 @@ final class FocusToastView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.opacity = 0
-        effect.material = .popover
-        effect.blendingMode = .withinWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.masksToBounds = true
-        effect.layer?.cornerRadius = Self.cornerRadius
-        addSubview(effect)
+        icon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: Self.font.pointSize, weight: .medium))
+        icon.contentTintColor = .secondaryLabelColor
+        addSubview(icon)
         label.font = Self.font
-        label.textColor = .labelColor
-        effect.addSubview(label)
+        label.textColor = .secondaryLabelColor
+        addSubview(label)
         isHidden = true
     }
 
@@ -54,15 +49,21 @@ final class FocusToastView: NSView {
         label.stringValue = text
         let measured = label.cell?.cellSize(forBounds: Self.unboundedRect) ?? .zero
         let textSize = CGSize(width: ceil(measured.width), height: ceil(measured.height))
+        let iconSize = icon.image?.size ?? .zero
         let size = CGSize(
-            width: textSize.width + Self.horizontalPadding * 2,
-            height: textSize.height + Self.verticalPadding * 2
+            width: ceil(iconSize.width) + Self.iconGap + textSize.width,
+            height: max(ceil(iconSize.height), textSize.height)
         )
         setFrameSize(size)
-        effect.frame = bounds
+        icon.frame = CGRect(
+            x: 0,
+            y: (size.height - iconSize.height) / 2,
+            width: iconSize.width,
+            height: iconSize.height
+        )
         label.frame = CGRect(
-            x: Self.horizontalPadding,
-            y: Self.verticalPadding,
+            x: ceil(iconSize.width) + Self.iconGap,
+            y: (size.height - textSize.height) / 2,
             width: textSize.width,
             height: textSize.height
         )

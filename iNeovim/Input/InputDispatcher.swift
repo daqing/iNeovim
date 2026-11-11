@@ -41,8 +41,12 @@ actor InputDispatcher {
     }
 
     /// Start the single consumer translating events into RPC calls. Later
-    /// calls are dropped with a log message.
-    func startConsuming(with client: NvimClient) {
+    /// calls are dropped with a log message. `onSelectionCopied` runs on the
+    /// main actor after a mouse-selection copy lands on the pasteboard.
+    func startConsuming(
+        with client: NvimClient,
+        onSelectionCopied: @escaping @MainActor () -> Void = {}
+    ) {
         guard consumeTask == nil else {
             Log.input.error("Input event stream consumed more than once; dropping extra consumer")
             return
@@ -67,6 +71,16 @@ actor InputDispatcher {
                             row: row,
                             col: col
                         )
+                        // A left release ends a mouse selection, and nvim
+                        // keeps that selection active in visual mode: copy
+                        // it to the system pasteboard. The copy query is
+                        // sent only after the release RPC has been answered,
+                        // so the Lua sees the final selection; a plain click
+                        // is already back in normal mode and no-ops.
+                        if button == "left", action == "release",
+                           await client.copyVisualSelectionToPasteboard() {
+                            await onSelectionCopied()
+                        }
                     } catch {
                         Log.input.error("nvim_input_mouse failed: \(error.localizedDescription, privacy: .public)")
                     }

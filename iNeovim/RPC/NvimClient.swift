@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// One `vim.diagnostic` entry on the clicked line.
@@ -129,6 +130,77 @@ struct NvimClient {
         ])
         return value.stringValue ?? ""
     }
+
+    /// Copy the visual selection nvim keeps active after a mouse selection
+    /// ends (a left release leaves the drag or multi-click selection in
+    /// visual mode) to the system pasteboard. No-op when nvim is not in a
+    /// visual mode — a plain click is already back in normal mode — or the
+    /// selection is empty. nvim 0.9 (before `getregion`) falls back to
+    /// slicing buffer lines between the marks and copies no blockwise
+    /// selection. Returns whether a selection landed on the pasteboard.
+    @discardableResult
+    func copyVisualSelectionToPasteboard() async -> Bool {
+        guard let text = await visualSelectionText() else { return false }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        return true
+    }
+
+    /// The active visual selection as text, or nil when nvim is not in a
+    /// visual mode or the selection is empty.
+    func visualSelectionText() async -> String? {
+        guard let value = try? await execLua(Self.visualSelectionLua, args: []),
+              let text = value.stringValue, !text.isEmpty else { return nil }
+        return text
+    }
+
+    /// The active visual selection as text. `mode()` decides the kind —
+    /// select mode (`s`/`S`/`\19`) maps onto its visual kind — and nvim
+    /// 0.10+ takes `getregion`, which handles backwards, multiline,
+    /// blockwise, and multibyte selections; older nvim slices buffer lines
+    /// between the `v` mark and the cursor (blockwise unsupported).
+    private static let visualSelectionLua = """
+        local kind = ({ v = 'v', V = 'V', ['\\22'] = '\\22', s = 'v', S = 'V', ['\\19'] = '\\22' })[vim.fn.mode()]
+        if not kind then return nil end
+        if vim.fn.has('nvim-0.10') == 1 then
+          local ok, lines = pcall(vim.fn.getregion, vim.fn.getpos('v'), vim.fn.getpos('.'), { type = kind })
+          if not ok or type(lines) ~= 'table' then return nil end
+          local text = table.concat(lines, '\\n')
+          return text ~= '' and text or nil
+        end
+        if kind == '\\22' then return nil end
+        local anchor, cursor = vim.fn.getpos('v'), vim.fn.getpos('.')
+        local from = { line = anchor[2], col = anchor[3] }
+        local to = { line = cursor[2], col = cursor[3] }
+        if kind == 'V' then
+          if from.line > to.line then from, to = to, from end
+          local lines = vim.api.nvim_buf_get_lines(0, from.line - 1, to.line, true)
+          local text = table.concat(lines, '\\n')
+          return text ~= '' and text or nil
+        end
+        local function less(p, q) return p.line < q.line or (p.line == q.line and p.col < q.col) end
+        if less(to, from) then from, to = to, from end
+        local lines = vim.api.nvim_buf_get_lines(0, from.line - 1, to.line, true)
+        if #lines == 0 then return nil end
+        local function char_end(line, byte0)
+          if byte0 >= #line then return #line end
+          local ci = vim.fn.charidx(line, byte0)
+          if ci < 0 then return #line end
+          local next_ = vim.fn.byteidx(line, ci + 1)
+          if next_ < 0 then return #line end
+          return next_
+        end
+        if #lines == 1 then
+          local text = lines[1]:sub(from.col, char_end(lines[1], to.col - 1))
+          return text ~= '' and text or nil
+        end
+        local parts = { lines[1]:sub(from.col) }
+        for i = 2, #lines - 1 do parts[i] = lines[i] end
+        parts[#lines] = lines[#lines]:sub(1, char_end(lines[#lines], to.col - 1))
+        local text = table.concat(parts, '\\n')
+        return text ~= '' and text or nil
+        """
 
     /// Pick an ext_popupmenu completion: move the selection to `index` and
     /// insert it, closing the menu (row clicks in the native panel).

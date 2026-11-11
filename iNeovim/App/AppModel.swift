@@ -522,7 +522,9 @@ final class AppModel: ObservableObject {
             } catch {
                 Log.app.error("Failed to install working directory hook: \(error.localizedDescription, privacy: .public)")
             }
-            await inputDispatcher.startConsuming(with: client)
+            await inputDispatcher.startConsuming(with: client) { [weak self] in
+                self?.announceSelectionCopy()
+            }
             startObservingTermination()
             // A request can also land while the attach and the hooks run; it
             // must be applied before the queued files open.
@@ -700,6 +702,19 @@ final class AppModel: ObservableObject {
             } catch {
                 Log.input.error("nvim_input failed: \(error.localizedDescription, privacy: .public)")
             }
+        }
+    }
+
+    /// Incremented after a mouse selection lands on the pasteboard; the
+    /// split container flashes a short "已复制" HUD 200 ms later. A counter
+    /// rather than a flag so repeated copies each re-announce.
+    @Published private(set) var selectionCopyCount = 0
+
+    private func announceSelectionCopy() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard let self else { return }
+            selectionCopyCount += 1
         }
     }
 

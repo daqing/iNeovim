@@ -61,6 +61,14 @@ final class EditorSplitView: NSView {
                 self?.setProblemsPanelVisible(visible, animated: true)
             }
             .store(in: &cancellables)
+        // A mouse-selection copy flashes the same HUD the focus intents use.
+        model.$selectionCopyCount
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] count in
+                guard count > 0 else { return }
+                self?.showFocusToast("已复制")
+            }
+            .store(in: &cancellables)
         // Keep the native terminal pane's background in step with the
         // editor: when nvim reports a new default background (a dark↔light
         // colorscheme flip), rewrite the shared Ghostty config and reload it
@@ -247,8 +255,9 @@ final class EditorSplitView: NSView {
     }
 
     /// ⌘L / ⌘R change keyboard focus without necessarily changing anything
-    /// else on screen (a second ⌘R looks like a no-op), so a short HUD reports
-    /// where focus went. It sits above every sibling and ignores the mouse.
+    /// else on screen (a second ⌘R looks like a no-op), and a selection copy
+    /// lands silently on the pasteboard, so a short HUD reports focus and
+    /// copies. It sits above every sibling and ignores the mouse.
     private func showFocusToast(_ text: String) {
         focusToast.show(text)
         addSubview(focusToast, positioned: .above, relativeTo: nil)

@@ -745,7 +745,8 @@ final class TerminalView: NSView {
     }
 
     // Standard Edit-menu actions reach the first responder through the
-    // responder chain. Paste goes to Neovim as typed input; copy mirrors the
+    // responder chain. Paste goes to Neovim as typed input; copy prefers the
+    // live visual selection (mouse or keyboard) and otherwise mirrors the
     // unnamed register to the system pasteboard.
 
     @objc func paste(_ sender: Any?) {
@@ -755,7 +756,14 @@ final class TerminalView: NSView {
 
     @objc func copy(_ sender: Any?) {
         Task {
-            guard let text = try? await model.client.registerContents("\""), !text.isEmpty else { return }
+            // Visual mode holds the live selection; outside it the unnamed
+            // register keeps its old meaning.
+            var text = await model.client.visualSelectionText()
+            if text == nil {
+                let register = try? await model.client.registerContents("\"")
+                text = register.flatMap { $0.isEmpty ? nil : $0 }
+            }
+            guard let text else { return }
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
