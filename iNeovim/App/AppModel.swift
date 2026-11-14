@@ -63,13 +63,13 @@ final class AppModel: ObservableObject {
     /// reports default colors). Drives the window chrome color scheme.
     @Published private(set) var themeIsDark: Bool?
 
-    /// Theme mode and packed default background to seed the next window a
-    /// native-tab request creates (the requesting window's): consumed by the
-    /// following `init`, so the new tab paints its host's exact look from its
-    /// first frame instead of flashing the system appearance until nvim
-    /// reports. Both self-clearing.
+    /// Theme mode, packed default background, and working directory to seed
+    /// the next window a native-tab request creates (the requesting window's):
+    /// consumed by the following `init`, so the new tab paints its host's exact
+    /// look and starts nvim in its directory. All self-clearing.
     static var pendingThemeSeed: Bool?
     static var pendingBackgroundSeed: Int?
+    static var pendingWorkingDirectorySeed: URL?
 
     /// Last scheme/background any session reported, persisted so a brand-new
     /// window (launch / ⌘N) is created with the right look before its nvim
@@ -219,17 +219,23 @@ final class AppModel: ObservableObject {
     private let commandHandler: @MainActor (String, NvimClient) -> Void
     private let cleanExitHandler: (@MainActor () -> Void)?
     private var pendingFiles: [URL] = []
-    /// Directory an `ineovim` command opened this window in. It seeds the
-    /// nvim child process (so init.lua sees it) and doubles as the
-    /// post-attach `:cd` when the request arrives after startup began.
+    /// Directory an `ineovim` command or native-tab request opened this window
+    /// in. It seeds the nvim child process (so init.lua sees it) and doubles as
+    /// the post-attach `:cd` when the request arrives after startup began.
     private var workingDirectory: URL?
     /// The session's live working directory, reported by nvim on startup and
     /// on every `DirChanged`. Persisted while this window is active (and again
     /// as the app terminates) so the next launch can start there.
     private(set) var currentWorkingDirectory: URL?
+    /// The requesting tab's latest directory, falling back to the directory
+    /// this session was seeded with before nvim's first report arrives.
+    var workingDirectoryForNewTab: URL? {
+        currentWorkingDirectory ?? workingDirectory
+    }
     /// True for the window SwiftUI opened at launch, marked by
     /// `AppDelegate.registerEditorWindow`. It is the only window that starts
-    /// in the saved working directory; `$HOME` stays the default otherwise.
+    /// in the saved working directory; `$HOME` stays the default for other
+    /// windows that do not inherit a native tab's directory.
     var isLaunchWindow = false
     private var terminationTask: Task<Void, Never>?
     private var isShuttingDown = false
@@ -259,6 +265,8 @@ final class AppModel: ObservableObject {
             ?? AppModel.active?.terminalColors.background
             ?? Self.persistedBackground
         Self.pendingBackgroundSeed = nil
+        workingDirectory = Self.pendingWorkingDirectorySeed
+        Self.pendingWorkingDirectorySeed = nil
         self.session = session
         self.screen = screen
         self.inputDispatcher = inputDispatcher
@@ -427,9 +435,9 @@ final class AppModel: ObservableObject {
         do {
             bootstrapError = nil
             setup = nil
-            // The launch window resumes in the directory the last session
-            // was in; a window an `ineovim` command opened starts in the
-            // directory the command ran in, which takes precedence.
+            // A native tab starts in its requesting tab's directory, and an
+            // `ineovim` window in the directory the command ran in; either
+            // takes precedence over the launch window's saved directory.
             let resumed = isLaunchWindow ? Self.persistedWorkingDirectory : nil
             try await session.start(workingDirectory: workingDirectory ?? resumed)
             try await session.handshake()
@@ -469,8 +477,8 @@ final class AppModel: ObservableObject {
             // rest of the line is unreachable; applied before attaching so
             // the first full screen is already wrapped instead of reflowing.
             try await client.installWrap()
-            // A directory an `ineovim` command asked for must be in effect
-            // before `ui_attach`: nvim finishes startup — and sources
+            // A directory a native tab or `ineovim` command requested must be
+            // in effect before `ui_attach`: nvim finishes startup — and sources
             // init.lua — only once the UI attaches, so a `:cd` after that
             // would leave a config that reads `getcwd()` at startup in the
             // wrong directory. The request can land at any point in the
@@ -650,21 +658,26 @@ final class AppModel: ObservableObject {
     // NSWindow's tab group. nvim's own tabpages stay reachable through
     // `gt`/`gT` and un-intercepted `:tab*` commands for configs that use them.
 
-    /// ⌘T / a typed `:tabnew [file]`: open a new editor window as a tab of
-    /// this window's tab group, opening `file` (typed cmdline text, resolved
-    /// against nvim's cwd) in it once the new session is ready.
+    /// A typed `:tabnew [file]`: open a new editor window as a tab of this
+    /// window's tab group and working directory, opening `file` (typed
+    /// cmdline text, resolved against nvim's cwd) in it once the new session
+    /// is ready.
     func requestNativeTab(file: String) {
         Task { @MainActor in
             let directory = (try? await client.currentDirectory()) ?? ""
+            let workingDirectory = directory.isEmpty
+                ? nil
+                : URL(fileURLWithPath: directory, isDirectory: true)
             AppDelegate.shared?.requestNewTab(
                 from: hostWindow,
-                file: Self.resolveTabFile(file, workingDirectory: directory)
+                file: Self.resolveTabFile(file, workingDirectory: directory),
+                workingDirectory: workingDirectory
             )
         }
     }
 
     /// Resolve a typed `:tabnew` file name against nvim's working directory;
-    /// nil for a bare `:tabnew` (the new session starts in $HOME).
+    /// nil for a bare `:tabnew`.
     static func resolveTabFile(_ file: String, workingDirectory: String) -> URL? {
         let name = file.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return nil }
@@ -948,10 +961,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Apply the directory a command-line request asked for, and return it.
-    /// The request can arrive (and the `:cd` itself can suspend) at any point
-    /// of `bootstrap`, so the current request is re-read after every
-    /// suspension and the last one wins.
+    /// Apply the requested startup directory and return it. A command-line
+    /// request can arrive (and the `:cd` itself can suspend) at any point of
+    /// `bootstrap`, so the current request is re-read after every suspension
+    /// and the last one wins.
     @discardableResult
     private func applyRequestedDirectory(after applied: URL? = nil) async -> URL? {
         var applied = applied

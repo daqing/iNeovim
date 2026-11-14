@@ -89,6 +89,23 @@ final class AppModelTests: XCTestCase {
         )
     }
 
+    func testNativeTabInheritsLatestWorkingDirectoryOnlyForNextModel() {
+        let firstDirectory = URL(fileURLWithPath: "/work/first", isDirectory: true)
+        let latestDirectory = URL(fileURLWithPath: "/work/latest", isDirectory: true)
+        let host = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
+        host.setWorkingDirectory(firstDirectory.path)
+        host.setWorkingDirectory(latestDirectory.path)
+        AppModel.pendingWorkingDirectorySeed = host.workingDirectoryForNewTab
+        defer { AppModel.pendingWorkingDirectorySeed = nil }
+
+        let tab = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
+
+        XCTAssertEqual(tab.workingDirectoryForNewTab, latestDirectory)
+        XCTAssertNil(AppModel.pendingWorkingDirectorySeed)
+        let unrelatedWindow = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
+        XCTAssertNil(unrelatedWindow.workingDirectoryForNewTab)
+    }
+
     func testUnexpectedTerminationSurfacesCrash() {
         let model = AppModel(openHandler: { _, _ in }, commandHandler: { _, _ in })
         model.markReadyForTesting()

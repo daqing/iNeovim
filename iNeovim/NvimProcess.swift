@@ -41,9 +41,9 @@ actor NvimProcess {
         process.executableURL = binary
         process.arguments = ["--embed"]
         // A GUI launch inherits "/" as the working directory; starting in the
-        // user's home (or in the directory an `ineovim` command ran in) must
-        // happen here (not via RPC) so init.lua already sees the expected
-        // `getcwd()` during startup.
+        // user's home (or in the directory a native tab or `ineovim` command
+        // requested) must happen here (not via RPC) so init.lua already sees
+        // the expected `getcwd()` during startup.
         process.currentDirectoryURL = workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
         process.environment = Self.augmentedEnvironment()
         process.standardInput = stdin

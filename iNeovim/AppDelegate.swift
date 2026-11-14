@@ -286,10 +286,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Open a new editor window joined as a tab to `host`'s tab group, with
-    /// `file` opened in it once its session is ready. A host that is not an
-    /// editor window (e.g. Settings) yields a standalone window.
-    func requestNewTab(from host: NSWindow?, file: URL? = nil) {
+    /// Open a new editor window joined as a tab to `host`'s tab group and
+    /// working directory, with `file` opened in it once its session is ready.
+    /// A host that is not an editor window (e.g. Settings) yields a standalone
+    /// window. A typed `:tabnew` supplies the directory it just queried;
+    /// otherwise the host's latest directory report is used.
+    func requestNewTab(from host: NSWindow?, file: URL? = nil, workingDirectory: URL? = nil) {
         guard let openEditorWindow else {
             Log.app.notice("New tab requested before any editor window existed; ignored")
             return
@@ -297,15 +299,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingTabHost = host?.tabbingIdentifier == Self.editorTabbingIdentifier ? host : nil
         pendingTabFile = file
         // The new session reports its colorscheme only after the first flush;
-        // seed the next model with the host's mode and background so the tab
-        // appears in the host's exact look and the real report does not snap.
+        // seed the next model with the host's mode, background, and directory
+        // so the tab appears in the host's exact look and starts where it was.
         if let pendingTabHost,
            let hostModel = AppModel.live.first(where: { $0.hostWindow === pendingTabHost }) {
             AppModel.pendingThemeSeed = hostModel.themeIsDark
             AppModel.pendingBackgroundSeed = hostModel.terminalColors.background
+            AppModel.pendingWorkingDirectorySeed = workingDirectory ?? hostModel.workingDirectoryForNewTab
         } else {
             AppModel.pendingThemeSeed = nil
             AppModel.pendingBackgroundSeed = nil
+            AppModel.pendingWorkingDirectorySeed = workingDirectory
         }
         openEditorWindow()
     }

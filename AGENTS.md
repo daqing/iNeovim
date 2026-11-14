@@ -826,7 +826,12 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   the user's tabbing preference — at registration time neither window has a
   group yet, so plain `tabGroup` inequality would skip the join), and routes a
   pending file through the model's pre-ready queue (paths resolved against
-  nvim's cwd via `AppModel.resolveTabFile`). Reach the delegate through
+  nvim's cwd via `AppModel.resolveTabFile`). `requestNewTab` also seeds the
+  next model with the host's latest working directory
+  (`AppModel.pendingWorkingDirectorySeed`, with a freshly queried cwd for a
+  typed `:tabnew`); the following `AppModel.init` consumes that seed so
+  `NvimProcess.start` and the pre-`ui_attach` directory reconciliation both
+  use the requesting tab's directory. Reach the delegate through
   `AppDelegate.shared` (set in `init`), never `NSApp.delegate as? AppDelegate`:
   `@NSApplicationDelegateAdaptor` installs a `SwiftUI.AppDelegate` wrapper as
   the real `NSApp.delegate` that only forwards protocol methods and `@objc`
@@ -845,8 +850,9 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   `NSWindow.didBecomeKey`); files that arrive before any session is ready are
   staged app-level and flushed to the first ready session. New sessions start
   in `$HOME` (`NvimProcess` sets the child's cwd) — except the launch window,
-  which resumes in the last working directory — and closing a window
-  terminates its nvim in `AppModel.deinit`.
+  which resumes in the last working directory, and native tabs, which inherit
+  the requesting tab's working directory — and closing a window terminates its
+  nvim in `AppModel.deinit`.
 - **Last working directory:** the launch window resumes where the last session
   was. nvim reports its working directory once after
   `NvimClient.installWorkingDirectoryHook` installs and again on every
@@ -855,9 +861,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   window is active (`becameActive`), plus once more from
   `applicationWillTerminate` — so closing from another window or a crash
   cannot save a stale directory. Only the launch window
-  (`registerEditorWindow` marks it) seeds `NvimProcess.start` from it; ⌘N and
-  native-tab windows keep starting in `$HOME`, and a directory that no longer
-  exists restores nothing. A window an `ineovim` command opened never uses the
+  (`registerEditorWindow` marks it) seeds `NvimProcess.start` from it; ⌘N keeps
+  starting in `$HOME`, native tabs instead use the requesting tab's latest
+  directory, and a saved directory that no longer exists restores nothing. A
+  window an `ineovim` command opened never uses the
   saved value: the request's own directory takes precedence, and on a cold
   launch — where the launch window may already have spawned in the saved
   directory before the URL reaches it — the startup `:cd` is applied before
