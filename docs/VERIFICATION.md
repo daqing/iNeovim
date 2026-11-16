@@ -262,10 +262,18 @@ Manual checks in the GUI:
    opens in the editor.
 6. Resize the preview: the reading column stays capped around 720 pt and the
    text reflows; ⌘W closes it.
+7. Preview a page with a GFM pipe table: it renders as a real table —
+   bordered cells, delimiter-colon alignment (left/center/right), inline
+   bold/code/links inside cells, an escaped `\|` showing as a literal pipe —
+   and a table wider than the reading column scrolls horizontally. A setext
+   heading (`Title` over a line of dashes) still renders as an `h2`, and
+   pipes inside fenced code blocks stay code text.
 
 Automated checks: `MarkdownRendererTests` covers headings, list markers,
 inline bold, links, relative-link resolution, HTML escaping, code-block
-whitespace preservation / no-wrap CSS, and Markdown buffer detection.
+whitespace preservation / no-wrap CSS, pipe tables (structure, alignment,
+inline cells, escaped pipes, fence and setext non-detection), and Markdown
+buffer detection.
 
 ## Smooth scrolling across grids
 

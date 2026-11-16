@@ -780,7 +780,13 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   The renderer parses with Foundation's `AttributedString(markdown:)` and
   maps its presentation intents to headings, lists, block quotes, code
   blocks, and thematic breaks, and its inline intents to
-  bold/italic/code/strikethrough/links; the CSS follows the editor's nvim
+  bold/italic/code/strikethrough/links. GFM pipe tables are outside that
+  CommonMark parse, so `MarkdownRenderer.extractPipeTables` lifts every
+  table out of the source before parsing, renders it to a native
+  `<table>` — delimiter-colon alignment, inline markup inside cells,
+  wide tables scrolling horizontally like code blocks — and splices it
+  back in through a unique marker paragraph (a table nested in a block
+  quote or list item stays plain text); the CSS follows the editor's nvim
   default colors, keeps the reading column at 720 pt, and renders code
   blocks `white-space: pre` with `overflow-x: auto` so ASCII and
   box-drawing diagrams keep their layout instead of wrapping at the reading

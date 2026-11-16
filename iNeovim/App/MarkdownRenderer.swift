@@ -5,7 +5,10 @@ import Foundation
 /// `WKWebView`. Foundation's CommonMark parse supplies the block and inline
 /// presentation intents; the HTML/CSS gives code blocks `white-space: pre`
 /// with horizontal scrolling, so ASCII and box-drawing diagrams keep their
-/// layout instead of wrapping at the reading column.
+/// layout instead of wrapping at the reading column. GFM pipe tables are
+/// outside that CommonMark parse: they are lifted out before parsing,
+/// rendered to `<table>` HTML directly, and spliced back in through
+/// paragraph markers.
 @MainActor
 enum MarkdownRenderer {
     struct Theme {
@@ -19,9 +22,10 @@ enum MarkdownRenderer {
 
     /// The HTML body for the parsed Markdown, without the document wrapper.
     static func body(_ markdown: String, baseURL: URL?) -> String {
+        let extraction = extractPipeTables(markdown, baseURL: baseURL)
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
         guard let parsed = try? AttributedString(
-            markdown: markdown,
+            markdown: extraction.source,
             options: options,
             baseURL: baseURL
         ) else {
@@ -44,7 +48,16 @@ enum MarkdownRenderer {
                 groups.append(Group(block: block, runs: [inline]))
             }
         }
-        return groups.map { render($0, baseURL: baseURL) }.joined(separator: "\n")
+        var html = groups.map { render($0, baseURL: baseURL) }.joined(separator: "\n")
+        for table in extraction.tables {
+            let placeholder = "<p>\(table.marker)</p>"
+            if html.contains(placeholder) {
+                html = html.replacingOccurrences(of: placeholder, with: table.html)
+            } else {
+                html = html.replacingOccurrences(of: table.marker, with: table.html)
+            }
+        }
+        return html
     }
 
     /// Wrap the body in a theme-aware document with the preview stylesheet.
@@ -116,6 +129,24 @@ enum MarkdownRenderer {
           padding-left: 14px;
           border-left: 3px solid \(border);
           color: \(quoteText);
+        }
+        table {
+          display: block;
+          width: max-content;
+          max-width: 100%;
+          margin: 0 0 1em;
+          border-collapse: collapse;
+          overflow-x: auto;
+        }
+        th, td {
+          border: 1px solid \(border);
+          padding: 0.3em 0.75em;
+          text-align: left;
+          vertical-align: top;
+        }
+        thead th {
+          font-weight: 650;
+          background: \(codeBackground);
         }
         hr { border: 0; border-top: 1px solid \(border); margin: 1.5em 0; }
         .li {
@@ -305,6 +336,312 @@ enum MarkdownRenderer {
                 kind = .paragraph
             }
         }
+    }
+
+    // MARK: - Pipe tables
+
+    /// One lifted-out GFM pipe table and the paragraph marker standing in
+    /// for it during the Foundation parse.
+    private struct PipeTable {
+        var marker: String
+        var html: String
+    }
+
+    private enum CellAlignment: String {
+        case left, center, right
+    }
+
+    /// Foundation's CommonMark parser has no GFM pipe tables: table lines
+    /// would render as a paragraph of pipes and dashes. Each table is lifted
+    /// out of the source before the parse, rendered to HTML directly, and
+    /// spliced back in through an unambiguous paragraph marker, so the rest
+    /// of the document keeps its Foundation-parsed structure. Fenced code is
+    /// skipped, a table starts only on a header row directly followed by a
+    /// matching delimiter row, and it stops at the first line that cannot be
+    /// a row. Tables inside block quotes or list items stay plain text.
+    private static func extractPipeTables(_ markdown: String, baseURL: URL?) -> (source: String, tables: [PipeTable]) {
+        var lines = markdown.components(separatedBy: "\n")
+        for index in lines.indices where lines[index].hasSuffix("\r") {
+            lines[index].removeLast()
+        }
+
+        var tables: [PipeTable] = []
+        var prepared: [String] = []
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        var fence: (marker: Character, length: Int)?
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            if let open = fence {
+                if isFenceClose(line, open) {
+                    fence = nil
+                }
+                prepared.append(line)
+                index += 1
+                continue
+            }
+            if let open = opensFence(line) {
+                fence = open
+                prepared.append(line)
+                index += 1
+                continue
+            }
+            if let table = pipeTable(at: index, in: lines, baseURL: baseURL) {
+                let marker = "INEOVIMTABLE\(nonce)\(tables.count)"
+                prepared.append("")
+                prepared.append(marker)
+                prepared.append("")
+                tables.append(PipeTable(marker: marker, html: table.html))
+                index += table.lineCount
+                continue
+            }
+            prepared.append(line)
+            index += 1
+        }
+        return (prepared.joined(separator: "\n"), tables)
+    }
+
+    private static func pipeTable(
+        at index: Int,
+        in lines: [String],
+        baseURL: URL?
+    ) -> (html: String, lineCount: Int)? {
+        guard isTableRow(lines[index]), index + 1 < lines.count else { return nil }
+        let header = splitRow(lines[index])
+        guard let alignments = delimiterAlignments(lines[index + 1], columnCount: header.count) else {
+            return nil
+        }
+        var rows: [[String]] = []
+        var end = index + 2
+        while end < lines.count, let cells = bodyRowCells(lines[end]) {
+            rows.append(cells)
+            end += 1
+        }
+        return (
+            renderTable(header: header, alignments: alignments, rows: rows, baseURL: baseURL),
+            end - index
+        )
+    }
+
+    /// A line that may hold a table cell row: not blank, not indented code,
+    /// not a blockquote marker, not the opening line of another block, and
+    /// carrying at least one pipe.
+    private static func isTableRow(_ line: String) -> Bool {
+        let (indent, rest) = leadingSpaces(line)
+        guard indent <= 3 else { return false }
+        let trimmed = String(rest).trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed.contains("|") else { return false }
+        if trimmed.hasPrefix(">") { return false }
+        if opensFence(line) != nil { return false }
+        if startsOtherBlock(trimmed) { return false }
+        return true
+    }
+
+    private static func bodyRowCells(_ line: String) -> [String]? {
+        guard isTableRow(line) else { return nil }
+        return splitRow(line)
+    }
+
+    /// A line opening another block-level structure (ATX heading, bullet or
+    /// ordered list item); a table neither starts on nor continues past one.
+    private static func startsOtherBlock(_ line: String) -> Bool {
+        var rest = Substring(line)
+        if rest.first == "#" {
+            let hashes = rest.prefix { $0 == "#" }
+            if hashes.count <= 6 {
+                let after = rest.dropFirst(hashes.count)
+                if after.first == nil || after.first == " " || after.first == "\t" {
+                    return true
+                }
+            }
+        }
+        if rest.first == "-" || rest.first == "+" || rest.first == "*" {
+            let after = rest.dropFirst()
+            if after.first == " " || after.first == "\t" {
+                return true
+            }
+        }
+        var digits = 0
+        while digits < 9, let first = rest.first, first.isNumber {
+            digits += 1
+            rest = rest.dropFirst()
+        }
+        if digits > 0, rest.first == "." || rest.first == ")" {
+            let after = rest.dropFirst()
+            if after.first == " " || after.first == "\t" {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func leadingSpaces(_ line: String) -> (count: Int, rest: Substring) {
+        var count = 0
+        var rest = Substring(line)
+        while rest.first == " " {
+            count += 1
+            rest = rest.dropFirst()
+        }
+        return (count, rest)
+    }
+
+    private static func opensFence(_ line: String) -> (marker: Character, length: Int)? {
+        let (indent, rest) = leadingSpaces(line)
+        guard indent <= 3, let first = rest.first, first == "`" || first == "~" else { return nil }
+        let run = rest.prefix { $0 == first }
+        guard run.count >= 3 else { return nil }
+        return (marker: first, length: run.count)
+    }
+
+    private static func isFenceClose(_ line: String, _ open: (marker: Character, length: Int)) -> Bool {
+        let (indent, rest) = leadingSpaces(line)
+        guard indent <= 3 else { return false }
+        let run = rest.prefix { $0 == open.marker }
+        guard run.count >= open.length else { return false }
+        return String(rest.dropFirst(run.count)).trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// One row's cells: the optional edge pipes come off (an escaped `\|`
+    /// stays in its cell), the row splits on unescaped pipes, and each cell
+    /// is trimmed with its escaped pipes restored.
+    private static func splitRow(_ line: String) -> [String] {
+        var row = Substring(line.trimmingCharacters(in: .whitespaces))
+        if row.hasPrefix("|") {
+            row = row.dropFirst()
+        }
+        if row.hasSuffix("|") && !endsWithEscapedPipe(row) {
+            row = row.dropLast()
+        }
+        var cells: [String] = []
+        var cell = ""
+        var escapes = 0
+        for ch in row {
+            if ch == "|" && escapes % 2 == 0 {
+                cells.append(cell)
+                cell = ""
+                escapes = 0
+                continue
+            }
+            if ch == "\\" {
+                escapes += 1
+            } else {
+                escapes = 0
+            }
+            cell.append(ch)
+        }
+        cells.append(cell)
+        return cells.map {
+            $0.trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: "\\|", with: "|")
+        }
+    }
+
+    /// True when the row's trailing pipe is an escaped `\|`, so it belongs to
+    /// the last cell instead of ending the row.
+    private static func endsWithEscapedPipe(_ row: Substring) -> Bool {
+        var backslashes = 0
+        var index = row.index(before: row.endIndex)
+        while index > row.startIndex {
+            index = row.index(before: index)
+            if row[index] == "\\" {
+                backslashes += 1
+            } else {
+                break
+            }
+        }
+        return backslashes % 2 == 1
+    }
+
+    /// The delimiter row's alignments, or nil when the line is not a valid
+    /// delimiter row for a `columnCount`-column table.
+    private static func delimiterAlignments(_ line: String, columnCount: Int) -> [CellAlignment?]? {
+        let (indent, rest) = leadingSpaces(line)
+        guard indent <= 3 else { return nil }
+        let trimmed = String(rest).trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|") else { return nil }
+        let cells = splitRow(line)
+        guard cells.count == columnCount else { return nil }
+        var alignments: [CellAlignment?] = []
+        for cell in cells {
+            guard isDelimiterCell(cell) else { return nil }
+            let left = cell.hasPrefix(":")
+            let right = cell.hasSuffix(":")
+            if left && right {
+                alignments.append(.center)
+            } else if right {
+                alignments.append(.right)
+            } else if left {
+                alignments.append(.left)
+            } else {
+                alignments.append(nil)
+            }
+        }
+        return alignments
+    }
+
+    private static func isDelimiterCell(_ cell: String) -> Bool {
+        var content = Substring(cell)
+        if content.first == ":" {
+            content = content.dropFirst()
+        }
+        if content.last == ":" {
+            content = content.dropLast()
+        }
+        return !content.isEmpty && content.allSatisfy { $0 == "-" }
+    }
+
+    private static func renderTable(
+        header: [String],
+        alignments: [CellAlignment?],
+        rows: [[String]],
+        baseURL: URL?
+    ) -> String {
+        let head = header.enumerated().map { index, cell in
+            cellHTML(cell, tag: "th", alignment: alignments[index], baseURL: baseURL)
+        }.joined()
+        let bodyRows = rows.map { row in
+            "<tr>"
+                + row.enumerated().map { index, cell in
+                    let alignment = index < alignments.count ? alignments[index] : nil
+                    return cellHTML(cell, tag: "td", alignment: alignment, baseURL: baseURL)
+                }.joined()
+                + "</tr>"
+        }.joined(separator: "\n")
+        let tbody = bodyRows.isEmpty ? "<tbody></tbody>" : "<tbody>\n\(bodyRows)\n</tbody>"
+        return "<table>\n<thead>\n<tr>\(head)</tr>\n</thead>\n\(tbody)\n</table>"
+    }
+
+    private static func cellHTML(
+        _ cell: String,
+        tag: String,
+        alignment: CellAlignment?,
+        baseURL: URL?
+    ) -> String {
+        let style = alignment.map { " style=\"text-align:\($0.rawValue)\"" } ?? ""
+        return "<\(tag)\(style)>\(inlineFragmentHTML(cell, baseURL: baseURL))</\(tag)>"
+    }
+
+    /// Inline markup for one cell's text: the same inline rendering the rest
+    /// of the document gets, without block intents.
+    private static func inlineFragmentHTML(_ source: String, baseURL: URL?) -> String {
+        guard !source.isEmpty else { return "" }
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        guard let parsed = try? AttributedString(
+            markdown: source,
+            options: options,
+            baseURL: baseURL
+        ) else {
+            return escapeHTML(source)
+        }
+        var runs: [InlineRun] = []
+        for run in parsed.runs {
+            let text = String(parsed[run.range].characters)
+            guard !text.isEmpty else { continue }
+            runs.append(InlineRun(text: text, inline: run.inlinePresentationIntent, link: run.link))
+        }
+        return inlineHTML(runs, baseURL: baseURL)
     }
 
     // MARK: - Helpers
