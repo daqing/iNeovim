@@ -9,7 +9,7 @@ final class TerminalTabBarView: NSView {
     var onAdd: (() -> Void)?
 
     private let iconView = NSImageView()
-    private let addButton = NSButton()
+    private let addButton = TabItemButton()
     private var items: [NSButton] = []
     private var selectedIndex = 0
     private static let itemHeight: CGFloat = 20
@@ -44,7 +44,7 @@ final class TerminalTabBarView: NSView {
             item.removeFromSuperview()
         }
         items = (0..<count).map { index in
-            let item = NSButton()
+            let item = TabItemButton()
             item.isBordered = false
             item.tag = index
             item.target = self
@@ -121,5 +121,12 @@ final class TerminalTabBarView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         styleItems()
+    }
+}
+
+/// A tab item or the + button; the cursor becomes a pointing hand over both.
+private final class TabItemButton: NSButton {
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
     }
 }
