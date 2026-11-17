@@ -15,8 +15,9 @@ extension Ghostty {
         public let id: UUID
 
         // The current pwd of the surface as defined by the pty. This can be
-        // changed with escape codes.
-        @Published var pwd: String?
+        // changed with escape codes. Public so embedders can inherit it —
+        // iNeovim's pane split starts the new shell here.
+        @Published public var pwd: String?
 
         // The cell size of this surface. This is set by the core when the
         // surface is first created and any time the cell size changes (i.e.

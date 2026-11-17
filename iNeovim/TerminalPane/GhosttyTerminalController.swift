@@ -87,6 +87,10 @@ final class GhosttyTerminalController {
             // them while the pane has focus; unbind the whole row so the
             // menu receives the events.
         ] + (1...9).map { "keybind = super+\($0)=unbind" } + [
+            // ⌘⇧D is the pane's own split-below chord, claimed by the app's
+            // keyDown monitor while a surface holds focus; Ghostty's default
+            // `new_split:down` binding would otherwise take it first.
+            "keybind = super+shift+d=unbind",
             // Room between the pane divider and the text; the surface still
             // paints its background full-bleed, so no color seam appears.
             // Mirrors TerminalPaneView.contentInset for the title alignment.

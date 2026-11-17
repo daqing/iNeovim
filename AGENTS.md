@@ -708,7 +708,16 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   instead. The pane is an in-window right-hand split (`EditorSplitView`:
   optional problems sidebar | editor | draggable divider | `TerminalPaneView`)
   whose width drives the normal resize pipeline — narrowing the editor simply
-  reflows the nvim grid through `ResizeController`. The pane hosts a real libghostty
+  reflows the nvim grid through `ResizeController`. ⌘⇧D (claimed by the same
+  keyDown monitor, only while one of the pane's surfaces is first responder)
+  splits the FOCUSED pane, adding a new terminal below it: the column is a
+  `TerminalPaneStackView` hosting panes with draggable horizontal dividers
+  (weights survive window resizes; a drag keeps each side a minimum height),
+  the new shell starts in the split-from shell's OSC 7 pwd when it reports
+  one (else the pane's opening directory), Ghostty's default
+  `super+shift+d=new_split:down` binding is unbound in the generated config
+  like the ⌘1–9 row, and a pane's ✕ or an exited shell removes it — removing
+  the last pane closes the whole column and refocuses the editor. The pane hosts a real libghostty
   surface: `Packages/GhosttySupport` (local Swift package) wraps a
   self-built `GhosttyKit.xcframework` (ghostty 1.3.2-main+246f702, Zig
   0.16.0, macOS-universal slice only — iOS slices pruned; provenance and

@@ -745,6 +745,7 @@ final class AppModel: ObservableObject {
         case open(TerminalPaneRequest)
         case focus
         case focusEditor
+        case split
         case close
     }
 
@@ -788,6 +789,15 @@ final class AppModel: ObservableObject {
     /// hidden.
     func focusTerminalPane() {
         requestTerminalPane(command: "")
+    }
+
+    /// ⌘⇧D action: split the focused pane, opening a new terminal below it
+    /// (a horizontal split of the terminal column). The key chord is claimed
+    /// only while a terminal surface holds keyboard focus; the split
+    /// container resolves which pane that is.
+    func splitTerminalPane() {
+        guard isTerminalPaneVisible else { return }
+        terminalPaneIntent = .split
     }
 
     // MARK: - Markdown preview

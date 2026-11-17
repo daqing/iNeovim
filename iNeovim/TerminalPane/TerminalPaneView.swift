@@ -2,9 +2,10 @@ import AppKit
 import GhosttySupport
 
 /// One native terminal pane: a slim header (terminal glyph + close button)
-/// above a Ghostty surface. The surface close cycle — the child exiting, or
-/// a close request from the button, ⌃`, or the window closing — ends in
-/// `onClose`, which the split container uses to remove the pane.
+/// above a Ghostty surface. The pane stack hosts several of these (⌘⇧D
+/// splits one below another); the surface close cycle — the child exiting,
+/// or a close request from the button, ⌃`, or the window closing — ends in
+/// `onClose`, which the stack uses to remove the pane.
 final class TerminalPaneView: NSView {
     static let headerHeight: CGFloat = 26
 
@@ -16,6 +17,11 @@ final class TerminalPaneView: NSView {
     var onClose: (() -> Void)?
 
     let surfaceView: Ghostty.SurfaceView
+
+    /// Directory the pane opened in; a split below falls back to it when the
+    /// shell never reports its own pwd (OSC 7).
+    let initialDirectory: String
+
     private let closeButton = NSButton()
     /// Terminal-app motif (SF Symbol "terminal") standing in for a title.
     private let titleIconView = NSImageView()
@@ -25,8 +31,9 @@ final class TerminalPaneView: NSView {
     /// the surface to force-close again.
     private var closeRequested = false
 
-    init(surfaceView: Ghostty.SurfaceView) {
+    init(surfaceView: Ghostty.SurfaceView, initialDirectory: String = "") {
         self.surfaceView = surfaceView
+        self.initialDirectory = initialDirectory
         super.init(frame: .zero)
         wantsLayer = true
 

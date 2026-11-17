@@ -1,4 +1,5 @@
 import AppKit
+import GhosttySupport
 import os
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -96,6 +97,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch (modifiers, key) {
             case (.command, "d"):
                 return MainActor.assumeIsolated { Self.claimTerminalPaneChord() } ? nil : event
+            case ([.command, .shift], "d"):
+                // Key repeat must not stack panes rapid-fire; swallow it.
+                if event.isARepeat { return nil }
+                return MainActor.assumeIsolated { Self.claimTerminalSplitChord() } ? nil : event
             case (.control, "`"):
                 return MainActor.assumeIsolated { Self.claimTerminalPaneChord() } ? nil : event
             case (.command, "p"):
@@ -123,6 +128,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func claimTerminalPaneChord() -> Bool {
         guard NSApp.modalWindow == nil else { return false }
         AppModel.active?.toggleTerminalPane()
+        return true
+    }
+
+    /// ⌘⇧D splits the focused terminal pane, adding a new terminal below it —
+    /// the pane's own `new_split:down`. Claimed only while a terminal surface
+    /// holds keyboard focus, so from the editor the chord does nothing and
+    /// passes through; Ghostty's default binding for the chord is unbound in
+    /// the generated config (see `GhosttyTerminalController`).
+    private static func claimTerminalSplitChord() -> Bool {
+        guard NSApp.modalWindow == nil else { return false }
+        guard NSApp.keyWindow?.firstResponder is Ghostty.SurfaceView else { return false }
+        AppModel.active?.splitTerminalPane()
         return true
     }
 
