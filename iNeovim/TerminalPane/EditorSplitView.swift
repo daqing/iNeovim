@@ -5,8 +5,8 @@ import GhosttySupport
 /// Window content container: the nvim editor fills the view, flanked left by
 /// the optional problems panel (docked issues sidebar, driven by
 /// `isProblemsPanelVisible`) and right by the native terminal column once it
-/// opens. The column is a `TerminalPaneStackView` — ⌘⇧D on a focused pane
-/// adds another terminal below it — and follows the intents published by
+/// opens. The column is a `TerminalPaneColumnView` — a tab bar whose +
+/// opens another terminal tab — and follows the intents published by
 /// `AppModel`; actual pane visibility is reported back through
 /// `setTerminalPaneVisible`. Narrowing the editor reflows the nvim grid
 /// through the normal resize pipeline.
@@ -24,7 +24,7 @@ final class EditorSplitView: NSView {
     private let divider = PaneDividerView()
     private let problemsDivider = PaneDividerView()
     private let focusToast = FocusToastView()
-    private var paneStack: TerminalPaneStackView?
+    private var column: TerminalPaneColumnView?
     private var problemsPanel: ProblemsPanelController?
     private var paneWidth: CGFloat?
     private var paneWidthIsUserSet = false
@@ -171,7 +171,7 @@ final class EditorSplitView: NSView {
     }
 
     private func paneSpans() -> CGFloat {
-        paneStack != nil ? Self.dividerThickness + effectivePaneWidth() : 0
+        column != nil ? Self.dividerThickness + effectivePaneWidth() : 0
     }
 
     /// The pane's default is a share of the window measured at open time, so a
@@ -195,10 +195,11 @@ final class EditorSplitView: NSView {
         case .open(let request):
             openPane(request)
         case .focus:
-            if let paneStack {
-                focusPane(paneStack.pane(for: window?.firstResponder as? Ghostty.SurfaceView)
-                    ?? paneStack.lastFocusedPane
-                    ?? paneStack.panes.first)
+            if let column {
+                let stack = column.activeStack
+                focusPane(column.pane(for: window?.firstResponder as? Ghostty.SurfaceView)
+                    ?? stack?.lastFocusedPane
+                    ?? stack?.panes.first)
             }
         case .focusEditor:
             if window?.makeFirstResponder(terminalView) == true {
@@ -212,10 +213,11 @@ final class EditorSplitView: NSView {
     }
 
     private func openPane(_ request: AppModel.TerminalPaneRequest) {
-        if let paneStack {
-            focusPane(paneStack.pane(for: window?.firstResponder as? Ghostty.SurfaceView)
-                ?? paneStack.lastFocusedPane
-                ?? paneStack.panes.first)
+        if let column {
+            let stack = column.activeStack
+            focusPane(column.pane(for: window?.firstResponder as? Ghostty.SurfaceView)
+                ?? stack?.lastFocusedPane
+                ?? stack?.panes.first)
             return
         }
         guard let surface = GhosttyTerminalController.shared.makeSurface(
@@ -225,10 +227,12 @@ final class EditorSplitView: NSView {
             colors: model.terminalColors
         ) else { return }
         let paneView = makePaneView(surface: surface, initialDirectory: request.workingDirectory)
-        let stack = TerminalPaneStackView()
-        stack.setInitialPane(paneView)
-        addSubview(stack)
-        paneStack = stack
+        let columnView = TerminalPaneColumnView()
+        columnView.onNewTab = { [weak self] in self?.createNewTab() }
+        columnView.onEmptied = { [weak self] in self?.columnDidEmpty() }
+        columnView.addTab(pane: paneView)
+        addSubview(columnView)
+        column = columnView
         divider.isHidden = false
         model.setTerminalPaneVisible(true)
         if !paneWidthIsUserSet {
@@ -240,15 +244,35 @@ final class EditorSplitView: NSView {
         focusPane(paneView)
     }
 
-    /// ⌘⇧D on a focused pane: add a new terminal below it, splitting that
-    /// pane's height in half. The new shell starts where the split-from
-    /// shell is (the pwd its shell reported, OSC 7, when it has one), else
-    /// where that pane was opened.
+    /// The tab bar's +: open a new terminal tab after the active one,
+    /// starting where the active terminal is (its shell's reported pwd,
+    /// OSC 7, else the directory that tab opened in).
+    private func createNewTab() {
+        guard let column else { return }
+        let source = column.activeStack?.lastFocusedPane ?? column.activeStack?.panes.first
+        let directory = source.map(Self.splitDirectory(from:))
+            ?? model.currentWorkingDirectory?.path(percentEncoded: false)
+            ?? ""
+        guard let surface = GhosttyTerminalController.shared.makeSurface(
+            workingDirectory: directory,
+            command: "",
+            font: AppSettings.shared.resolvedFont(),
+            colors: model.terminalColors
+        ) else { return }
+        let paneView = makePaneView(surface: surface, initialDirectory: directory)
+        column.addTab(pane: paneView)
+        focusPane(paneView)
+    }
+
+    /// ⌘⇧D on a focused pane: add a new terminal below it within the active
+    /// tab, splitting that pane's height in half. The new shell starts where
+    /// the split-from shell is (the pwd its shell reported, OSC 7, when it
+    /// has one), else where that pane was opened.
     private func splitFocusedPane() {
-        guard let paneStack, let window else { return }
-        let focused = paneStack.pane(for: window.firstResponder as? Ghostty.SurfaceView)
-            ?? paneStack.lastFocusedPane
-            ?? paneStack.panes.first
+        guard let column, let window, let stack = column.activeStack else { return }
+        let focused = stack.pane(for: window.firstResponder as? Ghostty.SurfaceView)
+            ?? stack.lastFocusedPane
+            ?? stack.panes.first
         guard let focused else { return }
         let directory = Self.splitDirectory(from: focused)
         guard let surface = GhosttyTerminalController.shared.makeSurface(
@@ -258,7 +282,7 @@ final class EditorSplitView: NSView {
             colors: model.terminalColors
         ) else { return }
         let paneView = makePaneView(surface: surface, initialDirectory: directory)
-        paneStack.insertPane(paneView, below: focused)
+        stack.insertPane(paneView, below: focused)
         focusPane(paneView)
     }
 
@@ -276,13 +300,12 @@ final class EditorSplitView: NSView {
         return pwd
     }
 
-    /// Make `pane`'s surface the first responder and announce it; the stack
-    /// remembers it as the fallback target for later focus and split
-    /// intents.
+    /// Make `pane`'s surface the first responder and announce it; the pane's
+    /// own tab remembers it as the fallback target for later focus and
+    /// split intents.
     private func focusPane(_ pane: TerminalPaneView?) {
-        guard let pane else { return }
-        if window?.makeFirstResponder(pane.surfaceView) == true {
-            paneStack?.noteFocus(pane)
+        guard let pane, let column else { return }
+        if column.focusPane(pane) {
             showFocusToast("Focus: Terminal")
         }
     }
@@ -291,7 +314,7 @@ final class EditorSplitView: NSView {
         let paneView = TerminalPaneView(surfaceView: surface, initialDirectory: initialDirectory)
         paneView.onClose = { [weak self, weak paneView] in
             guard let self, let paneView else { return }
-            self.paneDidClose(paneView)
+            self.column?.paneDidClose(paneView)
         }
         installTerminalLinkHandler(on: surface, initialDirectory: initialDirectory)
         return paneView
@@ -345,44 +368,31 @@ final class EditorSplitView: NSView {
         ))
     }
 
-    /// Graceful close asks every surface to exit first; each close callback
-    /// routes back through `paneDidClose`. `removeImmediately` tears the
-    /// column down synchronously (window teardown).
+    /// Graceful close asks every surface in every tab to exit first; each
+    /// close callback routes back through the column, and the last removal
+    /// ends in `columnDidEmpty`. `removeImmediately` tears the column down
+    /// synchronously (window teardown).
     private func closePane(removeImmediately: Bool) {
-        guard let paneStack else { return }
+        guard let column else { return }
         if removeImmediately {
-            paneStack.destroyAll()
-            paneStack.removeFromSuperview()
-            self.paneStack = nil
-            model.setTerminalPaneVisible(false)
-            divider.isHidden = true
-            placeSubviews()
-            window?.makeFirstResponder(terminalView)
+            column.destroyAll()
+            columnDidEmpty()
         } else {
-            paneStack.requestCloseAll()
+            column.requestCloseAll()
         }
     }
 
-    /// One pane's surface finished its close cycle (child exit or forced
-    /// close). Removing the last pane closes the whole column and hands
-    /// focus back to the editor; a focused pane among several hands focus
-    /// to its neighbor.
-    private func paneDidClose(_ paneView: TerminalPaneView) {
-        guard let paneStack else { return }
-        let wasFocused = paneStack.pane(for: window?.firstResponder as? Ghostty.SurfaceView) === paneView
-        let nextNeighbor = paneStack.neighbor(of: paneView)
-        if paneStack.removePane(paneView) {
-            paneStack.removeFromSuperview()
-            self.paneStack = nil
-            model.setTerminalPaneVisible(false)
-            divider.isHidden = true
-            placeSubviews(animated: true)
-            window?.makeFirstResponder(terminalView)
-            return
-        }
-        if wasFocused {
-            focusPane(nextNeighbor)
-        }
+    /// The column's last tab is gone (a ⌘D close cycle finished, or the
+    /// window's synchronous teardown): collapse the column and refocus the
+    /// editor.
+    private func columnDidEmpty() {
+        guard let column else { return }
+        column.removeFromSuperview()
+        self.column = nil
+        model.setTerminalPaneVisible(false)
+        divider.isHidden = true
+        placeSubviews(animated: true)
+        window?.makeFirstResponder(terminalView)
     }
 
     private func setPaneWidth(_ width: CGFloat, animated: Bool) {
@@ -403,7 +413,7 @@ final class EditorSplitView: NSView {
 
     override func layout() {
         super.layout()
-        if paneStack != nil, paneWidth == nil, bounds.width > 0 {
+        if column != nil, paneWidth == nil, bounds.width > 0 {
             paneWidth = Self.defaultPaneWidth(containerWidth: bounds.width)
         }
         placeSubviews()
@@ -412,7 +422,7 @@ final class EditorSplitView: NSView {
     private func placeSubviews(animated: Bool = false) {
         guard bounds.width > 0, bounds.height > 0 else { return }
         let panelVisible = problemsPanel?.view.superview != nil
-        let paneWidth = paneStack != nil ? effectivePaneWidth() : 0
+        let paneWidth = column != nil ? effectivePaneWidth() : 0
         let paneSpan = paneWidth > 0 ? Self.dividerThickness + paneWidth : 0
         let panelWidth = panelVisible
             ? min(self.panelWidth, max(0, bounds.width - paneSpan - Self.minEditorWidth))
@@ -434,21 +444,22 @@ final class EditorSplitView: NSView {
                 problemsDivider.animator().frame = frames.problemsDivider
                 terminalView.animator().frame = frames.editor
                 divider.animator().frame = frames.divider
-                paneStack?.animator().frame = frames.pane
+                column?.animator().frame = frames.pane
             }
         } else {
             problemsPanel?.view.frame = frames.panel
             problemsDivider.frame = frames.problemsDivider
             terminalView.frame = frames.editor
             divider.frame = frames.divider
-            paneStack?.frame = frames.pane
+            column?.frame = frames.pane
         }
         positionFocusToast()
     }
 }
 
 /// Draggable separator: vertical between the editor and the terminal column
-/// (resizes left–right), horizontal between stacked panes (resizes up–down).
+/// (resizes left–right), horizontal between stacked panes inside a tab
+/// (resizes up–down).
 final class PaneDividerView: NSView {
     /// AppKit deltas in window coordinates; a leftward or upward drag is
     /// negative.

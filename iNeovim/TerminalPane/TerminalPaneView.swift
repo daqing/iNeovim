@@ -1,30 +1,25 @@
 import AppKit
 import GhosttySupport
 
-/// One native terminal pane: a slim header (terminal glyph + close button)
-/// above a Ghostty surface. The pane stack hosts several of these (⌘⇧D
-/// splits one below another); the surface close cycle — the child exiting,
-/// or a close request from the button, ⌃`, or the window closing — ends in
-/// `onClose`, which the stack uses to remove the pane.
+/// One native terminal pane: a Ghostty surface plus the close-cycle
+/// plumbing. The pane column's tab bar hosts several of these — the + in
+/// the pane's top-right corner opens another terminal tab, ⌘⇧D splits one
+/// below another, and there are no per-pane close buttons. The surface
+/// close cycle — the child exiting, a ⌘D close intent, or the window
+/// closing — ends in `onClose`, which the column uses to remove the pane.
 final class TerminalPaneView: NSView {
-    static let headerHeight: CGFloat = 26
-
     /// Left inset of the surface's text content. Mirrored in the generated
-    /// Ghostty config (`window-padding-x`) and the header glyph so both
-    /// start on the same column.
+    /// Ghostty config (`window-padding-x`) and in the column tab bar's
+    /// glyph so all three start on the same column.
     static let contentInset: CGFloat = 8
 
     var onClose: (() -> Void)?
 
     let surfaceView: Ghostty.SurfaceView
 
-    /// Directory the pane opened in; a split below falls back to it when the
-    /// shell never reports its own pwd (OSC 7).
+    /// Directory the pane opened in; a split or new tab falls back to it
+    /// when the shell never reports its own pwd (OSC 7).
     let initialDirectory: String
-
-    private let closeButton = NSButton()
-    /// Terminal-app motif (SF Symbol "terminal") standing in for a title.
-    private let titleIconView = NSImageView()
 
     /// Set once a close has been requested; the next close callback (even
     /// with the child still alive) finishes the teardown instead of asking
@@ -36,21 +31,6 @@ final class TerminalPaneView: NSView {
         self.initialDirectory = initialDirectory
         super.init(frame: .zero)
         wantsLayer = true
-
-        titleIconView.image = NSImage(
-            systemSymbolName: "terminal",
-            accessibilityDescription: "Terminal"
-        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
-        titleIconView.contentTintColor = .secondaryLabelColor
-        addSubview(titleIconView)
-
-        closeButton.isBordered = false
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close terminal")
-        closeButton.contentTintColor = .secondaryLabelColor
-        closeButton.target = self
-        closeButton.action = #selector(closeButtonClicked)
-        addSubview(closeButton)
-
         addSubview(surfaceView)
 
         NotificationCenter.default.addObserver(
@@ -69,8 +49,6 @@ final class TerminalPaneView: NSView {
         NotificationCenter.default.removeObserver(self)
     }
 
-    override var isFlipped: Bool { true }
-
     override func layout() {
         super.layout()
         relayout()
@@ -83,33 +61,16 @@ final class TerminalPaneView: NSView {
 
     private func relayout() {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        closeButton.frame = NSRect(x: bounds.width - 28, y: 3, width: 24, height: 20)
-        let iconSize = titleIconView.fittingSize
-        titleIconView.frame = NSRect(
-            x: Self.contentInset,
-            y: (Self.headerHeight - iconSize.height) / 2,
-            width: iconSize.width,
-            height: iconSize.height
-        )
-        surfaceView.frame = NSRect(
-            x: 0,
-            y: Self.headerHeight,
-            width: bounds.width,
-            height: bounds.height - Self.headerHeight
-        )
+        surfaceView.frame = bounds
         // The surface does not observe its own frame; feed it the point
         // size it occupies so the terminal grid matches the view.
         surfaceView.sizeDidChange(surfaceView.bounds.size)
     }
 
-    /// Begin the close cycle from outside (⌃`, the menu, a close intent).
+    /// Begin the close cycle from outside (the ⌘D close intent).
     func requestClose() {
         closeRequested = true
         GhosttyTerminalController.shared.requestClose(surfaceView)
-    }
-
-    @objc private func closeButtonClicked() {
-        requestClose()
     }
 
     /// libghostty reports a pending surface close here. With the child
