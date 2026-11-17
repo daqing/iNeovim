@@ -2,11 +2,12 @@ import AppKit
 import GhosttySupport
 
 /// The whole right-hand terminal column: a tab bar (terminal glyph, one
-/// numbered item per tab, and the + that opens a new tab) above the ACTIVE
-/// tab's `TerminalPaneStackView`. Tabs show one terminal group at a time;
-/// a new tab inherits the active terminal's directory; ⌘⇧D splits within
-/// the active tab. Surface creation and the editor-facing intents stay
-/// with `EditorSplitView`, which hosts one column while the pane is open.
+/// numbered item per tab, and the + that follows them to open a new tab)
+/// above the ACTIVE tab's `TerminalPaneStackView`. Tabs show one terminal
+/// group at a time; a new tab inherits the active terminal's directory;
+/// ⌘⇧D splits within the active tab. Surface creation and the editor-facing
+/// intents stay with `EditorSplitView`, which hosts one column while the
+/// pane is open.
 final class TerminalPaneColumnView: NSView {
     static let tabBarHeight: CGFloat = 26
 

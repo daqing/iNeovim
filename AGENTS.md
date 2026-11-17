@@ -709,8 +709,8 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   optional problems sidebar | editor | draggable divider | `TerminalPaneColumnView`)
   whose width drives the normal resize pipeline — narrowing the editor simply
   reflows the nvim grid through `ResizeController`. The column's tab bar
-  (terminal glyph, one numbered item per tab) carries a `+` in the pane's
-  top-right corner — it replaced the old per-pane close button, and panes
+  (terminal glyph, one numbered item per tab) carries a `+` just right of
+  the tab items — it replaced the old per-pane close button, and panes
   close only via ⌘D (the whole column), an exited shell, or window teardown;
   clicking + opens a new terminal tab after the active one, inheriting the
   active terminal's OSC 7 pwd (else its opening directory), and clicking a

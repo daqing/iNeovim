@@ -1,9 +1,9 @@
 import AppKit
 
 /// Tab bar row at the top of the terminal column: the terminal glyph, one
-/// compact numbered item per tab, and the + button in the pane's top-right
-/// corner (it replaced the old close button) that asks the column for a
-/// new terminal tab.
+/// compact numbered item per tab, and the + button right after the last
+/// item (it replaced the old close button) that asks the column for a new
+/// terminal tab.
 final class TerminalTabBarView: NSView {
     var onSelect: ((Int) -> Void)?
     var onAdd: (() -> Void)?
@@ -79,11 +79,13 @@ final class TerminalTabBarView: NSView {
             width: iconSize.width,
             height: iconSize.height
         )
-        addButton.frame = NSRect(x: bounds.width - 28, y: 3, width: 24, height: 20)
-        // Items flow left to right after the glyph; when they would run
-        // into the + button, squeeze them uniformly into the space left.
+        // Items flow left to right after the glyph and the + follows the
+        // last one, so it stays reachable next to the tabs. When the row
+        // would run past the right edge, squeeze the items uniformly.
         let start = iconView.frame.maxX + 8
-        let available = max(0, addButton.frame.minX - 8 - start)
+        let addWidth: CGFloat = 24
+        let trailingInset: CGFloat = 4
+        let available = max(0, bounds.width - trailingInset - addWidth - Self.itemGap - start)
         let gaps = Self.itemGap * CGFloat(max(items.count - 1, 0))
         let width = min(28, max(18, (available - gaps) / CGFloat(max(items.count, 1))))
         var x = start
@@ -96,6 +98,13 @@ final class TerminalTabBarView: NSView {
             )
             x += width + Self.itemGap
         }
+        let addX = min(items.isEmpty ? start : x, bounds.width - trailingInset - addWidth)
+        addButton.frame = NSRect(
+            x: max(0, addX),
+            y: (bounds.height - Self.itemHeight) / 2,
+            width: addWidth,
+            height: Self.itemHeight
+        )
     }
 
     private func styleItems() {
