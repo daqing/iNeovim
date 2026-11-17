@@ -2,9 +2,9 @@ import AppKit
 import GhosttySupport
 
 /// One native terminal pane: a Ghostty surface plus the close-cycle
-/// plumbing. The pane column's tab bar hosts several of these — the + in
-/// the pane's top-right corner opens another terminal tab, ⌘⇧D splits one
-/// below another, and there are no per-pane close buttons. The surface
+/// plumbing. The pane column's tab bar hosts several of these — the +
+/// right of the tabs opens another terminal tab, ⌘⇧D splits one below
+/// another, and there are no per-pane close buttons. The surface
 /// close cycle — the child exiting, a ⌘D close intent, or the window
 /// closing — ends in `onClose`, which the column uses to remove the pane.
 final class TerminalPaneView: NSView {
@@ -18,8 +18,27 @@ final class TerminalPaneView: NSView {
     let surfaceView: Ghostty.SurfaceView
 
     /// Directory the pane opened in; a split or new tab falls back to it
-    /// when the shell never reports its own pwd (OSC 7).
+    /// when neither the foreground process nor OSC 7 reports a directory.
     let initialDirectory: String
+
+    /// The directory a new tab or split should start in: the foreground
+    /// process's cwd (which follows `cd` even though shell integration is
+    /// off), else the shell's OSC 7 pwd, else the opening directory.
+    var currentDirectory: String {
+        if let pid = surfaceView.foregroundPID,
+           let path = ProcessWorkingDirectory.path(of: pid) {
+            return path
+        }
+        if let pwd = surfaceView.pwd, !pwd.isEmpty {
+            // Some shells report OSC 7 as a file:// URL; the surface config
+            // wants a plain path.
+            if pwd.hasPrefix("file://"), let url = URL(string: pwd) {
+                return url.path
+            }
+            return pwd
+        }
+        return initialDirectory
+    }
 
     /// Set once a close has been requested; the next close callback (even
     /// with the child still alive) finishes the teardown instead of asking

@@ -713,7 +713,10 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   the tab items — it replaced the old per-pane close button, and panes
   close only via ⌘D (the whole column), an exited shell, or window teardown;
   clicking + opens a new terminal tab after the active one, inheriting the
-  active terminal's OSC 7 pwd (else its opening directory), and clicking a
+  active terminal's current directory — the foreground process's cwd read
+  via `proc_pidinfo` (`TerminalPaneView.currentDirectory`), which follows
+  `cd` even though shell integration is off; OSC 7 pwd and the pane's
+  opening directory are the fallbacks — and clicking a
   tab item switches terminals one-at-a-time (a tab is a
   `TerminalPaneStackView`; hidden stacks keep tracking the body geometry so
   surfaces reflow off-screen). ⌘⇧D (claimed by the same
@@ -721,8 +724,7 @@ check that starts `:terminal` in the embedded nvim and skips when nvim is unavai
   splits the FOCUSED pane, adding a new terminal below it within the active
   tab: stacks host panes with draggable horizontal dividers (weights survive
   window resizes; a drag keeps each side a minimum height), the new shell
-  starts in the split-from shell's OSC 7 pwd when it reports one (else the
-  pane's opening directory), Ghostty's default
+  starts in the same current directory, Ghostty's default
   `super+shift+d=new_split:down` binding is unbound in the generated config
   like the ⌘1–9 row, an exited shell removes its pane, and removing the last
   tab closes the whole column and refocuses the editor. The pane hosts a real libghostty

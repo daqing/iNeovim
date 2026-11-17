@@ -92,6 +92,21 @@ extension Ghostty {
             return ghostty_surface_process_exited(surface)
         }
 
+        /// The PID of the foreground process group attached to the PTY.
+        /// The embedding reads its working directory to inherit the
+        /// terminal's current directory when shell integration (OSC 7)
+        /// is disabled.
+        public var foregroundPID: Int? {
+            surfaceModel?.foregroundPID
+        }
+
+        /// The time this surface last gained keyboard focus. The embedding
+        /// uses it to pick the most recently used pane when a new tab or
+        /// split inherits the terminal's directory.
+        public var lastFocusInstant: ContinuousClock.Instant? {
+            focusInstant
+        }
+
         // Returns the inspector instance for this surface, or nil if the
         // surface has been closed or no inspector is active.
         var inspector: Ghostty.Inspector? {

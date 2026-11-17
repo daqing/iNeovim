@@ -245,12 +245,17 @@ final class EditorSplitView: NSView {
     }
 
     /// The tab bar's +: open a new terminal tab after the active one,
-    /// starting where the active terminal is (its shell's reported pwd,
-    /// OSC 7, else the directory that tab opened in).
+    /// starting where the active terminal is (its foreground process's
+    /// cwd, else the directory that tab opened in).
     private func createNewTab() {
         guard let column else { return }
-        let source = column.activeStack?.lastFocusedPane ?? column.activeStack?.panes.first
-        let directory = source.map(Self.splitDirectory(from:))
+        let stack = column.activeStack
+        let focused = stack?.pane(for: window?.firstResponder as? Ghostty.SurfaceView)
+        let source = focused
+            ?? stack?.mostRecentlyFocusedPane
+            ?? stack?.lastFocusedPane
+            ?? stack?.panes.first
+        let directory = source?.currentDirectory
             ?? model.currentWorkingDirectory?.path(percentEncoded: false)
             ?? ""
         guard let surface = GhosttyTerminalController.shared.makeSurface(
@@ -265,16 +270,16 @@ final class EditorSplitView: NSView {
     }
 
     /// ⌘⇧D on a focused pane: add a new terminal below it within the active
-    /// tab, splitting that pane's height in half. The new shell starts where
-    /// the split-from shell is (the pwd its shell reported, OSC 7, when it
-    /// has one), else where that pane was opened.
+    /// tab, splitting that pane's height in half. The new shell starts in
+    /// the split-from pane's current directory, else where it was opened.
     private func splitFocusedPane() {
         guard let column, let window, let stack = column.activeStack else { return }
         let focused = stack.pane(for: window.firstResponder as? Ghostty.SurfaceView)
+            ?? stack.mostRecentlyFocusedPane
             ?? stack.lastFocusedPane
             ?? stack.panes.first
         guard let focused else { return }
-        let directory = Self.splitDirectory(from: focused)
+        let directory = focused.currentDirectory
         guard let surface = GhosttyTerminalController.shared.makeSurface(
             workingDirectory: directory,
             command: "",
@@ -284,20 +289,6 @@ final class EditorSplitView: NSView {
         let paneView = makePaneView(surface: surface, initialDirectory: directory)
         stack.insertPane(paneView, below: focused)
         focusPane(paneView)
-    }
-
-    /// The shell's latest reported directory when available, else the
-    /// directory the pane opened in.
-    private static func splitDirectory(from pane: TerminalPaneView) -> String {
-        guard let pwd = pane.surfaceView.pwd, !pwd.isEmpty else {
-            return pane.initialDirectory
-        }
-        // Some shells report OSC 7 as a file:// URL; the surface config
-        // wants a plain path.
-        if pwd.hasPrefix("file://"), let url = URL(string: pwd) {
-            return url.path
-        }
-        return pwd
     }
 
     /// Make `pane`'s surface the first responder and announce it; the pane's

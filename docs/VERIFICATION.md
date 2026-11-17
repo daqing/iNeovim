@@ -395,6 +395,9 @@ of the editor instead of an in-buffer terminal. Manual checks:
    the file opens in the editor and the editor takes focus; the terminal pane
    stays open. A `path:line:column` suffix still resolves the file. ⌘-click an
    http(s) link: the default browser opens instead.
+10. In the pane, `cd` to a directory (no shell integration / OSC 7), then
+    click the tab bar's +: the new tab's shell starts in that directory.
+    ⌘⇧D from that pane starts the split there too.
 
 Automated checks: `TerminalPaneCommandTests` pins the cmdline matcher
 (abbreviations, `vert[ical]`, bang, arguments, non-matches) and

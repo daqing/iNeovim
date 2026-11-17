@@ -35,6 +35,23 @@ final class TerminalPaneStackView: NSView {
         lastFocusedPane = pane
     }
 
+    /// The pane whose surface most recently gained keyboard focus. Unlike
+    /// `lastFocusedPane`, which only focus intents update, this also sees
+    /// direct clicks between split panes, so a new tab or split can inherit
+    /// the directory of the pane the user actually used last.
+    var mostRecentlyFocusedPane: TerminalPaneView? {
+        panes.max { lhs, rhs in
+            switch (lhs.surfaceView.lastFocusInstant, rhs.surfaceView.lastFocusInstant) {
+            case let (lhs?, rhs?):
+                return lhs < rhs
+            case (nil, .some):
+                return true
+            case (.some, nil), (nil, nil):
+                return false
+            }
+        }
+    }
+
     /// Fill the empty stack with the first pane.
     func setInitialPane(_ pane: TerminalPaneView) {
         precondition(panes.isEmpty)

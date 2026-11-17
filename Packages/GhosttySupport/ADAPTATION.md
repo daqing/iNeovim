@@ -52,7 +52,9 @@ which this embedding does not have. Adaptations, per file:
   notifications, secure-input tracking, Codable state restoration, and
   `AppDelegate`/`BaseTerminalController` references
   (`AppDelegate.logger` → `Ghostty.logger`, `UserDefaults.ghostty` →
-  `UserDefaults.standard`).
+  `UserDefaults.standard`). Added public `foregroundPID` and
+  `lastFocusInstant` accessors so the embedding can read the terminal's
+  cwd without shell integration and choose the most recently used pane.
 - `OSSurfaceView.swift` — pruned to the published state a plain embedding
   needs (pwd, cellSize, health, error, hover URL, key tables, size info,
   readonly, plus the embedder's `openURLHandler` hook) and the two
